@@ -8,6 +8,7 @@ type WorkerMessage =
         buffer: ArrayBuffer;
         showHiddenSheets?: boolean;
         skipXmlParsing?: boolean;
+        externalFnValues?: Record<string, string | number>;
       };
     }
   | {
@@ -127,7 +128,12 @@ export class XlsxWorkerClient {
     this.pendingRequests.clear();
   }
 
-  loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHiddenSheets = false) {
+  loadWorkbook(
+    buffer: ArrayBuffer,
+    skipXmlParsing = false,
+    showHiddenSheets = false,
+    externalFnValues?: Record<string, string | number>,
+  ) {
     const workerBuffer = cloneArrayBufferForTransfer(buffer);
     return this.request<{
       chartsByWorkbookSheetIndex: XlsxChart[][];
@@ -140,7 +146,8 @@ export class XlsxWorkerClient {
       payload: {
         buffer: workerBuffer,
         showHiddenSheets,
-        skipXmlParsing
+        skipXmlParsing,
+        externalFnValues
       },
       type: "load"
     }, [workerBuffer]);
