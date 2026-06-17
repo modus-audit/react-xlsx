@@ -24,6 +24,7 @@ import {
   type WorkbookImageSheetOrigin,
   type WorkbookTableMetadata
 } from "./images";
+import { type ExternalFnValues, makeExternalFn } from "./external-fn";
 import { safeCalculate, tryRecalculate } from "./safe-calculate";
 import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
 import { XlsxWorkerClient } from "./worker-client";
@@ -1169,7 +1170,10 @@ async function resolveWorkbookBuffer(
   return buffer;
 }
 
-async function parseWorkbookBuffer(buffer: ArrayBuffer): Promise<{
+async function parseWorkbookBuffer(
+  buffer: ArrayBuffer,
+  externalFnValues?: ExternalFnValues,
+): Promise<{
   shouldAutoCalculate: boolean;
   workbook: Workbook;
 }> {
@@ -1187,7 +1191,8 @@ async function parseWorkbookBuffer(buffer: ArrayBuffer): Promise<{
   }
 
   const result = safeCalculate(initialWorkbook, {
-    reparse: () => wasmModule.Workbook.fromBytes(new Uint8Array(buffer))
+    reparse: () => wasmModule.Workbook.fromBytes(new Uint8Array(buffer)),
+    calcOptions: externalFnValues ? { externalFnFn: makeExternalFn(externalFnValues) } : undefined
   });
 
   return {
@@ -1854,6 +1859,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const {
     allowResizeInReadOnly = false,
     deferLoadingAboveBytes = DEFAULT_DEFER_LOADING_ABOVE_BYTES,
+    externalFnValues,
     file,
     fileName,
     maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES,
@@ -2136,7 +2142,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [getWorkerClient, hasIncompleteWorkerChartSnapshot, setChartAssets, showHiddenSheets, skipXmlParsing, workerSupported]);
 
   const loadWorkbookOnMainThread = React.useCallback(async (buffer: ArrayBuffer) => {
-    const nextParsedWorkbook = await parseWorkbookBuffer(buffer);
+    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValues);
     const bytes = new Uint8Array(buffer);
     const nextImageAssets = loadWorkbookImageAssets(
       bytes,
@@ -2147,7 +2153,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       imageAssets: nextImageAssets,
       parsedWorkbook: nextParsedWorkbook
     };
-  }, [skipXmlParsing]);
+  }, [externalFnValues, skipXmlParsing]);
 
   const refreshWorkbookState = React.useCallback((targetWorkbook: Workbook) => {
     const nextSheets = buildSheetList(
@@ -2272,7 +2278,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
         if (shouldUseWorkerForLoad) {
           try {
-            const snapshot = await getWorkerClient().loadWorkbook(buffer, effectiveSkipXmlParsing, showHiddenSheets);
+            const snapshot = await getWorkerClient().loadWorkbook(buffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValues);
             if (!isCurrent || abortController.signal.aborted) {
               return;
             }
@@ -2587,7 +2593,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
-    void parseWorkbookBuffer(deferredBuffer)
+    void parseWorkbookBuffer(deferredBuffer, externalFnValues)
       .then((nextParsedWorkbook) => {
         const bytes = new Uint8Array(deferredBuffer);
         const nextImageAssets = loadWorkbookImageAssets(

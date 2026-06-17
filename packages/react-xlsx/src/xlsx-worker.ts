@@ -1,5 +1,6 @@
 import type { Workbook } from "@dukelib/sheets-wasm";
 import { loadWorkbookChartAssets } from "./charts";
+import { type ExternalFnValues, makeExternalFn } from "./external-fn";
 import { parseWorkbookChartStyleAssets, parseWorkbookStructureAssets, resolveSheetColumnWidthPixels } from "./images";
 import type { WorkbookStructureAssets } from "./images";
 import { safeCalculate } from "./safe-calculate";
@@ -53,6 +54,7 @@ type WorkerRequest =
         buffer: ArrayBuffer;
         showHiddenSheets?: boolean;
         skipXmlParsing?: boolean;
+        externalFnValues?: ExternalFnValues;
         wasmSource?: WorkerWasmSource;
       };
     }
@@ -518,7 +520,12 @@ function cellAddressToA1(cell: XlsxCellAddress) {
   return `${label}${cell.row + 1}`;
 }
 
-async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHiddenSheets = false) {
+async function loadWorkbook(
+  buffer: ArrayBuffer,
+  skipXmlParsing = false,
+  showHiddenSheets = false,
+  externalFnValues?: ExternalFnValues,
+) {
   const wasmModule = await getSheetsWasmModule();
   const bytes = new Uint8Array(buffer);
   const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
@@ -528,9 +535,16 @@ async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHid
     totalFormulas += activeWorkbook.getSheet(index).formulaCount;
   }
 
+  // Rebuild the engine callback for `[N]!FN(args)` add-in calls from the serializable map the host
+  // resolved on the main thread (a closure can't be postMessage'd across the worker boundary).
+  const calcOptions = externalFnValues
+    ? { externalFnFn: makeExternalFn(externalFnValues) }
+    : undefined;
+
   if (totalFormulas <= FORMULA_COUNT_THRESHOLD) {
     const result = safeCalculate(activeWorkbook, {
-      reparse: () => wasmModule.Workbook.fromBytes(bytes)
+      reparse: () => wasmModule.Workbook.fromBytes(bytes),
+      calcOptions
     });
     activeWorkbook = result.workbook;
   }
@@ -619,7 +633,12 @@ async function handleMessage(message: WorkerRequest) {
       if (message.payload.wasmSource !== undefined) {
         setWasmSource(message.payload.wasmSource);
       }
-      return loadWorkbook(message.payload.buffer, message.payload.skipXmlParsing, message.payload.showHiddenSheets);
+      return loadWorkbook(
+        message.payload.buffer,
+        message.payload.skipXmlParsing,
+        message.payload.showHiddenSheets,
+        message.payload.externalFnValues,
+      );
     }
     case "parseCharts": {
       if (message.payload.wasmSource !== undefined) {

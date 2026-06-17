@@ -628,6 +628,13 @@ export interface UseXlsxViewerControllerOptions {
    */
   allowResizeInReadOnly?: boolean;
   /**
+   * Pre-resolved values for external add-in calls (`[N]!FN(args)`, e.g. CCH `[1]!TBLink(...)`),
+   * keyed by `externalCallKey(name, args)`. Passed (as a serializable map) into the engine so it
+   * resolves those calls during `calculate()` — keeping the formula text untouched. Unmapped calls
+   * keep the cell's cached value. Omit to disable (default behavior, identical to upstream).
+   */
+  externalFnValues?: Record<string, string | number>;
+  /**
    * Defers loading until `continueDeferredLoad()` is called when the file is larger than this byte threshold.
    * Set to `0` to parse immediately.
    *
