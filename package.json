@@ -47,7 +47,7 @@
     "react-dom": ">=18"
   },
   "dependencies": {
-    "@dukelib/sheets-wasm": "github:modus-audit/duke-sheets#wasm-dist-0.1.14-modus.1",
+    "@dukelib/sheets-wasm": "git+https://github.com/modus-audit/duke-sheets.git#wasm-dist-0.1.14-modus.1",
     "@tanstack/react-virtual": "^3.13.12",
     "d3-geo": "^3.1.1",
     "d3-hierarchy": "^3.1.2",
