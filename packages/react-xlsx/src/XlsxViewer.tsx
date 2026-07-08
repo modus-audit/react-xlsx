@@ -14058,6 +14058,51 @@ function XlsxGrid({
     syncDrawingViewport(scroller, { immediate: true });
   }
 
+  // Like ensureCellVisible (which nudges a cell to the nearest edge), but for a programmatic
+  // JUMP (in-document search): if the target is already fully visible, leave the viewport as-is;
+  // otherwise CENTER it in the area below/right of the frozen panes so the match sits mid-pane
+  // with surrounding context, instead of pinned to whichever edge it scrolled in from. Clamped
+  // to the valid scroll range.
+  function scrollCellToCenter(rowIndex: number, colIndex: number) {
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      return;
+    }
+
+    const rowStart = displayHeaderHeight + (rowPrefixSums[rowIndex] ?? 0);
+    const rowEnd = displayHeaderHeight + (rowPrefixSums[rowIndex + 1] ?? rowStart);
+    const colStart = displayRowHeaderWidth + (colPrefixSums[colIndex] ?? 0);
+    const colEnd = displayRowHeaderWidth + (colPrefixSums[colIndex + 1] ?? colStart);
+
+    const visibleTop = scroller.scrollTop + frozenPaneBottom;
+    const visibleBottom = scroller.scrollTop + scroller.clientHeight;
+    const visibleLeft = scroller.scrollLeft + frozenPaneRight;
+    const visibleRight = scroller.scrollLeft + scroller.clientWidth;
+
+    let nextScrollTop = scroller.scrollTop;
+    let nextScrollLeft = scroller.scrollLeft;
+
+    if (rowStart < visibleTop || rowEnd > visibleBottom) {
+      const availHeight = scroller.clientHeight - frozenPaneBottom;
+      nextScrollTop = rowStart - frozenPaneBottom - (availHeight - (rowEnd - rowStart)) / 2;
+    }
+    if (colStart < visibleLeft || colEnd > visibleRight) {
+      const availWidth = scroller.clientWidth - frozenPaneRight;
+      nextScrollLeft = colStart - frozenPaneRight - (availWidth - (colEnd - colStart)) / 2;
+    }
+
+    nextScrollTop = Math.max(0, Math.min(nextScrollTop, scroller.scrollHeight - scroller.clientHeight));
+    nextScrollLeft = Math.max(0, Math.min(nextScrollLeft, scroller.scrollWidth - scroller.clientWidth));
+
+    if (nextScrollTop !== scroller.scrollTop) {
+      scroller.scrollTop = nextScrollTop;
+    }
+    if (nextScrollLeft !== scroller.scrollLeft) {
+      scroller.scrollLeft = nextScrollLeft;
+    }
+    syncDrawingViewport(scroller, { immediate: true });
+  }
+
   function moveSelection(nextRowIndex: number, nextColIndex: number, extend: boolean) {
     const clampedRowIndex = Math.max(0, Math.min(nextRowIndex, visibleRows.length - 1));
     const clampedColIndex = Math.max(0, Math.min(nextColIndex, visibleCols.length - 1));
@@ -14079,16 +14124,18 @@ function XlsxGrid({
   // revealCell for an absolute cell address (e.g. in-document search jumping to a match).
   // selectCell FIRST and unconditionally — it drives the active cell / formula bar and the
   // reactive selection overlay + canvas repaint, and must never be blocked. Then scroll via
-  // the visible-ordinal index ensureCellVisible expects, and finally sync the imperative
-  // selection overlay (as keyboard nav does) for instant feedback. The scroll + overlay are
-  // best-effort: a hiccup for an off-screen target must not stop the selection from landing.
+  // the visible-ordinal index the scroll helper expects, and finally sync the imperative
+  // selection overlay (as keyboard nav does) for instant feedback. Uses scrollCellToCenter
+  // (not ensureCellVisible) so an off-screen match lands mid-pane instead of at an edge. The
+  // scroll + overlay are best-effort: a hiccup for an off-screen target must not stop the
+  // selection from landing.
   function revealCell(cell: XlsxCellAddress) {
     selectCell(cell);
     try {
       const rowIndex = rowIndexByActual.get(cell.row);
       const colIndex = colIndexByActual.get(cell.col);
       if (rowIndex !== undefined && colIndex !== undefined) {
-        ensureCellVisible(rowIndex, colIndex);
+        scrollCellToCenter(rowIndex, colIndex);
       }
       const range = { start: cell, end: cell };
       axisSelectionRef.current = null;
