@@ -3797,6 +3797,33 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setSelection({ start: cell, end: cell });
   }, []);
 
+  // revealCell = select a cell AND scroll it into view + repaint the selection overlay,
+  // the same path keyboard navigation uses. The scroll/overlay work needs grid-local
+  // layout (prefix sums, the scroll element, the overlay), which lives in XlsxGrid, so
+  // the grid registers its implementation here via registerRevealCellImpl. Before the
+  // grid mounts (or if it hasn't registered yet) we at least move the selection so the
+  // active cell / formula bar are correct.
+  const revealCellImplRef = React.useRef<((cell: XlsxCellAddress) => void) | null>(null);
+
+  const registerRevealCellImpl = React.useCallback(
+    (impl: ((cell: XlsxCellAddress) => void) | null) => {
+      revealCellImplRef.current = impl;
+    },
+    [],
+  );
+
+  const revealCell = React.useCallback(
+    (cell: XlsxCellAddress) => {
+      const impl = revealCellImplRef.current;
+      if (impl) {
+        impl(cell);
+      } else {
+        selectCell(cell);
+      }
+    },
+    [selectCell],
+  );
+
   const selectRange = React.useCallback((range: XlsxCellRange) => {
     const normalized = normalizeRange(range);
     setSelectedChartId(null);
@@ -4448,6 +4475,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       selectedRangeAddress,
       selectedValue,
       selectCell,
+      revealCell,
+      registerRevealCellImpl,
       selectChart,
       selectImage,
       selectRange,
@@ -4550,6 +4579,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       selectedRangeAddress,
       selectedValue,
       selectCell,
+      revealCell,
+      registerRevealCellImpl,
       selectChart,
       selectImage,
       selectRange,

@@ -800,6 +800,12 @@ export interface XlsxViewerController {
   setCellValue: (cell: XlsxCellAddress, value: string) => void;
   setZoomScale: (zoomScale: number) => void;
   selectCell: (cell: XlsxCellAddress, options?: { extend?: boolean }) => void;
+  /** Select a cell AND scroll it into view + repaint the selection — the same path
+      keyboard navigation uses. Prefer this over selectCell for programmatic "go to cell"
+      (e.g. in-document search), which otherwise leaves the highlight unmoved. */
+  revealCell: (cell: XlsxCellAddress) => void;
+  /** @internal Grid wiring: XlsxGrid registers revealCell's scroll + overlay impl here. */
+  registerRevealCellImpl: (impl: ((cell: XlsxCellAddress) => void) | null) => void;
   selectChart: (id: string | null) => void;
   selectRange: (range: XlsxCellRange) => void;
   selection: XlsxCellRange | null;
