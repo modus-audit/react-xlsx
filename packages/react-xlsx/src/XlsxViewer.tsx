@@ -6481,6 +6481,17 @@ function XlsxGrid({
     zoomScale
   } = controller;
   const canResizeHeaders = !readOnly || allowResizeInReadOnly;
+  // Register revealCell on the controller so controller.revealCell (used by consumers,
+  // e.g. in-document search) runs the grid-local select + scroll + overlay path. These
+  // hooks MUST sit above the loading/error/empty early returns below to keep hook order
+  // stable; `revealCell` itself is a hoisted function declaration further down, and a
+  // stable wrapper reads its freshest closure via the ref, so we register once per controller.
+  const revealCellRef = React.useRef<(cell: XlsxCellAddress) => void>(() => {});
+  revealCellRef.current = revealCell;
+  React.useEffect(() => {
+    controller.registerRevealCellImpl((cell) => revealCellRef.current(cell));
+    return () => controller.registerRevealCellImpl(null);
+  }, [controller]);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const wrapperRef = React.useRef<HTMLDivElement>(null);
   const tableRef = React.useRef<HTMLTableElement>(null);
@@ -14063,6 +14074,30 @@ function XlsxGrid({
     applyPreviewOverlay(nextRange);
     selectCell({ row: nextRow, col: nextCol }, extend ? { extend: true } : undefined);
     ensureCellVisible(clampedRowIndex, clampedColIndex);
+  }
+
+  // revealCell for an absolute cell address (e.g. in-document search jumping to a match).
+  // selectCell FIRST and unconditionally — it drives the active cell / formula bar and the
+  // reactive selection overlay + canvas repaint, and must never be blocked. Then scroll via
+  // the visible-ordinal index ensureCellVisible expects, and finally sync the imperative
+  // selection overlay (as keyboard nav does) for instant feedback. The scroll + overlay are
+  // best-effort: a hiccup for an off-screen target must not stop the selection from landing.
+  function revealCell(cell: XlsxCellAddress) {
+    selectCell(cell);
+    try {
+      const rowIndex = rowIndexByActual.get(cell.row);
+      const colIndex = colIndexByActual.get(cell.col);
+      if (rowIndex !== undefined && colIndex !== undefined) {
+        ensureCellVisible(rowIndex, colIndex);
+      }
+      const range = { start: cell, end: cell };
+      axisSelectionRef.current = null;
+      selectionPreviewRangeRef.current = null;
+      displayedSelectionRef.current = range;
+      applyPreviewOverlay(range);
+    } catch (err) {
+      console.error("[react-xlsx] revealCell scroll/overlay failed", err);
+    }
   }
 
   function resolvePageRowIndex(currentRowIndex: number, direction: 1 | -1) {
