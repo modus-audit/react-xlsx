@@ -27846,6 +27846,39 @@ function XlsxGrid({
     }
     syncDrawingViewport(scroller, { immediate: true });
   }
+  function scrollCellToCenter(rowIndex, colIndex) {
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      return;
+    }
+    const rowStart = displayHeaderHeight + (rowPrefixSums[rowIndex] ?? 0);
+    const rowEnd = displayHeaderHeight + (rowPrefixSums[rowIndex + 1] ?? rowStart);
+    const colStart = displayRowHeaderWidth + (colPrefixSums[colIndex] ?? 0);
+    const colEnd = displayRowHeaderWidth + (colPrefixSums[colIndex + 1] ?? colStart);
+    const visibleTop = scroller.scrollTop + frozenPaneBottom;
+    const visibleBottom = scroller.scrollTop + scroller.clientHeight;
+    const visibleLeft = scroller.scrollLeft + frozenPaneRight;
+    const visibleRight = scroller.scrollLeft + scroller.clientWidth;
+    let nextScrollTop = scroller.scrollTop;
+    let nextScrollLeft = scroller.scrollLeft;
+    if (rowStart < visibleTop || rowEnd > visibleBottom) {
+      const availHeight = scroller.clientHeight - frozenPaneBottom;
+      nextScrollTop = rowStart - frozenPaneBottom - (availHeight - (rowEnd - rowStart)) / 2;
+    }
+    if (colStart < visibleLeft || colEnd > visibleRight) {
+      const availWidth = scroller.clientWidth - frozenPaneRight;
+      nextScrollLeft = colStart - frozenPaneRight - (availWidth - (colEnd - colStart)) / 2;
+    }
+    nextScrollTop = Math.max(0, Math.min(nextScrollTop, scroller.scrollHeight - scroller.clientHeight));
+    nextScrollLeft = Math.max(0, Math.min(nextScrollLeft, scroller.scrollWidth - scroller.clientWidth));
+    if (nextScrollTop !== scroller.scrollTop) {
+      scroller.scrollTop = nextScrollTop;
+    }
+    if (nextScrollLeft !== scroller.scrollLeft) {
+      scroller.scrollLeft = nextScrollLeft;
+    }
+    syncDrawingViewport(scroller, { immediate: true });
+  }
   function moveSelection(nextRowIndex, nextColIndex, extend) {
     const clampedRowIndex = Math.max(0, Math.min(nextRowIndex, visibleRows.length - 1));
     const clampedColIndex = Math.max(0, Math.min(nextColIndex, visibleCols.length - 1));
@@ -27868,7 +27901,7 @@ function XlsxGrid({
       const rowIndex = rowIndexByActual.get(cell.row);
       const colIndex = colIndexByActual.get(cell.col);
       if (rowIndex !== void 0 && colIndex !== void 0) {
-        ensureCellVisible(rowIndex, colIndex);
+        scrollCellToCenter(rowIndex, colIndex);
       }
       const range = { start: cell, end: cell };
       axisSelectionRef.current = null;
