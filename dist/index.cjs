@@ -9417,6 +9417,24 @@ function useXlsxViewerController(options) {
     selectionAnchorRef.current = cell;
     setSelection({ start: cell, end: cell });
   }, []);
+  const revealCellImplRef = React.useRef(null);
+  const registerRevealCellImpl = React.useCallback(
+    (impl) => {
+      revealCellImplRef.current = impl;
+    },
+    []
+  );
+  const revealCell = React.useCallback(
+    (cell) => {
+      const impl = revealCellImplRef.current;
+      if (impl) {
+        impl(cell);
+      } else {
+        selectCell(cell);
+      }
+    },
+    [selectCell]
+  );
   const selectRange = React.useCallback((range) => {
     const normalized = normalizeRange(range);
     setSelectedChartId(null);
@@ -9998,6 +10016,8 @@ function useXlsxViewerController(options) {
       selectedRangeAddress,
       selectedValue,
       selectCell,
+      revealCell,
+      registerRevealCellImpl,
       selectChart,
       selectImage,
       selectRange,
@@ -10100,6 +10120,8 @@ function useXlsxViewerController(options) {
       selectedRangeAddress,
       selectedValue,
       selectCell,
+      revealCell,
+      registerRevealCellImpl,
       selectChart,
       selectImage,
       selectRange,
@@ -21586,6 +21608,13 @@ function XlsxGrid({
     zoomScale
   } = controller;
   const canResizeHeaders = !readOnly || allowResizeInReadOnly;
+  const revealCellRef = React4.useRef(() => {
+  });
+  revealCellRef.current = revealCell;
+  React4.useEffect(() => {
+    controller.registerRevealCellImpl((cell) => revealCellRef.current(cell));
+    return () => controller.registerRevealCellImpl(null);
+  }, [controller]);
   const scrollRef = React4.useRef(null);
   const wrapperRef = React4.useRef(null);
   const tableRef = React4.useRef(null);
@@ -27832,6 +27861,23 @@ function XlsxGrid({
     applyPreviewOverlay(nextRange);
     selectCell({ row: nextRow, col: nextCol }, extend ? { extend: true } : void 0);
     ensureCellVisible(clampedRowIndex, clampedColIndex);
+  }
+  function revealCell(cell) {
+    selectCell(cell);
+    try {
+      const rowIndex = rowIndexByActual.get(cell.row);
+      const colIndex = colIndexByActual.get(cell.col);
+      if (rowIndex !== void 0 && colIndex !== void 0) {
+        ensureCellVisible(rowIndex, colIndex);
+      }
+      const range = { start: cell, end: cell };
+      axisSelectionRef.current = null;
+      selectionPreviewRangeRef.current = null;
+      displayedSelectionRef.current = range;
+      applyPreviewOverlay(range);
+    } catch (err) {
+      console.error("[react-xlsx] revealCell scroll/overlay failed", err);
+    }
   }
   function resolvePageRowIndex(currentRowIndex, direction) {
     const scroller = scrollRef.current;
