@@ -2363,6 +2363,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     clearImageAssets,
     deferLoadingAboveBytes,
     disposeWorkerClient,
+    externalFnValues,
     file,
     getWorkerClient,
     hasIncompleteWorkerChartSnapshot,
@@ -2525,7 +2526,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(new Uint8Array(deferredBuffer), skipXmlParsing);
 
     if (shouldUseWorkerForLoad) {
-      void getWorkerClient().loadWorkbook(deferredBuffer, effectiveSkipXmlParsing, showHiddenSheets)
+      void getWorkerClient().loadWorkbook(deferredBuffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValues)
         .then((snapshot) => {
           if (!effectiveSkipXmlParsing && hasIncompleteWorkerChartSnapshot(snapshot)) {
             throw new Error("Worker chart payload incomplete");
@@ -2640,6 +2641,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     clearChartAssets,
     clearImageAssets,
     disposeWorkerClient,
+    externalFnValues,
     getWorkerClient,
     loadWorkbookOnMainThread,
     requestedReadOnly,
