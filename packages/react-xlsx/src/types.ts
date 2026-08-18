@@ -68,9 +68,21 @@ export interface XlsxConditionalIconSetRule {
   showValue?: boolean;
 }
 
+export interface XlsxConditionalHighlightRule {
+  formulas: string[];
+  kind: "highlight";
+  operator?: string;
+  priority: number;
+  ranges: XlsxCellRange[];
+  ruleType: string;
+  style: XlsxResolvedCellStyle;
+  text?: string;
+}
+
 export type XlsxConditionalFormatRule =
   | XlsxConditionalColorScaleRule
   | XlsxConditionalDataBarRule
+  | XlsxConditionalHighlightRule
   | XlsxConditionalIconSetRule;
 
 export interface XlsxDataValidation {

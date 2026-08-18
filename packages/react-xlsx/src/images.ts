@@ -1051,6 +1051,7 @@ function parseWorkbookStyles(archive: ArchiveEntries) {
   if (!xml) {
     return {
       defaultFont: null,
+      differentialStyles: [],
       namedCellStyleByName: {},
       styleById: {},
       tableStyleByName: {}
@@ -1061,6 +1062,7 @@ function parseWorkbookStyles(archive: ArchiveEntries) {
   if (!document) {
     return {
       defaultFont: null,
+      differentialStyles: [],
       namedCellStyleByName: {},
       styleById: {},
       tableStyleByName: {}
@@ -1078,6 +1080,7 @@ function parseWorkbookStyles(archive: ArchiveEntries) {
   if (!cellXfsNode) {
     return {
       defaultFont: null,
+      differentialStyles: [],
       namedCellStyleByName: {},
       styleById: {},
       tableStyleByName: {}
@@ -1143,6 +1146,7 @@ function parseWorkbookStyles(archive: ArchiveEntries) {
 
   return {
     defaultFont,
+    differentialStyles,
     namedCellStyleByName,
     styleById,
     tableStyleByName
@@ -1270,9 +1274,21 @@ function parseSpreadsheetBooleanAttribute(node: Element | null, name: string) {
   return value !== "0" && value !== "false";
 }
 
+const HIGHLIGHT_CONDITIONAL_FORMAT_TYPES = new Set([
+  "beginsWith",
+  "cellIs",
+  "containsBlanks",
+  "containsText",
+  "endsWith",
+  "expression",
+  "notContainsBlanks",
+  "notContainsText"
+]);
+
 function parseStandardConditionalFormatRule(
   cfRuleNode: Element,
-  ranges: XlsxCellRange[]
+  ranges: XlsxCellRange[],
+  differentialStyles?: XlsxResolvedCellStyle[]
 ): (XlsxConditionalFormatRule & { id?: string }) | null {
   const type = cfRuleNode.getAttribute("type");
   const rawPriority = Number(cfRuleNode.getAttribute("priority") ?? Number.NaN);
@@ -1352,6 +1368,25 @@ function parseStandardConditionalFormatRule(
       ranges,
       reverse: parseSpreadsheetBooleanAttribute(iconSetNode, "reverse"),
       showValue: parseSpreadsheetBooleanAttribute(iconSetNode, "showValue")
+    };
+  }
+
+  if (type && HIGHLIGHT_CONDITIONAL_FORMAT_TYPES.has(type)) {
+    const dxfId = Number(cfRuleNode.getAttribute("dxfId") ?? Number.NaN);
+    const style = Number.isFinite(dxfId) ? differentialStyles?.[dxfId] : undefined;
+    if (!style) {
+      return null;
+    }
+
+    return {
+      formulas: getChildElements(cfRuleNode, "formula").map((node) => node.textContent?.trim() ?? ""),
+      kind: "highlight",
+      operator: cfRuleNode.getAttribute("operator") ?? undefined,
+      priority,
+      ranges,
+      ruleType: type,
+      style,
+      text: cfRuleNode.getAttribute("text") ?? undefined
     };
   }
 
@@ -1494,7 +1529,7 @@ function mergeConditionalFormatRule(
   return baseRule;
 }
 
-function parseConditionalFormatRules(document: Document) {
+function parseConditionalFormatRules(document: Document, differentialStyles?: XlsxResolvedCellStyle[]) {
   const standardRules: Array<XlsxConditionalFormatRule & { id?: string }> = [];
   const extendedRules: Array<XlsxConditionalFormatRule & { id?: string }> = [];
 
@@ -1507,7 +1542,7 @@ function parseConditionalFormatRules(document: Document) {
     getChildElements(conditionalFormattingNode, "cfRule").forEach((cfRuleNode) => {
       const parsedRule = isExtended
         ? parseExtendedConditionalFormatRule(cfRuleNode, ranges)
-        : parseStandardConditionalFormatRule(cfRuleNode, ranges);
+        : parseStandardConditionalFormatRule(cfRuleNode, ranges, differentialStyles);
       if (parsedRule) {
         if (isExtended) {
           extendedRules.push(parsedRule);
@@ -1563,7 +1598,8 @@ function parseSheetState(
       family?: string;
       sizePt?: number;
     } | null;
-  }
+  },
+  differentialStyles?: XlsxResolvedCellStyle[]
 ): WorkbookSheetState | null {
   const xml = readArchiveText(archive, path);
   if (!xml) {
@@ -1577,7 +1613,7 @@ function parseSheetState(
 
   const includeCachedFormulaValues = options?.includeCachedFormulaValues ?? true;
   const cachedFormulaValues: Record<string, string> = {};
-  const conditionalFormatRules = parseConditionalFormatRules(document);
+  const conditionalFormatRules = parseConditionalFormatRules(document, differentialStyles);
   const sparklines = parseSheetSparklines(document, options?.themePalette);
   const sheetFormatNode = getLocalElements(document, "sheetFormatPr")[0] ?? null;
   const sheetViewNode = getLocalElements(document, "sheetView")[0] ?? null;
@@ -3231,16 +3267,17 @@ function parseWorkbookStructureAssetsFromArchive(
   const workbookSheets = parseWorkbookSheets(archive);
   const theme = parseWorkbookTheme(archive);
   const themePalette = buildThemePalette(theme);
-  const { defaultFont, namedCellStyleByName, styleById, tableStyleByName } = parseWorkbookStyles(archive);
+  const { defaultFont, differentialStyles, namedCellStyleByName, styleById, tableStyleByName } = parseWorkbookStyles(archive);
   const tableMetadataByWorkbookSheetIndex = parseWorkbookTableMetadata(archive, workbookSheets);
   return {
     contentTypes,
     namedCellStyleByName,
-    sheetStatesByWorkbookSheetIndex: workbookSheets.map((sheet) => parseSheetState(archive, sheet.path, {
-      ...options,
-      defaultFont,
-      themePalette
-    })),
+    sheetStatesByWorkbookSheetIndex: workbookSheets.map((sheet) => parseSheetState(
+      archive,
+      sheet.path,
+      { ...options, defaultFont, themePalette },
+      differentialStyles
+    )),
     styleById,
     tableMetadataByWorkbookSheetIndex,
     tableStyleByName,
