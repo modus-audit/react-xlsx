@@ -19,6 +19,7 @@ import type {
   XlsxChartsheet,
   XlsxCellAddress,
   XlsxCellRange,
+  XlsxConditionalFormatValueObject,
   XlsxFormControl,
   XlsxImage,
   XlsxImageRect,
@@ -3716,7 +3717,7 @@ function getCellDisplayValue(worksheet: Worksheet, row: number, col: number, act
   return cellValue.toString();
 }
 
-function getCellNumericValue(worksheet: Worksheet, row: number, col: number) {
+function getCellNumericValue(worksheet: Worksheet, row: number, col: number, activeSheet?: XlsxSheetData | null) {
   const cellValue = worksheet.getCalculatedValueAt(row, col);
   if (cellValue.is_number) {
     return cellValue.asNumber() ?? null;
@@ -3725,7 +3726,10 @@ function getCellNumericValue(worksheet: Worksheet, row: number, col: number) {
     return cellValue.asBoolean() ? 1 : 0;
   }
   if (cellValue.is_empty || cellValue.is_error) {
-    return null;
+    const formula = worksheet.getFormulaAt(row, col);
+    const cachedValue = formula ? activeSheet?.cachedFormulaValues?.[cellAddressToA1({ row, col })] : undefined;
+    const parsedCachedValue = Number(cachedValue);
+    return cachedValue !== undefined && Number.isFinite(parsedCachedValue) ? parsedCachedValue : null;
   }
 
   const parsedValue = Number(cellValue.asText() ?? cellValue.toString());
@@ -5169,7 +5173,7 @@ function buildConditionalFormatRuleKey(rule: XlsxSheetData["conditionalFormatRul
 }
 
 function resolveConditionalRuleThreshold(
-  threshold: XlsxSheetData["conditionalFormatRules"][number]["cfvos"][number] | undefined,
+  threshold: XlsxConditionalFormatValueObject | undefined,
   numericValues: number[]
 ) {
   if (!threshold) {
@@ -5700,6 +5704,183 @@ function resolveConditionalDataBarForCell(
     negativeFillColor: resolveWorkbookColor(matchingRule.negativeFillColor, sheet?.themePalette) ?? undefined,
     widthPercent
   };
+}
+
+type ConditionalOperand = { number: number | null; text: string };
+
+function resolveConditionalOperand(
+  token: string,
+  worksheet: Worksheet,
+  cell: XlsxCellAddress,
+  anchor: XlsxCellAddress,
+  activeSheet?: XlsxSheetData | null
+): ConditionalOperand | null {
+  let trimmed = token.trim();
+  while (trimmed.startsWith("(") && trimmed.endsWith(")")) {
+    trimmed = trimmed.slice(1, -1).trim();
+  }
+  if (!trimmed) {
+    return null;
+  }
+
+  const quoted = /^"(.*)"$/s.exec(trimmed);
+  if (quoted) {
+    return { number: null, text: quoted[1] ?? "" };
+  }
+
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return { number: Number(trimmed), text: trimmed };
+  }
+
+  const absolute = /^ABS\((.+)\)$/is.exec(trimmed);
+  if (absolute) {
+    const operand = resolveConditionalOperand(absolute[1] ?? "", worksheet, cell, anchor, activeSheet);
+    const number = operand?.number === null || operand?.number === undefined ? null : Math.abs(operand.number);
+    return number === null ? null : { number, text: String(number) };
+  }
+
+  const reference = /^(\$?)([A-Z]{1,3})(\$?)(\d+)$/i.exec(trimmed);
+  if (!reference) {
+    return null;
+  }
+
+  const [, colAnchor, colPart, rowAnchor, rowPart] = reference;
+  const parsed = parseA1CellReference(`${colPart}${rowPart}`);
+  if (!parsed) {
+    return null;
+  }
+
+  const targetRow = rowAnchor ? parsed.row : parsed.row + (cell.row - anchor.row);
+  const targetCol = colAnchor ? parsed.col : parsed.col + (cell.col - anchor.col);
+  if (targetRow < 0 || targetCol < 0) {
+    return null;
+  }
+
+  return {
+    number: getCellNumericValue(worksheet, targetRow, targetCol, activeSheet),
+    text: getCellDisplayValue(worksheet, targetRow, targetCol, activeSheet)
+  };
+}
+
+function compareConditionalOperands(left: ConditionalOperand, right: ConditionalOperand, operator: string) {
+  const useNumbers = left.number !== null && right.number !== null;
+  const delta = useNumbers
+    ? (left.number as number) - (right.number as number)
+    : left.text.localeCompare(right.text, undefined, { sensitivity: "accent" });
+
+  switch (operator) {
+    case "<":
+    case "lessThan":
+      return delta < 0;
+    case "<=":
+    case "lessThanOrEqual":
+      return delta <= 0;
+    case ">":
+    case "greaterThan":
+      return delta > 0;
+    case ">=":
+    case "greaterThanOrEqual":
+      return delta >= 0;
+    case "<>":
+    case "notEqual":
+      return delta !== 0;
+    default:
+      return delta === 0;
+  }
+}
+
+function evaluateConditionalComparison(
+  expression: string,
+  worksheet: Worksheet,
+  cell: XlsxCellAddress,
+  anchor: XlsxCellAddress,
+  activeSheet?: XlsxSheetData | null
+) {
+  const match = /^(.+?)(<=|>=|<>|<|>|=)(.+)$/s.exec(expression);
+  if (!match) {
+    return false;
+  }
+  const left = resolveConditionalOperand(match[1] ?? "", worksheet, cell, anchor, activeSheet);
+  const right = resolveConditionalOperand(match[3] ?? "", worksheet, cell, anchor, activeSheet);
+  return left && right ? compareConditionalOperands(left, right, match[2] ?? "=") : false;
+}
+
+function evaluateConditionalHighlightRule(
+  rule: Extract<XlsxSheetData["conditionalFormatRules"][number], { kind: "highlight" }>,
+  worksheet: Worksheet,
+  cell: XlsxCellAddress,
+  anchor: XlsxCellAddress,
+  activeSheet?: XlsxSheetData | null
+) {
+  const cellText = getCellDisplayValue(worksheet, cell.row, cell.col, activeSheet);
+  const haystack = cellText.toLowerCase();
+  const needle = (rule.text ?? "").toLowerCase();
+
+  switch (rule.ruleType) {
+    case "beginsWith":
+      return needle.length > 0 && haystack.startsWith(needle);
+    case "endsWith":
+      return needle.length > 0 && haystack.endsWith(needle);
+    case "containsText":
+      return needle.length > 0 && haystack.includes(needle);
+    case "notContainsText":
+      return needle.length > 0 && !haystack.includes(needle);
+    case "containsBlanks":
+      return cellText.trim().length === 0;
+    case "notContainsBlanks":
+      return cellText.trim().length > 0;
+    case "cellIs": {
+      const left = { number: getCellNumericValue(worksheet, cell.row, cell.col, activeSheet), text: cellText };
+      const [first, second] = rule.formulas.map((formula) =>
+        resolveConditionalOperand(formula, worksheet, cell, anchor, activeSheet)
+      );
+      if (!first) {
+        return false;
+      }
+      if (rule.operator === "between" || rule.operator === "notBetween") {
+        if (!second) {
+          return false;
+        }
+        const inRange =
+          compareConditionalOperands(left, first, "greaterThanOrEqual") &&
+          compareConditionalOperands(left, second, "lessThanOrEqual");
+        return rule.operator === "between" ? inRange : !inRange;
+      }
+      return compareConditionalOperands(left, first, rule.operator ?? "equal");
+    }
+    case "expression": {
+      const formula = (rule.formulas[0] ?? "").replace(/^=/, "");
+      const conjunction = /^AND\((.*)\)$/is.exec(formula);
+      const comparisons = conjunction ? (conjunction[1] ?? "").split(",") : [formula];
+      return comparisons.every((comparison) => evaluateConditionalComparison(comparison, worksheet, cell, anchor, activeSheet));
+    }
+    default:
+      return false;
+  }
+}
+
+function resolveConditionalHighlightStyleForCell(
+  row: number,
+  col: number,
+  worksheet: Worksheet,
+  sheet: XlsxSheetData | null | undefined
+) {
+  const rules = sheet?.conditionalFormatRules ?? [];
+  let style: Record<string, unknown> | null = null;
+
+  for (let index = rules.length - 1; index >= 0; index -= 1) {
+    const rule = rules[index];
+    if (rule?.kind !== "highlight") {
+      continue;
+    }
+    const range = rule.ranges.find((candidate) => isCellInRange({ row, col }, candidate));
+    if (!range || !evaluateConditionalHighlightRule(rule, worksheet, { col, row }, rule.ranges[0]?.start ?? range.start, sheet)) {
+      continue;
+    }
+    style = mergeResolvedCellStyle(style, rule.style);
+  }
+
+  return style;
 }
 
 function resolveConditionalColorScaleForCell(
@@ -8888,7 +9069,9 @@ function XlsxGrid({
     const rawStyle = mergeResolvedCellStyle(inheritedStyle, worksheetStyle, { replaceXfSubtrees: true });
     const table = getTableAtCell(effectiveTables, row, col);
     const tableStyle = resolveTableCellStyle(table, row, col, activeSheet);
-    const mergedStyle = mergeResolvedCellStyle(rawStyle, tableStyle);
+    const baseStyle = mergeResolvedCellStyle(rawStyle, tableStyle);
+    const highlightStyle = worksheet ? resolveConditionalHighlightStyleForCell(row, col, worksheet, activeSheet) : null;
+    const mergedStyle = highlightStyle ? mergeResolvedCellStyle(baseStyle, highlightStyle) : baseStyle;
     const alignment = mergedStyle?.alignment as Record<string, unknown> | undefined;
     const textRotationDeg = resolveSpreadsheetTextRotation(alignment?.textRotation);
     const headerRowCount = table ? Math.max(table.headerRowCount, 1) : 0;
@@ -15884,7 +16067,9 @@ export function useXlsxViewerThumbnails(
           const merge = worksheet.getMergeSpan(row, col) as { colSpan?: number; rowSpan?: number } | null | undefined;
           const inheritedStyle = resolveInheritedCellStyle(sheet, row, col);
           const worksheetStyle = (worksheet.getCellStyleAt(row, col) as Record<string, unknown> | null | undefined) ?? null;
-          const mergedStyle = mergeResolvedCellStyle(inheritedStyle, worksheetStyle, { replaceXfSubtrees: true });
+          const baseStyle = mergeResolvedCellStyle(inheritedStyle, worksheetStyle, { replaceXfSubtrees: true });
+          const highlightStyle = resolveConditionalHighlightStyleForCell(row, col, worksheet, sheet);
+          const mergedStyle = highlightStyle ? mergeResolvedCellStyle(baseStyle, highlightStyle) : baseStyle;
           const alignment = mergedStyle?.alignment as Record<string, unknown> | undefined;
           const sparkline = sparklineByCell.get(cacheKey) ?? null;
           const sparklineValues = sparkline
