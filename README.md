@@ -5,4 +5,5 @@ a serializable `externalFnValues` map into the Web Worker and rebuilds a synchro
 there, so the (forked) `@dukelib/sheets-wasm` engine resolves `[N]!FN(args)` CCH add-in calls during
 `calculate()`. Closures can't cross the worker boundary, so the map is passed and the callback rebuilt
 worker-side (`externalCallKey` is the shared key). Source lives on the fork's `modus-tb` branch.
-Consumed via tag `tb-dist-<ver>`.
+The bundled WASM dependency also recognizes Excel built-in accounting formats 41–44. Consumed via
+tag `tb-dist-<ver>`.
