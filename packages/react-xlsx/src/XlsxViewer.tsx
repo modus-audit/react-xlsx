@@ -98,6 +98,9 @@ const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = [];
 
 type SelectionDragState = {
   anchor: XlsxCellAddress;
+  // Multi-region: a Ctrl/Cmd-initiated drag — commit as a toggle (click) or an appended region (drag)
+  // instead of replacing the selection. See finishPendingSelectionDrag / finishSelectionDrag.
+  append: boolean;
   axis: "cell" | "column" | "row";
   contentScaleX: number;
   contentScaleY: number;
@@ -6466,6 +6469,7 @@ function XlsxGrid({
     selectImage,
     selectRange,
     selection,
+    selections,
     setActiveSheetIndex,
     setChartRect,
     setImageRect,
@@ -9071,12 +9075,10 @@ function XlsxGrid({
     conditionalFormatMetricsCacheRef.current.clear();
   }, [activeSheet?.conditionalFormatRules, activeSheet?.workbookSheetIndex, revision]);
 
-  const selectionOverlay = React.useMemo(() => {
-    if (!displayedSelection) {
-      return null;
-    }
-
-    const normalized = normalizeRange(displayedSelection);
+  // Map a range to its pixel rect in the grid's coordinate space (header offsets + prefix-sum
+  // sizes). Shared by the active-selection overlay and the multi-region overlays (U3).
+  const rangeToOverlayRect = React.useCallback((range: XlsxCellRange) => {
+    const normalized = normalizeRange(range);
     const startRowIndex = rowIndexByActual.get(normalized.start.row);
     const endRowIndex = rowIndexByActual.get(normalized.end.row);
     const startColIndex = colIndexByActual.get(normalized.start.col);
@@ -9097,8 +9099,38 @@ function XlsxGrid({
       top: displayHeaderHeight + sumPrefixRange(rowPrefixSums, 0, startRowIndex - 1),
       width: sumPrefixRange(colPrefixSums, startColIndex, endColIndex)
     };
-  }, [colIndexByActual, colPrefixSums, displayHeaderHeight, displayRowHeaderWidth, displayedSelection, rowIndexByActual, rowPrefixSums]);
+  }, [colIndexByActual, colPrefixSums, displayHeaderHeight, displayRowHeaderWidth, rowIndexByActual, rowPrefixSums]);
+
+  const selectionOverlay = React.useMemo(
+    () => (displayedSelection ? rangeToOverlayRect(displayedSelection) : null),
+    [displayedSelection, rangeToOverlayRect]
+  );
   const resolvedSelectionOverlay = selectionOverlay;
+  // Multi-region (U3): once the auditor has built 2+ regions, render EVERY region as a static,
+  // declarative rect — this is the single source of truth for a non-contiguous highlight. It does
+  // NOT exclude the active region: the active region's highlight would otherwise depend on the
+  // imperative `selectionOverlayRef` overlay, which is driven by a web of drag/scroll/hide effects
+  // and cannot be relied on to sit on the just-appended cell (leaving it counted-but-unhighlighted).
+  // The imperative overlay still paints on top (z-index 24 > 23) for the active cell's drag preview.
+  const additionalSelectionOverlays = React.useMemo(() => {
+    const rects: { height: number; left: number; top: number; width: number }[] = [];
+    // Only render the static layer once there are 2+ regions; a single selection is drawn by the
+    // imperative overlay (which also animates drags). KNOWN MINOR GLITCH: the FIRST append gesture
+    // onto a single existing region briefly un-highlights that region for the duration of the
+    // gesture — the imperative overlay moves to the append preview while this layer is still empty
+    // (length 1). It self-heals on pointerup (the commit makes it 2 regions). A full fix would
+    // render committed regions here during an append gesture without disturbing normal drag preview.
+    if (selections.length <= 1) {
+      return rects;
+    }
+    for (const region of selections) {
+      const rect = rangeToOverlayRect(region);
+      if (rect) {
+        rects.push(rect);
+      }
+    }
+    return rects;
+  }, [rangeToOverlayRect, selections]);
   const { fill: selectionFill, header: selectionHeaderSurface, stroke: selectionStroke } = React.useMemo(() => resolveSelectionColors({
     palette,
     selectionColor,
@@ -10110,9 +10142,19 @@ function XlsxGrid({
   function finishPendingSelectionDrag() {
     const pendingState = pendingSelectionDragRef.current;
     clearPendingSelectionDrag();
-    if (pendingState && !pendingState.committedOnPointerDown) {
-      commitSelectionRange(pendingState.previewRange);
+    if (!pendingState || pendingState.committedOnPointerDown) {
+      return;
     }
+    if (pendingState.append) {
+      // Ctrl/Cmd+click (no drag): toggle this cell in/out of the multi-selection.
+      selectRange(pendingState.previewRange, { toggle: true });
+      // A toggle can remove or move the active region, so the imperative preview overlay's cached
+      // range no longer matches the committed selection. Clear it so the active overlay follows the
+      // new active region (or hides) instead of ghosting on the just-toggled cell.
+      selectionPreviewRangeRef.current = null;
+      return;
+    }
+    commitSelectionRange(pendingState.previewRange);
   }
 
   function promotePendingSelectionDrag(clientX: number, clientY: number) {
@@ -10278,7 +10320,16 @@ function XlsxGrid({
         } else {
           axisSelectionRef.current = null;
         }
-        commitSelectionRange(nextRange);
+        if (dragState?.append) {
+          // Ctrl/Cmd+drag: add the dragged rectangle as a new disjoint region, keeping prior
+          // regions intact (a single commit on pointerup — no per-move growth needed since the
+          // drag is shown by the imperative preview overlay until it settles here).
+          startSelectionTransition(() => {
+            selectRange(nextRange, { append: true });
+          });
+        } else {
+          commitSelectionRange(nextRange);
+        }
       } else if (!nextRange) {
         selectionPreviewRangeRef.current = null;
       }
@@ -10413,6 +10464,12 @@ function XlsxGrid({
       return;
     }
 
+    // Multi-region: Ctrl/Cmd+click toggles a disjoint region in/out of the selection — see the
+    // short-circuit just below (after targetCell is resolved). Plain click still replaces; Shift
+    // still extends the active region; arrow-key nav collapses (it calls plain selectCell).
+    // NOTE: Ctrl/Cmd+drag-to-append a rectangle is implemented in the canvas-mode pointer handler
+    // (handleCanvasBodyPointerDown), which the live viewer uses; this DOM <td> path handles only
+    // the click (toggle). N-region highlight is the additionalSelectionOverlays layer.
     event.preventDefault();
     focusGrid();
     axisSelectionRef.current = null;
@@ -10420,6 +10477,15 @@ function XlsxGrid({
       event.currentTarget.colSpan > 1 || event.currentTarget.rowSpan > 1
         ? resolvePointerCellFromGeometry(event.clientX, event.clientY) ?? cell
         : cell;
+    // Ctrl/Cmd+click (without Shift): append this cell as a new disjoint region and skip the
+    // drag session entirely, so a click never starts a range-drag that would replace (and wipe)
+    // the accumulated regions. Range-drag-to-append is the deferred sub-part (see TODO above).
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
+      // Ctrl/Cmd+click toggles this cell in/out of the selection (Excel behavior). (Non-canvas DOM
+      // path: Ctrl/Cmd+drag-to-append is canvas-only; the live viewer runs in experimentalCanvas.)
+      selectRange({ start: targetCell, end: targetCell }, { toggle: true });
+      return;
+    }
     const currentSelection = selectionRef.current;
     const anchor = event.shiftKey && currentSelection ? currentSelection.start : targetCell;
     const initialRange = normalizeRange({ start: anchor, end: targetCell });
@@ -10470,7 +10536,8 @@ function XlsxGrid({
     resolveCellPointerOriginFromClient,
     resolveMountedCellOverlayRect,
     resolveOverlayRect,
-    resolvePointerCellFromGeometry
+    resolvePointerCellFromGeometry,
+    selectRange
   ]);
 
   const handleRowPointerDown = React.useCallback((
@@ -10846,6 +10913,42 @@ function XlsxGrid({
     event.preventDefault();
     focusGrid();
     axisSelectionRef.current = null;
+    // Ctrl/Cmd+click (without Shift): append this cell as a new disjoint region and skip the drag
+    // session, so a click never starts a range-drag that would replace the accumulated regions.
+    // (Canvas-mode handler — the DOM <td> handleCellPointerDown mirrors this for non-canvas mode.)
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
+      // Ctrl/Cmd+click toggles this cell in/out of the selection; Ctrl/Cmd+drag appends the dragged
+      // rectangle as a new region. Both are decided on pointerup (click vs drag), so start an
+      // append-flagged drag session and defer the commit — see finishPendingSelectionDrag (toggle)
+      // and finishSelectionDrag (append). Nothing touches `selections` on pointerdown.
+      const appendRowIndex = rowIndexByActual.get(cell.row);
+      const appendColIndex = colIndexByActual.get(cell.col);
+      if (appendRowIndex === undefined || appendColIndex === undefined) {
+        return;
+      }
+      const appendInitialRange = normalizeRange({ start: cell, end: cell });
+      startCellSelection(
+        event.currentTarget,
+        event.pointerId,
+        cell,
+        "cell",
+        cell,
+        {
+          contentScaleX: 1,
+          contentScaleY: 1,
+          originContentX: colPrefixSums[appendColIndex] ?? 0,
+          originContentY: rowPrefixSums[appendRowIndex] ?? 0
+        },
+        resolveOverlayRect(appendInitialRange),
+        false,
+        appendInitialRange,
+        event.clientX,
+        event.clientY,
+        true
+      );
+      applyPreviewOverlay(appendInitialRange);
+      return;
+    }
     const currentSelection = selectionRef.current;
     const anchor = event.shiftKey && currentSelection ? currentSelection.start : cell;
     const initialRange = normalizeRange({ start: anchor, end: cell });
@@ -13736,12 +13839,14 @@ function XlsxGrid({
     committedOnPointerDown: boolean,
     initialRange: XlsxCellRange,
     startClientX: number,
-    startClientY: number
+    startClientY: number,
+    append: boolean = false
   ) {
     clearPendingSelectionDrag();
     const previewRange = normalizeRange(initialRange);
     pendingSelectionDragRef.current = {
       anchor,
+      append,
       axis,
       contentScaleX: pointerOrigin.contentScaleX,
       contentScaleY: pointerOrigin.contentScaleY,
@@ -14868,6 +14973,24 @@ function XlsxGrid({
                 zIndex: 24
               }}
             />
+            {additionalSelectionOverlays.map((rect, index) => (
+              <div
+                key={`sel-region-${index}`}
+                aria-hidden="true"
+                style={{
+                  backgroundColor: selectionFill,
+                  boxSizing: "border-box",
+                  boxShadow: `inset 0 0 0 ${selectionBorderWidth}px ${selectionStroke}`,
+                  height: rect.height,
+                  left: rect.left,
+                  pointerEvents: "none",
+                  position: "absolute",
+                  top: rect.top,
+                  width: rect.width,
+                  zIndex: 23
+                }}
+              />
+            ))}
             <div
               ref={activeValidationOverlayRef}
               aria-hidden="true"
@@ -15143,7 +15266,8 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
     selectedRangeAddress,
     selectCell,
     selectRange,
-    selection
+    selection,
+    selections
   } = useXlsxViewer();
 
   return React.useMemo(
@@ -15154,9 +15278,10 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
       selectedRangeAddress,
       selectCell,
       selectRange,
-      selection
+      selection,
+      selections
     }),
-    [activeCell, activeCellAddress, clearSelection, selectedRangeAddress, selectCell, selectRange, selection]
+    [activeCell, activeCellAddress, clearSelection, selectedRangeAddress, selectCell, selectRange, selection, selections]
   );
 }
 
