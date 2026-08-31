@@ -1,5 +1,6 @@
 {
   "name": "@extend-ai/react-xlsx",
+  "version": "0.11.0",
   "description": "React components and hooks for viewing XLSX workbooks",
   "license": "MIT",
   "keywords": [
@@ -40,6 +41,13 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
   "dependencies": {
     "@dukelib/sheets-wasm": "https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.15-modus.1.tar.gz",
     "@tanstack/react-virtual": "^3.13.12",
@@ -53,12 +61,17 @@
     "us-atlas": "^3.0.1",
     "world-atlas": "^2.0.2"
   },
-  "peerDependencies": {
-    "react": ">=18",
-    "react-dom": ">=18"
+  "scripts": {
+    "build": "tsup --config tsup.config.ts && node ../../scripts/copy-duke-wasm.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
   },
-  "publishConfig": {
-    "access": "public"
-  },
-  "version": "0.11.0"
+  "devDependencies": {
+    "@types/d3-geo": "^3.1.0",
+    "@types/d3-hierarchy": "^3.1.7",
+    "@types/d3-scale": "^4.0.9",
+    "@types/d3-shape": "^3.1.8",
+    "@types/geojson": "^7946.0.16",
+    "@types/topojson-client": "^3.1.5"
+  }
 }

@@ -721,6 +721,7 @@ interface XlsxViewerController {
     setZoomScale: (zoomScale: number) => void;
     selectCell: (cell: XlsxCellAddress, options?: {
         extend?: boolean;
+        append?: boolean;
     }) => void;
     /** Select a cell AND scroll it into view + repaint the selection — the same path
         keyboard navigation uses. Prefer this over selectCell for programmatic "go to cell"
@@ -729,8 +730,14 @@ interface XlsxViewerController {
     /** @internal Grid wiring: XlsxGrid registers revealCell's scroll + overlay impl here. */
     registerRevealCellImpl: (impl: ((cell: XlsxCellAddress) => void) | null) => void;
     selectChart: (id: string | null) => void;
-    selectRange: (range: XlsxCellRange) => void;
+    selectRange: (range: XlsxCellRange, options?: {
+        append?: boolean;
+        toggle?: boolean;
+    }) => void;
     selection: XlsxCellRange | null;
+    /** All selected regions (non-contiguous, ENG multi-region). `selection` is the active/last
+        region for back-compat; `selections` is the full set (length 1 for a normal selection). */
+    selections: XlsxCellRange[];
     setActiveSheetIndex: (index: number) => void;
     setActiveTabIndex: (index: number) => void;
     selectedChart: XlsxChart | null;
@@ -766,9 +773,15 @@ interface XlsxViewerSelection {
     selectedRangeAddress: string | null;
     selectCell: (cell: XlsxCellAddress, options?: {
         extend?: boolean;
+        append?: boolean;
     }) => void;
-    selectRange: (range: XlsxCellRange) => void;
+    selectRange: (range: XlsxCellRange, options?: {
+        append?: boolean;
+        toggle?: boolean;
+    }) => void;
     selection: XlsxCellRange | null;
+    /** All selected regions; `selection` is the active/last one. Length 1 for a normal selection. */
+    selections: XlsxCellRange[];
 }
 interface XlsxViewerZoom {
     canZoomIn: boolean;
