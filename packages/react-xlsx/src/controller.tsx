@@ -868,6 +868,17 @@ function normalizeRange(range: XlsxCellRange): XlsxCellRange {
   };
 }
 
+function rangesEqual(a: XlsxCellRange | null, b: XlsxCellRange | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.start.row === b.start.row &&
+    a.start.col === b.start.col &&
+    a.end.row === b.end.row &&
+    a.end.col === b.end.col
+  );
+}
+
 function rangeToA1(range: XlsxCellRange): string {
   const normalized = normalizeRange(range);
   const start = cellAddressToA1(normalized.start);
@@ -1887,6 +1898,22 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const [zoomScaleOverridesByTabId, setZoomScaleOverridesByTabId] = React.useState<Record<string, number>>({});
   const [activeCell, setActiveCell] = React.useState<XlsxCellAddress | null>(null);
   const [selection, setSelection] = React.useState<XlsxCellRange | null>(null);
+  // Non-contiguous multi-region selection. `selection` stays the active/last region for
+  // back-compat; `selections` is the full set. `selectCell`/`selectRange` update it explicitly.
+  const [selections, setSelections] = React.useState<XlsxCellRange[]>([]);
+  // Mirror `selections` in a ref so `selectRange`'s toggle path can read the current region set
+  // synchronously without re-creating the callback on every selection change.
+  const selectionsRef = React.useRef(selections);
+  selectionsRef.current = selections;
+  // Safety net for the raw `setSelection` sites (tab change, undo/redo restore) that this change
+  // does not edit: whenever `selection` becomes something that is not already the active (last)
+  // region, collapse `selections` to it. Append/extend keep `selection` === the last region, so
+  // those paths leave a multi-selection intact.
+  React.useEffect(() => {
+    setSelections((prev) =>
+      rangesEqual(prev[prev.length - 1] ?? null, selection) ? prev : selection ? [selection] : []
+    );
+  }, [selection]);
   const [selectedChartId, setSelectedChartId] = React.useState<string | null>(null);
   const [selectedImageId, setSelectedImageId] = React.useState<string | null>(null);
   const [revision, setRevision] = React.useState(0);
@@ -3786,17 +3813,28 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setRevision((current) => current + 1);
   }, [ensureChartAssetsHydrated, getChartById, readOnly, recordHistoryBeforeMutation, sheets, workbook]);
 
-  const selectCell = React.useCallback((cell: XlsxCellAddress, options?: { extend?: boolean }) => {
+  const selectCell = React.useCallback((cell: XlsxCellAddress, options?: { extend?: boolean; append?: boolean }) => {
     setSelectedChartId(null);
     setSelectedImageId(null);
     setActiveCell(cell);
     if (options?.extend && selectionAnchorRef.current) {
-      setSelection(normalizeRange({ start: selectionAnchorRef.current, end: cell }));
+      const extended = normalizeRange({ start: selectionAnchorRef.current, end: cell });
+      setSelection(extended);
+      // Grow the active (last) region in place; keep any other regions of a multi-selection.
+      setSelections((prev) => (prev.length > 1 ? [...prev.slice(0, -1), extended] : [extended]));
       return;
     }
 
     selectionAnchorRef.current = cell;
-    setSelection({ start: cell, end: cell });
+    const single = { start: cell, end: cell };
+    setSelection(single);
+    // Ctrl/Cmd+click appends a disjoint region; a plain click replaces the whole selection.
+    setSelections((prev) => {
+      if (!options?.append) return [single];
+      // Dedup to match selectRange's append path: re-appending the same cell must not duplicate a
+      // region (which would inflate a downstream Count/Sum and produce duplicate highlight keys).
+      return prev.some((r) => rangesEqual(r, single)) ? prev : [...prev, single];
+    });
   }, []);
 
   // revealCell = select a cell AND scroll it into view + repaint the selection overlay,
@@ -3826,14 +3864,51 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     [selectCell],
   );
 
-  const selectRange = React.useCallback((range: XlsxCellRange) => {
-    const normalized = normalizeRange(range);
-    setSelectedChartId(null);
-    setSelectedImageId(null);
-    selectionAnchorRef.current = normalized.start;
-    setActiveCell(normalized.end);
-    setSelection(normalized);
-  }, []);
+  const selectRange = React.useCallback(
+    (range: XlsxCellRange, options?: { append?: boolean; toggle?: boolean }) => {
+      const normalized = normalizeRange(range);
+      setSelectedChartId(null);
+      setSelectedImageId(null);
+
+      if (options?.toggle) {
+        // Ctrl/Cmd+click: toggle this region in/out of the selection (Excel behavior). Removing the
+        // region also moves the active `selection` to the new last region (or clears it) so the
+        // sync effect above doesn't immediately re-add it, and so the formula bar / overlay follow
+        // a region that is still selected.
+        const prev = selectionsRef.current;
+        const idx = prev.findIndex((r) => rangesEqual(r, normalized));
+        if (idx >= 0) {
+          const next = prev.filter((_, i) => i !== idx);
+          const active = next[next.length - 1] ?? null;
+          selectionAnchorRef.current = active ? active.start : null;
+          setActiveCell(active ? active.end : null);
+          // Wrap in a fresh object so `selection`'s identity changes even when the active region is
+          // unchanged (i.e. a NON-active region was removed). That makes the grid's overlay-
+          // repositioning effect fire and move the imperative overlay off the just-removed cell —
+          // without a new identity React sees no pixel change, skips, and the overlay ghosts there.
+          setSelection(active ? normalizeRange(active) : null);
+          setSelections(next);
+          return;
+        }
+        selectionAnchorRef.current = normalized.start;
+        setActiveCell(normalized.end);
+        setSelection(normalized);
+        setSelections([...prev, normalized]);
+        return;
+      }
+
+      selectionAnchorRef.current = normalized.start;
+      setActiveCell(normalized.end);
+      setSelection(normalized);
+      setSelections((prev) => {
+        if (!options?.append) return [normalized];
+        // Dedup a re-appended region (a Ctrl/Cmd+drag that lands on an existing rect) so it never
+        // inflates a downstream Count/Sum or produces duplicate highlight keys.
+        return prev.some((r) => rangesEqual(r, normalized)) ? prev : [...prev, normalized];
+      });
+    },
+    [],
+  );
 
   const clearSelection = React.useCallback(() => {
     selectionAnchorRef.current = null;
@@ -4483,6 +4558,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       selectImage,
       selectRange,
       selection,
+      selections,
       setActiveSheetIndex,
       setActiveTabIndex,
       setSelectedCellFormula,
@@ -4587,6 +4663,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       selectImage,
       selectRange,
       selection,
+      selections,
       setActiveSheetIndex,
       setActiveTabIndex,
       setSelectedCellFormula,
