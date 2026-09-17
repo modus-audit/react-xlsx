@@ -1,8 +1,7 @@
-# @extend-ai/react-xlsx — Modus fork (built artifact)
+# Modus React XLSX distribution
 
-This orphan branch holds the **built** package consumed by peasebell as a git dependency. It threads
-a serializable `externalFnValues` map into the Web Worker and rebuilds a synchronous `externalFnFn`
-there, so the (forked) `@dukelib/sheets-wasm` engine resolves `[N]!FN(args)` CCH add-in calls during
-`calculate()`. Closures can't cross the worker boundary, so the map is passed and the callback rebuilt
-worker-side (`externalCallKey` is the shared key). Source lives on the fork's `modus-tb` branch.
-Consumed via tag `tb-dist-<ver>`.
+Version 0.16.4-modus.1, based on upstream 0.16.4.
+
+Source: https://github.com/modus-audit/react-xlsx/commit/dac4547063bdfad8aaf8fb9c8ad09f0729d5f083
+
+The source repository's MODUS_PATCHES.md documents the patches, validation, and build commands. SOURCE.patch contains the complete code changes from upstream; the fork's existing workflows are retained.

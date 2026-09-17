@@ -1,6 +1,6 @@
 {
   "name": "@extend-ai/react-xlsx",
-  "version": "0.10.2",
+  "version": "0.16.4-modus.1",
   "description": "React components and hooks for viewing XLSX workbooks",
   "license": "MIT",
   "keywords": [
@@ -19,7 +19,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/extend-hq/react-xlsx.git"
+    "url": "git+https://github.com/modus-audit/react-xlsx.git"
   },
   "bugs": {
     "url": "https://github.com/extend-hq/react-xlsx/issues"
@@ -34,7 +34,9 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
-    }
+    },
+    "./duke_sheets_wasm_bg.wasm": "./dist/duke_sheets_wasm_bg.wasm",
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
@@ -47,29 +49,18 @@
     "react-dom": ">=18"
   },
   "dependencies": {
-    "@dukelib/sheets-wasm": "https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.15-modus.1.tar.gz",
+    "@dukelib/sheets-wasm": "https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.1.tar.gz",
     "@tanstack/react-virtual": "^3.13.12",
     "d3-geo": "^3.1.1",
     "d3-hierarchy": "^3.1.2",
     "d3-scale": "^4.0.2",
     "d3-shape": "^3.2.0",
-    "fflate": "^0.8.2",
+    "fflate": "^0.8.3",
     "regl": "^2.1.1",
     "topojson-client": "^3.1.0",
     "us-atlas": "^3.0.1",
     "world-atlas": "^2.0.2"
   },
-  "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean --external react,react-dom && tsup src/xlsx-worker.ts --format esm --sourcemap --clean false --out-dir dist",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist"
-  },
-  "devDependencies": {
-    "@types/d3-geo": "^3.1.0",
-    "@types/d3-hierarchy": "^3.1.7",
-    "@types/d3-scale": "^4.0.9",
-    "@types/d3-shape": "^3.1.8",
-    "@types/geojson": "^7946.0.16",
-    "@types/topojson-client": "^3.1.5"
-  }
+  "modusSource": "dac4547063bdfad8aaf8fb9c8ad09f0729d5f083",
+  "modusUpstream": "873cd65bf3d04c4d1ff4f61263c7a2544b6571d0"
 }

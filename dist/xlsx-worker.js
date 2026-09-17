@@ -1,3 +1,6 @@
+// src/xlsx-worker.ts
+import { strFromU8 as strFromU83, unzipSync as unzipSync2 } from "fflate";
+
 // src/charts.ts
 import { strFromU8, strToU8 } from "fflate";
 var CHART_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
@@ -623,7 +626,7 @@ function parseChartPointDataLabelsFromXml(labelsNode) {
       continue;
     }
     const layoutNode = getFirstLocalChild(pointLabelNode, "layout");
-    const manualLayoutNode = getFirstLocalChild(layoutNode, "manualLayout");
+    const manualLayoutNode = layoutNode ? getFirstLocalChild(layoutNode, "manualLayout") : null;
     labels.push({
       deleted: readChartBooleanAttribute(pointLabelNode, "delete"),
       fontSizePt: readChartLabelFontSizePt(getFirstLocalChild(pointLabelNode, "txPr")) ?? fallbackFontSizePt,
@@ -1755,7 +1758,7 @@ function normalizeChartExLegend(raw) {
     return null;
   }
   const legend = raw;
-  const position = typeof legend.pos === "string" ? normalizeLegendPosition(String(legend.pos)) : void 0;
+  const position = typeof legend.position === "string" ? normalizeLegendPosition(String(legend.position)) : void 0;
   return {
     overlay: typeof legend.overlay === "boolean" ? legend.overlay : void 0,
     position,
@@ -1876,11 +1879,11 @@ function buildChartExHistogramBins(values, rawSeries, sortByFrequency) {
     return [];
   }
   const rawRecord = rawSeries && typeof rawSeries === "object" ? rawSeries : null;
-  const layoutProperties = rawRecord?.layoutPr && typeof rawRecord.layoutPr === "object" ? rawRecord.layoutPr : null;
+  const layoutProperties = rawRecord?.layoutProperties && typeof rawRecord.layoutProperties === "object" ? rawRecord.layoutProperties : null;
   const rawBinning = layoutProperties?.binning && typeof layoutProperties.binning === "object" ? layoutProperties.binning : null;
   const minValue = Math.min(...values);
   const maxValue = Math.max(...values);
-  const explicitWidth = typeof rawBinning?.binWidth === "number" && Number.isFinite(rawBinning.binWidth) && rawBinning.binWidth > 0 ? rawBinning.binWidth : typeof rawBinning?.width === "number" && Number.isFinite(rawBinning.width) && rawBinning.width > 0 ? rawBinning.width : void 0;
+  const explicitWidth = typeof rawBinning?.binSize === "number" && Number.isFinite(rawBinning.binSize) && rawBinning.binSize > 0 ? rawBinning.binSize : void 0;
   const explicitCount = typeof rawBinning?.binCount === "number" && Number.isFinite(rawBinning.binCount) && rawBinning.binCount > 0 ? rawBinning.binCount : typeof rawBinning?.count === "number" && Number.isFinite(rawBinning.count) && rawBinning.count > 0 ? rawBinning.count : void 0;
   const closedRight = rawBinning?.intervalClosed === "r" || rawBinning?.intervalClosed === "right";
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -1933,7 +1936,7 @@ function buildChartExHistogramSeries(series, rawSeries, sortByFrequency) {
   const layout = resolveChartExSeriesLayout(rawSeries);
   const rawRecord = rawSeries && typeof rawSeries === "object" ? rawSeries : null;
   const hasBinning = Boolean(
-    layout === "clusteredColumn" && rawRecord?.layoutPr && typeof rawRecord.layoutPr === "object" && rawRecord.layoutPr.binning != null
+    layout === "clusteredColumn" && rawRecord?.layoutProperties && typeof rawRecord.layoutProperties === "object" && rawRecord.layoutProperties.binning != null
   );
   if (!hasBinning) {
     return series;
@@ -2145,7 +2148,8 @@ function collapseChartExPointSeries(chartType, series) {
   ];
 }
 function normalizeChartExChart(workbook2, workbookSheetIndex, visibleSheetIndex, raw, index, themePalette) {
-  const chart = raw && typeof raw === "object" ? raw : {};
+  const drawing = raw && typeof raw === "object" ? raw : {};
+  const chart = drawing.chartEx && typeof drawing.chartEx === "object" ? drawing.chartEx : {};
   const plotArea = chart.plotArea && typeof chart.plotArea === "object" ? chart.plotArea : {};
   const rawSeries = Array.isArray(plotArea.series) ? plotArea.series : [];
   const seriesLayouts = rawSeries.map(resolveChartExSeriesLayout);
@@ -2200,7 +2204,7 @@ function normalizeChartExChart(workbook2, workbookSheetIndex, visibleSheetIndex,
     }
   ] : [];
   const normalizedChart = {
-    anchor: normalizeChartAnchor(chart.anchor),
+    anchor: normalizeChartAnchor(drawing.anchor),
     autoTitleDeleted: void 0,
     axes,
     axisLabelColor: void 0,
@@ -2224,7 +2228,7 @@ function normalizeChartExChart(workbook2, workbookSheetIndex, visibleSheetIndex,
     id: `chart-ex-${workbookSheetIndex}-${index}`,
     is3d: void 0,
     legend: normalizeChartExLegend(chart.legend),
-    name: chartTitle,
+    name: typeof drawing.name === "string" ? drawing.name : chartTitle,
     overlap: void 0,
     plotVisibleOnly: void 0,
     raw: chart,
@@ -2252,7 +2256,7 @@ function normalizeChartExChart(workbook2, workbookSheetIndex, visibleSheetIndex,
     view3d: void 0,
     wireframe: void 0,
     workbookSheetIndex,
-    zIndex: index
+    zIndex: Array.isArray(drawing.drawingPath) && typeof drawing.drawingPath[0] === "number" ? drawing.drawingPath[0] + 1 : index + 1
   };
   applyBuiltinChartDefaults(normalizedChart, themePalette);
   return normalizedChart;
@@ -2373,10 +2377,11 @@ function normalizeChartReference(raw) {
     return null;
   }
   const record = raw;
+  const values = Array.isArray(record.numbers) ? record.numbers : Array.isArray(record.strings) ? record.strings : void 0;
   return {
     formula: typeof record.formula === "string" ? record.formula : void 0,
     refType: typeof record.refType === "string" ? record.refType : void 0,
-    values: Array.isArray(record.values) ? record.values : void 0
+    values
   };
 }
 function normalizeChartAxis(raw) {
@@ -2396,8 +2401,8 @@ function normalizeChartAxis(raw) {
     logBase: typeof axis.logBase === "number" ? axis.logBase : void 0,
     orientation: typeof axis.orientation === "string" ? axis.orientation : void 0,
     majorUnit: typeof axis.majorUnit === "number" ? axis.majorUnit : void 0,
-    max: typeof axis.max === "number" ? axis.max : void 0,
-    min: typeof axis.min === "number" ? axis.min : void 0,
+    max: typeof axis.maximum === "number" ? axis.maximum : void 0,
+    min: typeof axis.minimum === "number" ? axis.minimum : void 0,
     majorGridlines: typeof axis.majorGridlines === "boolean" ? axis.majorGridlines : void 0,
     majorTickMark: typeof axis.majorTickMark === "string" ? axis.majorTickMark : void 0,
     minorUnit: typeof axis.minorUnit === "number" ? axis.minorUnit : void 0,
@@ -2520,11 +2525,11 @@ function normalizeChartDataLabels(raw) {
     pointLabels: pointLabels && pointLabels.length > 0 ? pointLabels : void 0,
     raw: labels,
     showBubbleSize: typeof labels.showBubbleSize === "boolean" ? labels.showBubbleSize : void 0,
-    showCategoryName: typeof labels.showCategoryName === "boolean" ? labels.showCategoryName : void 0,
+    showCategoryName: typeof (labels.showCategoryName ?? labels.visibilityCategoryName) === "boolean" ? Boolean(labels.showCategoryName ?? labels.visibilityCategoryName) : void 0,
     showLegendKey: typeof labels.showLegendKey === "boolean" ? labels.showLegendKey : void 0,
     showPercent: typeof labels.showPercent === "boolean" ? labels.showPercent : void 0,
-    showSeriesName: typeof labels.showSeriesName === "boolean" ? labels.showSeriesName : void 0,
-    showValue: typeof labels.showValue === "boolean" ? labels.showValue : void 0
+    showSeriesName: typeof (labels.showSeriesName ?? labels.visibilitySeriesName) === "boolean" ? Boolean(labels.showSeriesName ?? labels.visibilitySeriesName) : void 0,
+    showValue: typeof (labels.showValue ?? labels.visibilityValue) === "boolean" ? Boolean(labels.showValue ?? labels.visibilityValue) : void 0
   };
 }
 function normalizeChartAnchor(raw) {
@@ -2536,19 +2541,52 @@ function normalizeChartAnchor(raw) {
     };
   }
   const anchor = raw;
-  const fromCol = typeof anchor.fromCol === "number" ? anchor.fromCol : 0;
-  const fromColOffsetEmu = typeof anchor.fromColOffset === "number" ? anchor.fromColOffset : 0;
-  const fromRow = typeof anchor.fromRow === "number" ? anchor.fromRow : 0;
-  const fromRowOffsetEmu = typeof anchor.fromRowOffset === "number" ? anchor.fromRowOffset : 0;
-  const rawToCol = typeof anchor.toCol === "number" ? anchor.toCol : null;
-  const rawToColOffsetEmu = typeof anchor.toColOffset === "number" ? anchor.toColOffset : 0;
-  const rawToRow = typeof anchor.toRow === "number" ? anchor.toRow : null;
-  const rawToRowOffsetEmu = typeof anchor.toRowOffset === "number" ? anchor.toRowOffset : 0;
-  const hasExplicitTo = rawToCol !== null && rawToRow !== null;
-  const collapsedWidth = hasExplicitTo && (rawToCol < fromCol || rawToCol === fromCol && rawToColOffsetEmu <= fromColOffsetEmu);
-  const collapsedHeight = hasExplicitTo && (rawToRow < fromRow || rawToRow === fromRow && rawToRowOffsetEmu <= fromRowOffsetEmu);
-  const fallbackToCol = Math.max(fromCol + 8, 8);
-  const fallbackToRow = Math.max(fromRow + 15, 15);
+  const from = anchor.from && typeof anchor.from === "object" ? anchor.from : null;
+  if (anchor.type === "oneCell") {
+    return {
+      from: {
+        col: typeof from?.col === "number" ? from.col : 0,
+        colOffsetEmu: typeof from?.colOffsetEmu === "number" ? from.colOffsetEmu : 0,
+        row: typeof from?.row === "number" ? from.row : 0,
+        rowOffsetEmu: typeof from?.rowOffsetEmu === "number" ? from.rowOffsetEmu : 0
+      },
+      kind: "one-cell",
+      sizeEmu: {
+        cx: typeof anchor.widthEmu === "number" ? anchor.widthEmu : 0,
+        cy: typeof anchor.heightEmu === "number" ? anchor.heightEmu : 0
+      }
+    };
+  }
+  if (anchor.type === "absolute") {
+    return {
+      kind: "absolute",
+      positionEmu: {
+        x: typeof anchor.xEmu === "number" ? anchor.xEmu : 0,
+        y: typeof anchor.yEmu === "number" ? anchor.yEmu : 0
+      },
+      sizeEmu: {
+        cx: typeof anchor.widthEmu === "number" ? anchor.widthEmu : 0,
+        cy: typeof anchor.heightEmu === "number" ? anchor.heightEmu : 0
+      }
+    };
+  }
+  const to = anchor.to && typeof anchor.to === "object" ? anchor.to : null;
+  const fromColValue = from?.col;
+  const fromColOffsetValue = from?.colOffsetEmu;
+  const fromRowValue = from?.row;
+  const fromRowOffsetValue = from?.rowOffsetEmu;
+  const toColValue = to?.col;
+  const toColOffsetValue = to?.colOffsetEmu;
+  const toRowValue = to?.row;
+  const toRowOffsetValue = to?.rowOffsetEmu;
+  const fromCol = typeof fromColValue === "number" ? fromColValue : 0;
+  const fromColOffsetEmu = typeof fromColOffsetValue === "number" ? fromColOffsetValue : 0;
+  const fromRow = typeof fromRowValue === "number" ? fromRowValue : 0;
+  const fromRowOffsetEmu = typeof fromRowOffsetValue === "number" ? fromRowOffsetValue : 0;
+  const rawToCol = typeof toColValue === "number" ? toColValue : 0;
+  const rawToColOffsetEmu = typeof toColOffsetValue === "number" ? toColOffsetValue : 0;
+  const rawToRow = typeof toRowValue === "number" ? toRowValue : 0;
+  const rawToRowOffsetEmu = typeof toRowOffsetValue === "number" ? toRowOffsetValue : 0;
   return {
     kind: "two-cell",
     from: {
@@ -2558,10 +2596,10 @@ function normalizeChartAnchor(raw) {
       rowOffsetEmu: fromRowOffsetEmu
     },
     to: {
-      col: !hasExplicitTo || collapsedWidth ? fallbackToCol : rawToCol,
-      colOffsetEmu: !hasExplicitTo || collapsedWidth ? 0 : rawToColOffsetEmu,
-      row: !hasExplicitTo || collapsedHeight ? fallbackToRow : rawToRow,
-      rowOffsetEmu: !hasExplicitTo || collapsedHeight ? 0 : rawToRowOffsetEmu
+      col: rawToCol,
+      colOffsetEmu: rawToColOffsetEmu,
+      row: rawToRow,
+      rowOffsetEmu: rawToRowOffsetEmu
     }
   };
 }
@@ -2675,7 +2713,7 @@ function normalizeChartTypeGroup(workbook2, workbookSheetIndex, chartId, raw, in
     chartType: typeof group.chartType === "string" ? group.chartType : "ColumnClustered",
     dataLabels: normalizeChartDataLabels(group.dataLabels),
     gapWidth: typeof group.gapWidth === "number" && Number.isFinite(group.gapWidth) ? group.gapWidth : void 0,
-    is3d: typeof group.is3d === "boolean" ? group.is3d : void 0,
+    is3d: typeof group.is3D === "boolean" ? group.is3D : void 0,
     overlap: typeof group.overlap === "number" && Number.isFinite(group.overlap) ? group.overlap : void 0,
     raw: group,
     series: rawSeries.map((entry, seriesIndex) => normalizeChartSeries(workbook2, workbookSheetIndex, `${chartId}-group-${index}`, entry, seriesIndex)),
@@ -2828,21 +2866,37 @@ function applyChartOrigins(chartsByWorkbookSheetIndex2, chartOriginsById, archiv
     });
   }
 }
+function hydrateWorkbookChartStyles(chartsByWorkbookSheetIndex2, imageAssets) {
+  const chartOriginsById = /* @__PURE__ */ new Map();
+  applyChartOrigins(chartsByWorkbookSheetIndex2, chartOriginsById, imageAssets.archive, imageAssets.sheetOrigins);
+  for (const charts of chartsByWorkbookSheetIndex2) {
+    for (const chart of charts) {
+      applyChartStyleFromXml(chart, chart.chartPath, imageAssets.archive, imageAssets.themePalette);
+      applyBuiltinChartDefaults(chart, imageAssets.themePalette);
+    }
+  }
+  return chartOriginsById;
+}
 function loadWorkbookChartAssets(workbook2, imageAssets, visibleSheetIndexByWorkbookSheetIndex, showHiddenSheets = false) {
+  const excludedChartIds = /* @__PURE__ */ new Set();
   const chartsByWorkbookSheetIndex2 = Array.from({ length: workbook2.sheetCount }, (_, workbookSheetIndex) => {
     const worksheet = workbook2.getSheet(workbookSheetIndex);
-    const rawCharts = Array.isArray(worksheet.charts) ? worksheet.charts : [];
-    const rawChartsEx = Array.isArray(worksheet.chartsEx) ? worksheet.chartsEx : [];
+    const rawCharts = worksheet.charts;
+    const rawChartsEx = worksheet.chartsEx;
     const visibleSheetIndex = visibleSheetIndexByWorkbookSheetIndex.get(workbookSheetIndex) ?? workbookSheetIndex;
     const classicCharts = rawCharts.map((rawChart, chartIndex) => {
       const chartId = `chart-${workbookSheetIndex}-${chartIndex}`;
-      const chart = rawChart && typeof rawChart === "object" ? rawChart : {};
-      const rawView3d = chart.view3d && typeof chart.view3d === "object" ? chart.view3d : null;
+      if (rawChart.hidden || !rawChart.anchor) {
+        excludedChartIds.add(chartId);
+      }
+      const drawing = rawChart && typeof rawChart === "object" ? rawChart : {};
+      const chart = drawing.chart && typeof drawing.chart === "object" ? drawing.chart : {};
+      const rawView3d = chart.view3D && typeof chart.view3D === "object" ? chart.view3D : null;
       const rawSeries = Array.isArray(chart.series) ? chart.series : [];
       const chartLevelDataLabels = normalizeChartDataLabels(chart.dataLabels);
       const firstSeriesDataLabels = rawSeries.length > 0 && rawSeries[0] && typeof rawSeries[0] === "object" ? normalizeChartDataLabels(rawSeries[0].dataLabels) : null;
       return {
-        anchor: normalizeChartAnchor(chart.anchor),
+        anchor: normalizeChartAnchor(drawing.anchor),
         autoTitleDeleted: typeof chart.autoTitleDeleted === "boolean" ? chart.autoTitleDeleted : void 0,
         axes: Array.isArray(chart.axes) ? chart.axes.map(normalizeChartAxis).filter((value) => Boolean(value)) : [],
         axisLabelColor: void 0,
@@ -2863,12 +2917,12 @@ function loadWorkbookChartAssets(workbook2, imageAssets, visibleSheetIndexByWork
         gapWidth: typeof chart.gapWidth === "number" ? chart.gapWidth : void 0,
         holeSize: typeof chart.holeSize === "number" ? chart.holeSize : void 0,
         id: chartId,
-        is3d: typeof chart.is3d === "boolean" ? chart.is3d : void 0,
+        is3d: typeof chart.is3D === "boolean" ? chart.is3D : void 0,
         legend: normalizeLegend(chart.legend) ? {
           ...normalizeLegend(chart.legend),
           position: normalizeLegendPosition(normalizeLegend(chart.legend)?.position)
         } : null,
-        name: typeof chart.name === "string" ? chart.name : void 0,
+        name: typeof drawing.name === "string" ? drawing.name : void 0,
         overlap: typeof chart.overlap === "number" ? chart.overlap : void 0,
         plotVisibleOnly: typeof chart.plotVisibleOnly === "boolean" ? chart.plotVisibleOnly : void 0,
         raw: chart,
@@ -2902,31 +2956,39 @@ function loadWorkbookChartAssets(workbook2, imageAssets, visibleSheetIndexByWork
         } : void 0,
         wireframe: typeof chart.wireframe === "boolean" ? chart.wireframe : void 0,
         workbookSheetIndex,
-        zIndex: 200 + chartIndex
+        zIndex: Array.isArray(drawing.drawingPath) && typeof drawing.drawingPath[0] === "number" ? drawing.drawingPath[0] + 1 : chartIndex + 1
       };
     });
-    const modernCharts = rawChartsEx.map((rawChartEx, chartExIndex) => normalizeChartExChart(
-      workbook2,
-      workbookSheetIndex,
-      visibleSheetIndex,
-      rawChartEx,
-      chartExIndex,
-      imageAssets?.themePalette ?? null
-    ));
+    const modernCharts = rawChartsEx.map((rawChartEx, chartExIndex) => {
+      const chartId = `chart-ex-${workbookSheetIndex}-${chartExIndex}`;
+      if (rawChartEx.hidden || !rawChartEx.anchor) {
+        excludedChartIds.add(chartId);
+      }
+      return normalizeChartExChart(
+        workbook2,
+        workbookSheetIndex,
+        visibleSheetIndex,
+        rawChartEx,
+        chartExIndex,
+        imageAssets?.themePalette ?? null
+      );
+    });
     return [...classicCharts, ...modernCharts];
   });
   const chartsheets2 = Array.isArray(workbook2.chartsheets) ? workbook2.chartsheets.map((entry, index) => normalizeChartsheet(entry, index)) : [];
   const tabs2 = buildTabs(workbook2, chartsheets2, visibleSheetIndexByWorkbookSheetIndex, showHiddenSheets);
-  const chartOriginsById = /* @__PURE__ */ new Map();
+  const chartOriginsById = imageAssets ? hydrateWorkbookChartStyles(chartsByWorkbookSheetIndex2, imageAssets) : /* @__PURE__ */ new Map();
   if (imageAssets) {
-    applyChartOrigins(chartsByWorkbookSheetIndex2, chartOriginsById, imageAssets.archive, imageAssets.sheetOrigins);
-    for (const charts of chartsByWorkbookSheetIndex2) {
-      for (const chart of charts) {
-        applyChartStyleFromXml(chart, chart.chartPath, imageAssets.archive, imageAssets.themePalette);
-        applyBuiltinChartDefaults(chart, imageAssets.themePalette);
-      }
+    for (let index = 0; index < chartsByWorkbookSheetIndex2.length; index += 1) {
+      chartsByWorkbookSheetIndex2[index] = (chartsByWorkbookSheetIndex2[index] ?? []).filter((chart) => !excludedChartIds.has(chart.id));
+    }
+    for (const id of excludedChartIds) {
+      chartOriginsById.delete(id);
     }
   } else {
+    for (let index = 0; index < chartsByWorkbookSheetIndex2.length; index += 1) {
+      chartsByWorkbookSheetIndex2[index] = (chartsByWorkbookSheetIndex2[index] ?? []).filter((chart) => !excludedChartIds.has(chart.id));
+    }
     for (const charts of chartsByWorkbookSheetIndex2) {
       for (const chart of charts) {
         applyBuiltinChartDefaults(chart, null);
@@ -2938,18 +3000,6 @@ function loadWorkbookChartAssets(workbook2, imageAssets, visibleSheetIndexByWork
     chartsByWorkbookSheetIndex: chartsByWorkbookSheetIndex2,
     chartsheets: chartsheets2,
     tabs: tabs2
-  };
-}
-
-// src/external-fn.ts
-var KEY_SEP = String.fromCharCode(1);
-function externalCallKey(name, args) {
-  return [name, ...args].join(KEY_SEP);
-}
-function makeExternalFn(values) {
-  return (name, args) => {
-    const value = values[externalCallKey(name, args)];
-    return value === void 0 ? null : value;
   };
 }
 
@@ -3111,6 +3161,61 @@ function sheetColumnWidthToPixels(width, columnCharacterWidthPx = DEFAULT_COLUMN
   const digitWidth = Math.max(1, columnCharacterWidthPx);
   const pixels = width < 1 ? Math.floor(width * (digitWidth + 5) + 0.5) : Math.floor((256 * width + Math.floor(128 / digitWidth)) / 256 * digitWidth);
   return Math.max(MIN_COL_WIDTH_PX, pixels);
+}
+function resolveWorksheetDefaultColumnWidthPixels(worksheet, columnCharacterWidthPx = DEFAULT_COLUMN_CHARACTER_WIDTH_PX, fallbackPx = sheetColumnWidthToPixels(8.43, columnCharacterWidthPx)) {
+  const width = typeof worksheet.defaultColumnWidth === "number" ? worksheet.defaultColumnWidth : Number.NaN;
+  return Number.isFinite(width) && width > 0 ? sheetColumnWidthToPixels(width, columnCharacterWidthPx) : fallbackPx;
+}
+function resolveWorksheetDefaultRowHeightPixels(worksheet, fallbackPx = Math.max(MIN_ROW_HEIGHT_PX, Math.round(15 * 1.33))) {
+  const height = typeof worksheet.defaultRowHeight === "number" ? worksheet.defaultRowHeight : Number.NaN;
+  return Number.isFinite(height) && height > 0 ? Math.max(MIN_ROW_HEIGHT_PX, Math.round(height * 1.33)) : fallbackPx;
+}
+function resolveWorksheetMergeMetadata(worksheet) {
+  const mergeMetadata = {
+    hasHorizontalMerges: false,
+    hasVerticalMerges: false,
+    maxHorizontalMergeEndCol: -1,
+    maxVerticalMergeEndRow: -1
+  };
+  const mergedRegions = Array.isArray(worksheet.mergedRegions) ? worksheet.mergedRegions : [];
+  for (const rawRegion of mergedRegions) {
+    let range = null;
+    if (typeof rawRegion === "string") {
+      range = parseA1RangeReference(rawRegion);
+    } else if (rawRegion && typeof rawRegion === "object") {
+      const region = rawRegion;
+      const startRow = typeof region.startRow === "number" ? region.startRow : Number.NaN;
+      const startCol = typeof region.startCol === "number" ? region.startCol : Number.NaN;
+      const endRow = typeof region.endRow === "number" ? region.endRow : Number.NaN;
+      const endCol = typeof region.endCol === "number" ? region.endCol : Number.NaN;
+      if ([startRow, startCol, endRow, endCol].every((value) => Number.isFinite(value) && value >= 0)) {
+        range = {
+          end: {
+            col: Math.max(startCol, endCol),
+            row: Math.max(startRow, endRow)
+          },
+          start: {
+            col: Math.min(startCol, endCol),
+            row: Math.min(startRow, endRow)
+          }
+        };
+      } else if (typeof region.range === "string") {
+        range = parseA1RangeReference(region.range);
+      }
+    }
+    if (!range) {
+      continue;
+    }
+    if (range.end.col > range.start.col) {
+      mergeMetadata.hasHorizontalMerges = true;
+      mergeMetadata.maxHorizontalMergeEndCol = Math.max(mergeMetadata.maxHorizontalMergeEndCol, range.end.col);
+    }
+    if (range.end.row > range.start.row) {
+      mergeMetadata.hasVerticalMerges = true;
+      mergeMetadata.maxVerticalMergeEndRow = Math.max(mergeMetadata.maxVerticalMergeEndRow, range.end.row);
+    }
+  }
+  return mergeMetadata;
 }
 function buildThemePalette(theme) {
   const themeOrder = ["lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"];
@@ -3707,8 +3812,8 @@ function parseWorkbookStyles(archive) {
   const xml = readArchiveText2(archive, "xl/styles.xml");
   if (!xml) {
     return {
-      defaultFont: null,
       differentialStyles: [],
+      defaultFont: null,
       namedCellStyleByName: {},
       styleById: {},
       tableStyleByName: {}
@@ -3717,8 +3822,8 @@ function parseWorkbookStyles(archive) {
   const document2 = parseXml2(xml);
   if (!document2) {
     return {
-      defaultFont: null,
       differentialStyles: [],
+      defaultFont: null,
       namedCellStyleByName: {},
       styleById: {},
       tableStyleByName: {}
@@ -3734,8 +3839,8 @@ function parseWorkbookStyles(archive) {
   const tableStylesNode = getFirstDescendant(document2, "tableStyles");
   if (!cellXfsNode) {
     return {
-      defaultFont: null,
       differentialStyles: [],
+      defaultFont: null,
       namedCellStyleByName: {},
       styleById: {},
       tableStyleByName: {}
@@ -3791,73 +3896,12 @@ function parseWorkbookStyles(archive) {
     sizePt: typeof normalFont.size === "number" ? normalFont.size : void 0
   } : null;
   return {
-    defaultFont,
     differentialStyles,
+    defaultFont,
     namedCellStyleByName,
     styleById,
     tableStyleByName
   };
-}
-function parseWorkbookTableMetadata(archive, workbookSheets) {
-  return workbookSheets.map((sheet) => {
-    const sheetRelationships = parseRelationships(archive, relsPathForDocument(sheet.path), sheet.path);
-    const sheetXml = readArchiveText2(archive, sheet.path);
-    if (!sheetXml) {
-      return [];
-    }
-    const sheetDocument = parseXml2(sheetXml);
-    if (!sheetDocument) {
-      return [];
-    }
-    return getLocalElements(sheetDocument, "tablePart").flatMap((tablePartNode) => {
-      const relationshipId = getRelationshipId(tablePartNode);
-      if (!relationshipId) {
-        return [];
-      }
-      const relationship = sheetRelationships.get(relationshipId);
-      if (!relationship) {
-        return [];
-      }
-      const tableXml = readArchiveText2(archive, relationship.target);
-      if (!tableXml) {
-        return [];
-      }
-      const tableDocument = parseXml2(tableXml);
-      const tableNode = tableDocument?.documentElement;
-      if (!tableNode || tableNode.localName !== "table") {
-        return [];
-      }
-      return [{
-        displayName: tableNode.getAttribute("displayName") ?? void 0,
-        headerRowCount: parseWorkbookTableCount(tableNode.getAttribute("headerRowCount"), 1),
-        headerRowCellStyle: tableNode.getAttribute("headerRowCellStyle") ?? void 0,
-        name: tableNode.getAttribute("name") ?? void 0,
-        reference: tableNode.getAttribute("ref") ?? void 0,
-        totalsRowCount: parseWorkbookTableCount(tableNode.getAttribute("totalsRowCount"), 0),
-        totalsRowShown: parseWorkbookTableBoolean(tableNode.getAttribute("totalsRowShown"), false)
-      }];
-    });
-  });
-}
-function parseWorkbookTableCount(value, fallback) {
-  if (value === null) {
-    return fallback;
-  }
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-function parseWorkbookTableBoolean(value, fallback) {
-  if (value === null) {
-    return fallback;
-  }
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "0" || normalized === "false" || normalized === "") {
-    return false;
-  }
-  if (normalized === "1" || normalized === "true") {
-    return true;
-  }
-  return fallback;
 }
 function parseSqrefRanges(sqref) {
   if (!sqref) {
@@ -3893,20 +3937,11 @@ function parseSpreadsheetBooleanAttribute(node, name) {
   }
   return value !== "0" && value !== "false";
 }
-var HIGHLIGHT_CONDITIONAL_FORMAT_TYPES = /* @__PURE__ */ new Set([
-  "beginsWith",
-  "cellIs",
-  "containsBlanks",
-  "containsText",
-  "endsWith",
-  "expression",
-  "notContainsBlanks",
-  "notContainsText"
-]);
-function parseStandardConditionalFormatRule(cfRuleNode, ranges, differentialStyles) {
+function parseStandardConditionalFormatRule(cfRuleNode, ranges, differentialStyles = []) {
   const type = cfRuleNode.getAttribute("type");
   const rawPriority = Number(cfRuleNode.getAttribute("priority") ?? Number.NaN);
   const priority = Number.isFinite(rawPriority) ? rawPriority : Number.MAX_SAFE_INTEGER;
+  const formulas = getChildElements(cfRuleNode, "formula").map((formulaNode) => (formulaNode.textContent ?? "").trim()).filter((formula) => formula.length > 0);
   if (type === "colorScale") {
     const colorScaleNode = getFirstChild(cfRuleNode, "colorScale");
     if (!colorScaleNode) {
@@ -3967,24 +4002,34 @@ function parseStandardConditionalFormatRule(cfRuleNode, ranges, differentialStyl
       showValue: parseSpreadsheetBooleanAttribute(iconSetNode, "showValue")
     };
   }
-  if (type && HIGHLIGHT_CONDITIONAL_FORMAT_TYPES.has(type)) {
-    const dxfId = Number(cfRuleNode.getAttribute("dxfId") ?? Number.NaN);
-    const style = Number.isFinite(dxfId) ? differentialStyles?.[dxfId] : void 0;
-    if (!style) {
-      return null;
-    }
-    return {
-      formulas: getChildElements(cfRuleNode, "formula").map((node) => node.textContent?.trim() ?? ""),
-      kind: "highlight",
-      operator: cfRuleNode.getAttribute("operator") ?? void 0,
-      priority,
-      ranges,
-      ruleType: type,
-      style,
-      text: cfRuleNode.getAttribute("text") ?? void 0
-    };
+  const rawDxfId = Number(cfRuleNode.getAttribute("dxfId") ?? Number.NaN);
+  if (!type || !Number.isFinite(rawDxfId)) {
+    return null;
   }
-  return null;
+  const style = differentialStyles[rawDxfId];
+  if (!style) {
+    return null;
+  }
+  const rawRank = Number(cfRuleNode.getAttribute("rank") ?? Number.NaN);
+  const rawStdDev = Number(cfRuleNode.getAttribute("stdDev") ?? Number.NaN);
+  return {
+    aboveAverage: parseSpreadsheetBooleanAttribute(cfRuleNode, "aboveAverage"),
+    bottom: parseSpreadsheetBooleanAttribute(cfRuleNode, "bottom"),
+    equalAverage: parseSpreadsheetBooleanAttribute(cfRuleNode, "equalAverage"),
+    formulas,
+    kind: "styled",
+    operator: cfRuleNode.getAttribute("operator") ?? void 0,
+    percent: parseSpreadsheetBooleanAttribute(cfRuleNode, "percent"),
+    priority,
+    rank: Number.isFinite(rawRank) ? rawRank : void 0,
+    ranges,
+    ruleType: type,
+    stdDev: Number.isFinite(rawStdDev) ? rawStdDev : void 0,
+    stopIfTrue: parseSpreadsheetBooleanAttribute(cfRuleNode, "stopIfTrue"),
+    style,
+    text: cfRuleNode.getAttribute("text") ?? void 0,
+    timePeriod: cfRuleNode.getAttribute("timePeriod") ?? void 0
+  };
 }
 function parseExtendedConditionalFormatRule(cfRuleNode, ranges) {
   const type = cfRuleNode.getAttribute("type");
@@ -4095,7 +4140,7 @@ function mergeConditionalFormatRule(baseRule, extendedRule) {
   }
   return baseRule;
 }
-function parseConditionalFormatRules(document2, differentialStyles) {
+function parseConditionalFormatRules(document2, differentialStyles = []) {
   const standardRules = [];
   const extendedRules = [];
   getLocalElements(document2, "conditionalFormatting").forEach((conditionalFormattingNode) => {
@@ -4138,7 +4183,7 @@ function parseConditionalFormatRules(document2, differentialStyles) {
     return nextRule;
   }).filter((rule) => rule.ranges.length > 0).sort((left, right) => left.priority - right.priority);
 }
-function parseSheetState(archive, path, options, differentialStyles) {
+function parseSheetState(archive, path, options) {
   const xml = readArchiveText2(archive, path);
   if (!xml) {
     return null;
@@ -4148,8 +4193,9 @@ function parseSheetState(archive, path, options, differentialStyles) {
     return null;
   }
   const includeCachedFormulaValues = options?.includeCachedFormulaValues ?? true;
+  const autoFilterRanges = parseSqrefRanges(getLocalElements(document2, "autoFilter")[0]?.getAttribute("ref"));
   const cachedFormulaValues = {};
-  const conditionalFormatRules = parseConditionalFormatRules(document2, differentialStyles);
+  const conditionalFormatRules = parseConditionalFormatRules(document2, options?.differentialStyles ?? []);
   const sparklines = parseSheetSparklines(document2, options?.themePalette);
   const sheetFormatNode = getLocalElements(document2, "sheetFormatPr")[0] ?? null;
   const sheetViewNode = getLocalElements(document2, "sheetView")[0] ?? null;
@@ -4157,12 +4203,6 @@ function parseSheetState(archive, path, options, differentialStyles) {
   const colWidthOverridesPx = {};
   const rowStyleIds = {};
   const colStyleIds = {};
-  const hiddenRows = /* @__PURE__ */ new Set();
-  const hiddenCols = /* @__PURE__ */ new Set();
-  let hasHorizontalMerges = false;
-  let hasVerticalMerges = false;
-  let maxHorizontalMergeEndCol = -1;
-  let maxVerticalMergeEndRow = -1;
   let minContentCol = Number.POSITIVE_INFINITY;
   let minContentRow = Number.POSITIVE_INFINITY;
   let maxContentCol = -1;
@@ -4203,15 +4243,11 @@ function parseSheetState(archive, path, options, differentialStyles) {
     const rowIndex = Number(rowNode.getAttribute("r") ?? 0) - 1;
     const height = Number(rowNode.getAttribute("ht") ?? Number.NaN);
     const styleId = Number(rowNode.getAttribute("s") ?? Number.NaN);
-    const isHidden = (rowNode.getAttribute("hidden") ?? "0") === "1";
     if (rowIndex >= 0 && Number.isFinite(height)) {
       rowHeightOverridesPx[rowIndex] = Math.max(MIN_ROW_HEIGHT_PX, Math.round(height * 1.33));
     }
     if (rowIndex >= 0 && Number.isFinite(styleId)) {
       rowStyleIds[rowIndex] = styleId;
-    }
-    if (rowIndex >= 0 && isHidden) {
-      hiddenRows.add(rowIndex);
     }
     getChildElements(rowNode, "c").forEach((cellNode) => {
       const cellRef = cellNode.getAttribute("r");
@@ -4227,28 +4263,12 @@ function parseSheetState(archive, path, options, differentialStyles) {
       }
     });
   });
-  getLocalElements(document2, "mergeCell").forEach((mergeNode) => {
-    const reference = mergeNode.getAttribute("ref");
-    const range = reference ? parseA1RangeReference(reference) : null;
-    if (!range) {
-      return;
-    }
-    if (range.end.col > range.start.col) {
-      hasHorizontalMerges = true;
-      maxHorizontalMergeEndCol = Math.max(maxHorizontalMergeEndCol, range.end.col);
-    }
-    if (range.end.row > range.start.row) {
-      hasVerticalMerges = true;
-      maxVerticalMergeEndRow = Math.max(maxVerticalMergeEndRow, range.end.row);
-    }
-  });
-  const maxMetadataCol = Math.max(maxContentCol, maxHorizontalMergeEndCol, 0) + 256;
+  const maxMetadataCol = Math.max(maxContentCol, 0) + 256;
   getLocalElements(document2, "col").forEach((colNode) => {
     const min = Number(colNode.getAttribute("min") ?? 0) - 1;
     const max = Number(colNode.getAttribute("max") ?? 0) - 1;
     const width = Number(colNode.getAttribute("width") ?? Number.NaN);
     const styleId = Number(colNode.getAttribute("style") ?? Number.NaN);
-    const isHidden = (colNode.getAttribute("hidden") ?? "0") === "1";
     if (!Number.isFinite(width)) {
       if (!Number.isFinite(styleId)) {
         return;
@@ -4263,13 +4283,11 @@ function parseSheetState(archive, path, options, differentialStyles) {
         if (Number.isFinite(styleId)) {
           colStyleIds[col] = styleId;
         }
-        if (isHidden) {
-          hiddenCols.add(col);
-        }
       }
     }
   });
   return {
+    autoFilterRanges,
     cachedFormulaValues,
     columnWidthCharacterWidthPx,
     colWidthOverridesPx,
@@ -4277,16 +4295,16 @@ function parseSheetState(archive, path, options, differentialStyles) {
     conditionalFormatRules,
     defaultColWidthPx: sheetColumnWidthToPixels(defaultColWidth, columnWidthCharacterWidthPx),
     defaultRowHeightPx: Math.max(MIN_ROW_HEIGHT_PX, Math.round(defaultRowHeight * 1.33)),
-    hasHorizontalMerges,
-    hasVerticalMerges,
-    maxHorizontalMergeEndCol,
-    maxVerticalMergeEndRow,
+    hasHorizontalMerges: false,
+    hasVerticalMerges: false,
+    maxHorizontalMergeEndCol: -1,
+    maxVerticalMergeEndRow: -1,
     maxContentCol,
     maxContentRow,
     minContentCol: Number.isFinite(minContentCol) ? minContentCol : -1,
     minContentRow: Number.isFinite(minContentRow) ? minContentRow : -1,
-    hiddenCols: [...hiddenCols].sort((left, right) => left - right),
-    hiddenRows: [...hiddenRows].sort((left, right) => left - right),
+    hiddenCols: [],
+    hiddenRows: [],
     rowHeightOverridesPx,
     rowStyleIds,
     showGridLines: (sheetViewNode?.getAttribute("showGridLines") ?? "1") !== "0",
@@ -4304,24 +4322,243 @@ function normalizeHexColor3(value) {
   }
   return "#000000";
 }
+function dukeDrawingAnchorToXlsxAnchor(anchor) {
+  if (anchor.type === "absolute") {
+    return {
+      kind: "absolute",
+      positionEmu: { x: anchor.xEmu, y: anchor.yEmu },
+      sizeEmu: { cx: anchor.widthEmu, cy: anchor.heightEmu }
+    };
+  }
+  const from = {
+    col: anchor.from.col,
+    colOffsetEmu: anchor.from.colOffsetEmu ?? 0,
+    row: anchor.from.row,
+    rowOffsetEmu: anchor.from.rowOffsetEmu ?? 0
+  };
+  if (anchor.type === "oneCell") {
+    return {
+      from,
+      kind: "one-cell",
+      sizeEmu: { cx: anchor.widthEmu, cy: anchor.heightEmu }
+    };
+  }
+  return {
+    from,
+    kind: "two-cell",
+    to: {
+      col: anchor.to.col,
+      colOffsetEmu: anchor.to.colOffsetEmu ?? 0,
+      row: anchor.to.row,
+      rowOffsetEmu: anchor.to.rowOffsetEmu ?? 0
+    }
+  };
+}
+function mapDukeDrawingColor(color) {
+  if (!color) {
+    return void 0;
+  }
+  switch (color.colorType) {
+    case "auto":
+      return { colorType: "auto" };
+    case "rgb":
+      return { b: color.b, colorType: "rgb", g: color.g, r: color.r };
+    case "argb":
+      return { a: color.a, b: color.b, colorType: "argb", g: color.g, r: color.r };
+    case "theme":
+      return { colorType: "theme", themeIndex: color.index, tint: color.tint };
+    case "indexed":
+      return { colorType: "indexed", paletteIndex: color.index };
+  }
+}
+function mapDukeDrawingFont(font) {
+  if (!font) {
+    return void 0;
+  }
+  return {
+    bold: font.bold,
+    charset: font.charset,
+    color: mapDukeDrawingColor(font.color),
+    family: font.family,
+    italic: font.italic,
+    name: font.name,
+    scheme: font.scheme,
+    size: font.size,
+    strikethrough: font.strikethrough,
+    underline: font.underline,
+    verticalAlign: font.verticalAlign
+  };
+}
+function mapDukeDrawingText(text) {
+  return {
+    horizontalAlignment: text.horizontalAlignment,
+    runs: text.runs.map((run) => ({ font: mapDukeDrawingFont(run.font), text: run.text })),
+    verticalAlignment: text.verticalAlignment
+  };
+}
+function resolveDukeDrawingColor(color, themePalette) {
+  if (!color) {
+    return void 0;
+  }
+  switch (color.colorType) {
+    case "rgb":
+      return resolveWorkbookColor({ rgb: [color.r, color.g, color.b].map((value) => value.toString(16).padStart(2, "0")).join("") }) ?? void 0;
+    case "argb":
+      return resolveWorkbookColor({ argb: [color.a, color.r, color.g, color.b].map((value) => value.toString(16).padStart(2, "0")).join("") }) ?? void 0;
+    case "theme":
+      return resolveWorkbookColor({ theme: color.index, tint: color.tint }, themePalette) ?? void 0;
+    default:
+      return void 0;
+  }
+}
+function resolveDukeDrawingText(text, themePalette) {
+  const caption = mapDukeDrawingText(text);
+  const label = normalizeControlLabel(text.runs.map((run) => run.text).join(""));
+  const firstStyledRun = text.runs.find((run) => run.font)?.font;
+  const horizontalAlignment = text.horizontalAlignment;
+  return {
+    caption,
+    fontFamily: firstStyledRun?.name,
+    fontSizePt: firstStyledRun?.size,
+    label,
+    textAlign: horizontalAlignment === "left" || horizontalAlignment === "center" || horizontalAlignment === "right" ? horizontalAlignment : void 0,
+    textColor: resolveDukeDrawingColor(firstStyledRun?.color, themePalette)
+  };
+}
+function mapDukeFormControlKind(kind, themePalette) {
+  switch (kind.kind) {
+    case "button":
+      return { ...resolveDukeDrawingText(kind.caption, themePalette), kind: "button" };
+    case "checkbox":
+      return {
+        ...resolveDukeDrawingText(kind.caption, themePalette),
+        checked: kind.state === "checked",
+        kind: "checkbox",
+        linkedCell: kind.cellLink,
+        no3D: kind.no3D,
+        state: kind.state
+      };
+    case "optionButton":
+      return {
+        ...resolveDukeDrawingText(kind.caption, themePalette),
+        checked: kind.state === "checked",
+        firstInGroup: kind.firstInGroup,
+        kind: "radio",
+        linkedCell: kind.cellLink,
+        no3D: kind.no3D,
+        state: kind.state
+      };
+    case "label":
+      return { ...resolveDukeDrawingText(kind.caption, themePalette), kind: "label" };
+    case "groupBox":
+      return {
+        ...resolveDukeDrawingText(kind.caption, themePalette),
+        kind: "group-box",
+        no3D: kind.no3D
+      };
+    case "listBox":
+      return {
+        inputRange: kind.inputRange,
+        kind: "listbox",
+        linkedCell: kind.cellLink,
+        no3D: kind.no3D,
+        selected: [...kind.selected],
+        selection: kind.selection
+      };
+    case "dropdown":
+      return {
+        inputRange: kind.inputRange,
+        kind: "dropdown",
+        lines: kind.lines,
+        linkedCell: kind.cellLink,
+        no3D: kind.no3D,
+        selected: kind.selected
+      };
+    case "scrollbar":
+      return {
+        horizontal: kind.horizontal,
+        increment: kind.increment,
+        kind: "scrollbar",
+        linkedCell: kind.cellLink,
+        max: kind.max,
+        min: kind.min,
+        page: kind.page,
+        value: kind.value
+      };
+    case "spinner":
+      return {
+        increment: kind.increment,
+        kind: "spinner",
+        linkedCell: kind.cellLink,
+        max: kind.max,
+        min: kind.min,
+        value: kind.value
+      };
+    case "unknown":
+      return {
+        ...resolveDukeDrawingText(kind.caption, themePalette),
+        kind: kind.objectType.toLowerCase() === "editbox" ? "editbox" : "unknown",
+        legacyObjectType: kind.legacyObjectType,
+        objectType: kind.objectType
+      };
+  }
+}
+function mapDukeFormControl(control, controlIndex, workbookSheetIndex, themePalette) {
+  return {
+    altText: control.altText,
+    anchor: dukeDrawingAnchorToXlsxAnchor(control.anchor),
+    controlIndex,
+    editAs: control.anchor.type === "twoCell" ? control.anchor.editAs : void 0,
+    hidden: control.hidden,
+    id: `form-control-${workbookSheetIndex}-${controlIndex}`,
+    locked: control.locked,
+    macroName: control.formControl.macroName,
+    name: control.name,
+    printable: control.printable,
+    rawClientData: control.formControl.rawClientData,
+    rawObj: control.formControl.rawObj,
+    rawProperties: control.formControl.rawProperties,
+    sheetIndex: workbookSheetIndex,
+    title: control.title,
+    workbookSheetIndex,
+    zIndex: (control.drawingPath[0] ?? controlIndex) + 1,
+    ...mapDukeFormControlKind(control.formControl.kind, themePalette)
+  };
+}
+function collectWorkbookFormControls(workbook2, themePalette) {
+  return Array.from({ length: workbook2.sheetCount }, (_, workbookSheetIndex) => {
+    try {
+      const controls = workbook2.getSheet(workbookSheetIndex).formControls;
+      return Array.isArray(controls) ? controls.flatMap((control, controlIndex) => control.anchor ? [mapDukeFormControl(control, controlIndex, workbookSheetIndex, themePalette)] : []) : [];
+    } catch {
+      return [];
+    }
+  });
+}
+function normalizeControlLabel(label) {
+  if (!label) {
+    return void 0;
+  }
+  const normalized = label.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  return normalized.length > 0 ? normalized : void 0;
+}
 function parseWorkbookStructureAssetsFromArchive(archive, options) {
   const contentTypes = parseContentTypes(archive);
   const workbookSheets = parseWorkbookSheets(archive);
   const theme = parseWorkbookTheme(archive);
   const themePalette = buildThemePalette(theme);
   const { defaultFont, differentialStyles, namedCellStyleByName, styleById, tableStyleByName } = parseWorkbookStyles(archive);
-  const tableMetadataByWorkbookSheetIndex = parseWorkbookTableMetadata(archive, workbookSheets);
   return {
     contentTypes,
     namedCellStyleByName,
-    sheetStatesByWorkbookSheetIndex: workbookSheets.map((sheet) => parseSheetState(
-      archive,
-      sheet.path,
-      { ...options, defaultFont, themePalette },
-      differentialStyles
-    )),
+    sheetStatesByWorkbookSheetIndex: workbookSheets.map((sheet) => parseSheetState(archive, sheet.path, {
+      ...options,
+      differentialStyles,
+      defaultFont,
+      themePalette
+    })),
     styleById,
-    tableMetadataByWorkbookSheetIndex,
+    tableMetadataByWorkbookSheetIndex: workbookSheets.map(() => []),
     tableStyleByName,
     theme,
     themePalette,
@@ -4382,6 +4619,18 @@ function parseWorkbookChartStyleAssets(bytes) {
 }
 function resolveSheetColumnWidthPixels(width, columnWidthCharacterWidthPx) {
   return sheetColumnWidthToPixels(width, columnWidthCharacterWidthPx);
+}
+
+// src/external-fn.ts
+var KEY_SEP = String.fromCharCode(1);
+function externalCallKey(name, args) {
+  return [name, ...args].join(KEY_SEP);
+}
+function makeExternalFn(values) {
+  return (name, args) => {
+    const value = values[externalCallKey(name, args)];
+    return value === void 0 ? null : value;
+  };
 }
 
 // src/safe-calculate.ts
@@ -4455,13 +4704,46 @@ function safeCalculate(workbook2, options = {}) {
 
 // src/wasm.ts
 var wasmModulePromise = null;
+var hasConfiguredWasmSource = false;
+var configuredWasmSource;
+var configuredWorkerWasmSource;
+function bufferSourceToArrayBuffer(source) {
+  if (source instanceof ArrayBuffer) {
+    return source.slice(0);
+  }
+  const bytes = new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+  const copy = new Uint8Array(bytes);
+  return copy.buffer;
+}
+function sourceToWorkerSource(source) {
+  if (typeof source === "string") {
+    return source;
+  }
+  if (typeof URL !== "undefined" && source instanceof URL) {
+    return source.href;
+  }
+  if (typeof Request !== "undefined" && source instanceof Request) {
+    return source.url;
+  }
+  if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) {
+    return bufferSourceToArrayBuffer(source);
+  }
+  if (typeof WebAssembly !== "undefined" && source instanceof WebAssembly.Module) {
+    return source;
+  }
+  return void 0;
+}
+function setWasmSource(source) {
+  hasConfiguredWasmSource = true;
+  configuredWasmSource = source;
+  configuredWorkerWasmSource = sourceToWorkerSource(source);
+}
 function getSheetsWasmModule() {
   if (!wasmModulePromise) {
     wasmModulePromise = import("@dukelib/sheets-wasm").then(async (mod) => {
-      try {
-        const wasmAsset = await import("@dukelib/sheets-wasm/duke_sheets_wasm_bg.wasm?url");
-        await mod.default(wasmAsset.default);
-      } catch {
+      if (configuredWasmSource !== void 0) {
+        await mod.default({ module_or_path: configuredWasmSource });
+      } else {
         await mod.default();
       }
       return mod;
@@ -4476,6 +4758,7 @@ var DEFAULT_COL_WIDTH = 80;
 var DEFAULT_ZOOM_SCALE = 100;
 var FORMULA_COUNT_THRESHOLD = 1e3;
 var FAST_STRUCTURE_PARSE_THRESHOLD_BYTES = 5 * 1024 * 1024;
+var MIN_ROW_HEIGHT_PX2 = 16;
 function isLegacyXlsWorkbook(bytes) {
   return bytes.byteLength >= 8 && bytes[0] === 208 && bytes[1] === 207 && bytes[2] === 17 && bytes[3] === 224 && bytes[4] === 161 && bytes[5] === 177 && bytes[6] === 26 && bytes[7] === 225;
 }
@@ -4488,9 +4771,83 @@ function normalizeWorksheetVisibility2(value) {
 var workbook = null;
 var chartsByWorkbookSheetIndex = [];
 var chartsheets = [];
+var formControlsByWorkbookSheetIndex = [];
 var sheets = [];
 var tablesByWorkbookSheetIndex = [];
 var tabs = [];
+function canParseXmlInWorker() {
+  return typeof DOMParser !== "undefined";
+}
+function decodeXmlAttribute(value) {
+  return value.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+function readXmlAttribute(tag, name) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(?:^|\\s)${escapedName}="([^"]*)"`).exec(tag);
+  return match ? decodeXmlAttribute(match[1] ?? "") : null;
+}
+function readArchiveText3(archive, path) {
+  const entry = archive[path];
+  return entry ? strFromU83(entry) : "";
+}
+function normalizeWorkbookRelationshipTarget(target) {
+  if (target.startsWith("/")) {
+    return target.replace(/^\/+/, "");
+  }
+  return target.startsWith("xl/") ? target : `xl/${target.replace(/^\.?\//, "")}`;
+}
+function parseWorkbookSheetPathsFromArchive(archive) {
+  const workbookXml = readArchiveText3(archive, "xl/workbook.xml");
+  const workbookRelationshipsXml = readArchiveText3(archive, "xl/_rels/workbook.xml.rels");
+  if (!workbookXml || !workbookRelationshipsXml) {
+    return [];
+  }
+  const relationshipTargetById = /* @__PURE__ */ new Map();
+  for (const match of workbookRelationshipsXml.matchAll(/<Relationship\b[^>]*>/g)) {
+    const tag = match[0];
+    const id = readXmlAttribute(tag, "Id");
+    const target = readXmlAttribute(tag, "Target");
+    if (id && target) {
+      relationshipTargetById.set(id, normalizeWorkbookRelationshipTarget(target));
+    }
+  }
+  const paths = [];
+  for (const match of workbookXml.matchAll(/<sheet\b[^>]*>/g)) {
+    const tag = match[0];
+    const relationshipId = readXmlAttribute(tag, "r:id") ?? readXmlAttribute(tag, "id");
+    const target = relationshipId ? relationshipTargetById.get(relationshipId) : null;
+    if (target) {
+      paths.push(target);
+    }
+  }
+  return paths;
+}
+function parseWorkerSheetLayoutAssets(bytes, sheetCount) {
+  try {
+    const archive = unzipSync2(bytes);
+    const workbookSheetPaths = parseWorkbookSheetPathsFromArchive(archive);
+    const sheetPaths = workbookSheetPaths.length > 0 ? workbookSheetPaths : Array.from({ length: sheetCount }, (_, index) => `xl/worksheets/sheet${index + 1}.xml`);
+    return sheetPaths.slice(0, sheetCount).map((path) => {
+      const xml = readArchiveText3(archive, path);
+      if (!xml) {
+        return null;
+      }
+      const rowHeightOverridesPx = {};
+      for (const match of xml.matchAll(/<row\b[^>]*>/g)) {
+        const tag = match[0];
+        const rowNumber = Number(readXmlAttribute(tag, "r") ?? Number.NaN);
+        const height = Number(readXmlAttribute(tag, "ht") ?? Number.NaN);
+        const rowIndex = rowNumber - 1;
+        if (rowIndex >= 0 && Number.isFinite(height)) {
+          rowHeightOverridesPx[rowIndex] = Math.max(MIN_ROW_HEIGHT_PX2, Math.round(height * 1.33));
+        }
+      }
+      return { rowHeightOverridesPx };
+    });
+  } catch {
+    return [];
+  }
+}
 function buildVisibleSheetIndexByWorkbookSheetIndex(nextWorkbook, showHiddenSheets = false) {
   const mapping = /* @__PURE__ */ new Map();
   let visibleIndex = 0;
@@ -4540,6 +4897,60 @@ function parseA1RangeReference2(reference) {
     return null;
   }
   return normalizeRange({ end, start });
+}
+function resolveWorkbookReference(targetWorkbook, defaultWorkbookSheetIndex, rawReference, resolvingNamedRange = false) {
+  const reference = rawReference.trim().replace(/^=/, "");
+  if (!reference) {
+    return null;
+  }
+  let workbookSheetIndex = defaultWorkbookSheetIndex;
+  let rangeReference = reference;
+  const bangIndex = reference.lastIndexOf("!");
+  if (bangIndex >= 0) {
+    let sheetName = reference.slice(0, bangIndex).trim();
+    rangeReference = reference.slice(bangIndex + 1).trim();
+    if (sheetName.startsWith("'") && sheetName.endsWith("'")) {
+      sheetName = sheetName.slice(1, -1).replace(/''/g, "'");
+    }
+    const resolvedSheetIndex = targetWorkbook.sheetIndex(sheetName);
+    if (resolvedSheetIndex === void 0) {
+      return null;
+    }
+    workbookSheetIndex = resolvedSheetIndex;
+  } else if (!resolvingNamedRange) {
+    const namedRange = targetWorkbook.getNamedRange(reference);
+    if (namedRange) {
+      return resolveWorkbookReference(targetWorkbook, defaultWorkbookSheetIndex, namedRange, true);
+    }
+  }
+  const range = parseA1RangeReference2(rangeReference.replace(/\$/g, ""));
+  if (!range || workbookSheetIndex < 0 || workbookSheetIndex >= targetWorkbook.sheetCount) {
+    return null;
+  }
+  try {
+    return {
+      range,
+      worksheet: targetWorkbook.getSheet(workbookSheetIndex)
+    };
+  } catch {
+    return null;
+  }
+}
+function resolveFormControlItems(targetWorkbook, workbookSheetIndex, control) {
+  if (control.kind !== "dropdown" && control.kind !== "listbox" || !control.inputRange) {
+    return [];
+  }
+  const source = resolveWorkbookReference(targetWorkbook, workbookSheetIndex, control.inputRange);
+  if (!source) {
+    return [];
+  }
+  const items = [];
+  for (let row = source.range.start.row; row <= source.range.end.row; row += 1) {
+    for (let col = source.range.start.col; col <= source.range.end.col; col += 1) {
+      items.push(source.worksheet.getFormattedValueAt(row, col));
+    }
+  }
+  return items;
 }
 function parseWorksheetFreezePanes(worksheet) {
   const rawFreezePanes = worksheet.freezePanes;
@@ -4595,23 +5006,41 @@ function resolveWorksheetZoomScale(worksheet, sheetState) {
 }
 function resolveSheetDisplayUsedRange(usedRange, sheetState) {
   const [minRow, minCol, maxRow, maxCol] = usedRange;
-  const maxMeaningfulRow = Math.max(sheetState?.maxContentRow ?? -1, sheetState?.maxVerticalMergeEndRow ?? -1);
-  const maxMeaningfulCol = Math.max(sheetState?.maxContentCol ?? -1, sheetState?.maxHorizontalMergeEndCol ?? -1);
+  const maxContentRow = sheetState?.maxContentRow ?? -1;
+  const maxContentCol = sheetState?.maxContentCol ?? -1;
+  const maxVerticalMergeEndRow = sheetState?.maxVerticalMergeEndRow ?? -1;
+  const maxHorizontalMergeEndCol = sheetState?.maxHorizontalMergeEndCol ?? -1;
+  const maxMeaningfulRow = Math.max(maxContentRow, maxVerticalMergeEndRow);
+  const maxMeaningfulCol = Math.max(maxContentCol, maxHorizontalMergeEndCol);
   if (maxMeaningfulRow < 0 && maxMeaningfulCol < 0) {
     return usedRange;
   }
   return [
     sheetState?.minContentRow !== void 0 && sheetState.minContentRow >= 0 ? Math.min(minRow, sheetState.minContentRow) : minRow,
     sheetState?.minContentCol !== void 0 && sheetState.minContentCol >= 0 ? Math.min(minCol, sheetState.minContentCol) : minCol,
-    maxMeaningfulRow >= 0 ? Math.min(maxRow, maxMeaningfulRow) : maxRow,
-    maxMeaningfulCol >= 0 ? Math.min(maxCol, maxMeaningfulCol) : maxCol
+    maxMeaningfulRow >= 0 ? maxContentRow >= 0 ? Math.min(maxRow, maxMeaningfulRow) : Math.max(maxRow, maxMeaningfulRow) : maxRow,
+    maxMeaningfulCol >= 0 ? maxContentCol >= 0 ? Math.min(maxCol, maxMeaningfulCol) : Math.max(maxCol, maxMeaningfulCol) : maxCol
   ];
 }
-function buildSheetList(nextWorkbook, structureAssets, showHiddenSheets = false) {
+function buildSheetList(nextWorkbook, structureAssets, sheetLayoutStates, showHiddenSheets = false) {
   const sheetsByWorkbookSheetIndex = [];
   for (let index = 0; index < nextWorkbook.sheetCount; index += 1) {
     const worksheet = nextWorkbook.getSheet(index);
-    const sheetState = structureAssets?.sheetStatesByWorkbookSheetIndex[index] ?? null;
+    const sheetState = structureAssets?.sheetStatesByWorkbookSheetIndex[index] ?? sheetLayoutStates?.[index] ?? null;
+    const mergeMetadata = resolveWorksheetMergeMetadata(worksheet);
+    const effectiveSheetState = {
+      ...sheetState,
+      ...mergeMetadata
+    };
+    const defaultColWidthPx = resolveWorksheetDefaultColumnWidthPixels(
+      worksheet,
+      sheetState?.columnWidthCharacterWidthPx,
+      sheetState?.defaultColWidthPx ?? DEFAULT_COL_WIDTH
+    );
+    const defaultRowHeightPx = resolveWorksheetDefaultRowHeightPixels(
+      worksheet,
+      sheetState?.defaultRowHeightPx ?? DEFAULT_ROW_HEIGHT
+    );
     const visibility = normalizeWorksheetVisibility2(worksheet.visibility);
     if (!showHiddenSheets && visibility !== "visible") {
       continue;
@@ -4621,18 +5050,19 @@ function buildSheetList(nextWorkbook, structureAssets, showHiddenSheets = false)
       if (width !== void 0 && width !== null) {
         return resolveSheetColumnWidthPixels(width, sheetState?.columnWidthCharacterWidthPx);
       }
-      return sheetState?.colWidthOverridesPx?.[col] ?? sheetState?.defaultColWidthPx ?? DEFAULT_COL_WIDTH;
+      return sheetState?.colWidthOverridesPx?.[col] ?? defaultColWidthPx;
     };
     const resolveRowHeightPx = (row) => {
       const height = worksheet.getRowHeight(row);
       if (height !== void 0 && height !== null) {
         return Math.max(Math.round(height * 1.33), 16);
       }
-      return sheetState?.rowHeightOverridesPx?.[row] ?? sheetState?.defaultRowHeightPx ?? DEFAULT_ROW_HEIGHT;
+      return sheetState?.rowHeightOverridesPx?.[row] ?? defaultRowHeightPx;
     };
     const usedRange = worksheet.usedRange();
     if (!usedRange) {
       sheetsByWorkbookSheetIndex.push({
+        autoFilterRanges: sheetState?.autoFilterRanges ?? [],
         cachedFormulaValues: sheetState?.cachedFormulaValues ?? {},
         columnWidthCharacterWidthPx: sheetState?.columnWidthCharacterWidthPx,
         colCount: 0,
@@ -4641,13 +5071,13 @@ function buildSheetList(nextWorkbook, structureAssets, showHiddenSheets = false)
         colWidths: [],
         conditionalFormatRules: sheetState?.conditionalFormatRules ?? [],
         dataValidations: parseWorksheetDataValidations(worksheet),
-        defaultColWidthPx: sheetState?.defaultColWidthPx ?? DEFAULT_COL_WIDTH,
-        defaultRowHeightPx: sheetState?.defaultRowHeightPx ?? DEFAULT_ROW_HEIGHT,
+        defaultColWidthPx,
+        defaultRowHeightPx,
         freezePanes: parseWorksheetFreezePanes(worksheet),
-        hasHorizontalMerges: sheetState?.hasHorizontalMerges ?? false,
-        hasVerticalMerges: sheetState?.hasVerticalMerges ?? false,
-        maxHorizontalMergeEndCol: sheetState?.maxHorizontalMergeEndCol ?? -1,
-        maxVerticalMergeEndRow: sheetState?.maxVerticalMergeEndRow ?? -1,
+        hasHorizontalMerges: mergeMetadata.hasHorizontalMerges,
+        hasVerticalMerges: mergeMetadata.hasVerticalMerges,
+        maxHorizontalMergeEndCol: mergeMetadata.maxHorizontalMergeEndCol,
+        maxVerticalMergeEndRow: mergeMetadata.maxVerticalMergeEndRow,
         hiddenCols: sheetState?.hiddenCols ?? [],
         hiddenRows: sheetState?.hiddenRows ?? [],
         minUsedCol: -1,
@@ -4673,25 +5103,46 @@ function buildSheetList(nextWorkbook, structureAssets, showHiddenSheets = false)
       });
       continue;
     }
-    const [minRow, minCol, maxRow, maxCol] = resolveSheetDisplayUsedRange(usedRange, sheetState);
-    const hiddenRows = (sheetState?.hiddenRows ?? []).filter((row) => row >= 0 && row <= maxRow);
-    const hiddenCols = (sheetState?.hiddenCols ?? []).filter((col) => col >= 0 && col <= maxCol);
+    const [rawMinRow, rawMinCol, resolvedMaxRow, resolvedMaxCol] = resolveSheetDisplayUsedRange(usedRange, effectiveSheetState);
+    const maxRow = Math.max(resolvedMaxRow, sheetState?.maxContentRow ?? -1, effectiveSheetState.maxVerticalMergeEndRow ?? -1);
+    const maxCol = Math.max(resolvedMaxCol, sheetState?.maxContentCol ?? -1, effectiveSheetState.maxHorizontalMergeEndCol ?? -1);
+    const minRow = structureAssets ? rawMinRow : 0;
+    const minCol = structureAssets ? rawMinCol : 0;
+    const visibleRows = [];
+    const hiddenRows = [];
+    for (let row = 0; row <= maxRow; row += 1) {
+      if (worksheet.isRowHidden(row)) {
+        hiddenRows.push(row);
+      } else {
+        visibleRows.push(row);
+      }
+    }
+    const visibleCols = [];
+    const hiddenCols = [];
+    for (let col = 0; col <= maxCol; col += 1) {
+      if (worksheet.isColumnHidden(col)) {
+        hiddenCols.push(col);
+      } else {
+        visibleCols.push(col);
+      }
+    }
     sheetsByWorkbookSheetIndex.push({
+      autoFilterRanges: sheetState?.autoFilterRanges ?? [],
       cachedFormulaValues: sheetState?.cachedFormulaValues ?? {},
       columnWidthCharacterWidthPx: sheetState?.columnWidthCharacterWidthPx,
-      colCount: Math.max(0, maxCol + 1 - hiddenCols.length),
+      colCount: visibleCols.length,
       colStyleIds: sheetState?.colStyleIds ?? {},
       colWidthOverridesPx: sheetState?.colWidthOverridesPx ?? {},
-      colWidths: [],
+      colWidths: visibleCols.map(resolveColumnWidthPx),
       conditionalFormatRules: sheetState?.conditionalFormatRules ?? [],
       dataValidations: parseWorksheetDataValidations(worksheet),
-      defaultColWidthPx: sheetState?.defaultColWidthPx ?? DEFAULT_COL_WIDTH,
-      defaultRowHeightPx: sheetState?.defaultRowHeightPx ?? DEFAULT_ROW_HEIGHT,
+      defaultColWidthPx,
+      defaultRowHeightPx,
       freezePanes: parseWorksheetFreezePanes(worksheet),
-      hasHorizontalMerges: sheetState?.hasHorizontalMerges ?? false,
-      hasVerticalMerges: sheetState?.hasVerticalMerges ?? false,
-      maxHorizontalMergeEndCol: sheetState?.maxHorizontalMergeEndCol ?? -1,
-      maxVerticalMergeEndRow: sheetState?.maxVerticalMergeEndRow ?? -1,
+      hasHorizontalMerges: mergeMetadata.hasHorizontalMerges,
+      hasVerticalMerges: mergeMetadata.hasVerticalMerges,
+      maxHorizontalMergeEndCol: mergeMetadata.maxHorizontalMergeEndCol,
+      maxVerticalMergeEndRow: mergeMetadata.maxVerticalMergeEndRow,
       hiddenCols,
       hiddenRows,
       minUsedCol: minCol,
@@ -4701,34 +5152,31 @@ function buildSheetList(nextWorkbook, structureAssets, showHiddenSheets = false)
       name: worksheet.name,
       visibility,
       namedCellStyleByName: structureAssets?.namedCellStyleByName ?? {},
-      rowCount: Math.max(0, maxRow + 1 - hiddenRows.length),
+      rowCount: visibleRows.length,
       rowHeightOverridesPx: sheetState?.rowHeightOverridesPx ?? {},
-      rowHeights: [],
+      rowHeights: visibleRows.map(resolveRowHeightPx),
       rowStyleIds: sheetState?.rowStyleIds ?? {},
       showGridLines: sheetState?.showGridLines ?? true,
       sparklines: sheetState?.sparklines ?? [],
       styleById: structureAssets?.styleById ?? {},
       tableStyleByName: structureAssets?.tableStyleByName ?? {},
       themePalette: structureAssets?.themePalette ?? { colorsByIndex: {} },
-      visibleCols: [],
-      visibleRows: [],
+      visibleCols,
+      visibleRows,
       workbookSheetIndex: index,
       zoomScale: resolveWorksheetZoomScale(worksheet, sheetState)
     });
   }
   return sheetsByWorkbookSheetIndex;
 }
-function mapWorksheetTables(worksheet, metadataForSheet) {
+function mapWorksheetTables(worksheet, autoFilterRanges = []) {
   const rawTables = worksheet?.tables ?? [];
-  return rawTables.flatMap((table, index) => {
+  const mappedTables = rawTables.flatMap((table, index) => {
     const rawColumns = Array.isArray(table.columns) ? table.columns : [];
     const rawName = typeof table.name === "string" ? table.name : `Table${index + 1}`;
     const rawDisplayName = typeof table.displayName === "string" ? table.displayName : typeof table.name === "string" ? table.name : `Table ${index + 1}`;
-    const metadata = metadataForSheet?.find(
-      (entry) => entry.name && entry.name === rawName || entry.displayName && entry.displayName === rawDisplayName || entry.reference && entry.reference === table.reference
-    );
     const rawReference = typeof table.reference === "string" ? table.reference : "";
-    const reference = metadata?.reference ?? rawReference;
+    const reference = rawReference;
     const parsedRange = parseA1RangeReference2(reference);
     if (!parsedRange) {
       return [];
@@ -4741,16 +5189,44 @@ function mapWorksheetTables(worksheet, metadataForSheet) {
       })),
       displayName: rawDisplayName,
       end: parsedRange.end,
-      headerRowCount: metadata?.headerRowCount ?? resolveWorkbookTableCount(table.headerRowCount, 1),
-      headerRowCellStyle: metadata?.headerRowCellStyle,
+      headerRowCount: resolveWorkbookTableCount(table.headerRowCount, 1),
+      headerRowCellStyle: typeof table.headerRowCellStyle === "string" ? table.headerRowCellStyle : void 0,
       name: rawName,
       reference,
       start: parsedRange.start,
       styleInfo: table.styleInfo,
-      totalsRowCount: metadata?.totalsRowCount ?? resolveWorkbookTableCount(table.totalsRowCount, 0),
-      totalsRowShown: metadata?.totalsRowShown ?? resolveWorkbookTableBoolean(table.totalsRowShown)
+      totalsRowCount: resolveWorkbookTableCount(table.totalsRowCount, 0),
+      totalsRowShown: resolveWorkbookTableBoolean(table.totalsRowShown)
     }];
   });
+  const existingReferences = new Set(mappedTables.map((table) => table.reference));
+  const mappedAutoFilterTables = autoFilterRanges.flatMap((range, index) => {
+    const reference = `${cellAddressToA1(range.start)}:${cellAddressToA1(range.end)}`;
+    if (existingReferences.has(reference)) {
+      return [];
+    }
+    const columnCount = Math.max(0, range.end.col - range.start.col + 1);
+    const columns = Array.from({ length: columnCount }, (_, columnIndex) => {
+      const headerValue = worksheet ? decodeHtmlEntities(worksheet.getFormattedValueAt(range.start.row, range.start.col + columnIndex) ?? "") : "";
+      return {
+        id: columnIndex + 1,
+        index: columnIndex,
+        name: headerValue.trim().length > 0 ? headerValue : `Column ${columnIndex + 1}`
+      };
+    });
+    return [{
+      columns,
+      displayName: `AutoFilter ${index + 1}`,
+      end: range.end,
+      headerRowCount: 1,
+      name: `__autofilter_${index + 1}_${reference}`,
+      reference,
+      start: range.start,
+      totalsRowCount: 0,
+      totalsRowShown: false
+    }];
+  });
+  return [...mappedTables, ...mappedAutoFilterTables];
 }
 function resolveWorkbookTableCount(value, fallback) {
   if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
@@ -4833,16 +5309,26 @@ async function loadWorkbook(buffer, skipXmlParsing = false, showHiddenSheets = f
   }
   const nextWorkbook = activeWorkbook;
   const shouldUseFastStructureParse = bytes.byteLength >= FAST_STRUCTURE_PARSE_THRESHOLD_BYTES && totalFormulas <= FORMULA_COUNT_THRESHOLD;
-  const structureAssets = effectiveSkipXmlParsing || shouldUseFastStructureParse ? null : parseWorkbookStructureAssets(bytes, {
+  const structureAssets = effectiveSkipXmlParsing || shouldUseFastStructureParse || !canParseXmlInWorker() ? null : parseWorkbookStructureAssets(bytes, {
     includeCachedFormulaValues: true
   });
+  formControlsByWorkbookSheetIndex = collectWorkbookFormControls(
+    nextWorkbook,
+    structureAssets?.themePalette
+  ).map(
+    (controls, workbookSheetIndex) => controls.map((control) => ({
+      ...control,
+      items: resolveFormControlItems(nextWorkbook, workbookSheetIndex, control)
+    }))
+  );
+  const sheetLayoutStates = structureAssets ? void 0 : parseWorkerSheetLayoutAssets(bytes, nextWorkbook.sheetCount);
   workbook = nextWorkbook;
-  sheets = buildSheetList(nextWorkbook, structureAssets, showHiddenSheets);
+  sheets = buildSheetList(nextWorkbook, structureAssets, sheetLayoutStates, showHiddenSheets);
   tablesByWorkbookSheetIndex = Array.from(
     { length: nextWorkbook.sheetCount },
     (_, workbookSheetIndex) => mapWorksheetTables(
       nextWorkbook.getSheet(workbookSheetIndex),
-      structureAssets?.tableMetadataByWorkbookSheetIndex[workbookSheetIndex] ?? null
+      structureAssets?.sheetStatesByWorkbookSheetIndex[workbookSheetIndex]?.autoFilterRanges ?? []
     )
   );
   const visibleSheetIndexByWorkbookSheetIndex = new Map(sheets.map((sheet, index) => [sheet.workbookSheetIndex, index]));
@@ -4852,7 +5338,7 @@ async function loadWorkbook(buffer, skipXmlParsing = false, showHiddenSheets = f
     const hasModernCharts = Array.isArray(worksheet.chartsEx) && worksheet.chartsEx.length > 0;
     return hasClassicCharts || hasModernCharts;
   }).some(Boolean);
-  const chartStyleAssets = effectiveSkipXmlParsing || !hasCharts ? null : parseWorkbookChartStyleAssets(bytes);
+  const chartStyleAssets = effectiveSkipXmlParsing || !hasCharts || !canParseXmlInWorker() ? null : parseWorkbookChartStyleAssets(bytes);
   const chartAssets = loadWorkbookChartAssets(
     nextWorkbook,
     chartStyleAssets,
@@ -4865,6 +5351,7 @@ async function loadWorkbook(buffer, skipXmlParsing = false, showHiddenSheets = f
   return {
     chartsByWorkbookSheetIndex,
     chartsheets,
+    formControlsByWorkbookSheetIndex,
     sheets,
     tablesByWorkbookSheetIndex,
     tabs
@@ -4887,7 +5374,7 @@ async function parseCharts(buffer, skipXmlParsing = false, showHiddenSheets = fa
   }
   const nextWorkbook = activeWorkbook;
   const visibleSheetIndexByWorkbookSheetIndex = buildVisibleSheetIndexByWorkbookSheetIndex(nextWorkbook, showHiddenSheets);
-  const chartStyleAssets = effectiveSkipXmlParsing ? null : parseWorkbookChartStyleAssets(bytes);
+  const chartStyleAssets = effectiveSkipXmlParsing || !canParseXmlInWorker() ? null : parseWorkbookChartStyleAssets(bytes);
   const chartAssets = loadWorkbookChartAssets(
     nextWorkbook,
     chartStyleAssets,
@@ -4906,6 +5393,9 @@ function respond(message) {
 async function handleMessage(message) {
   switch (message.type) {
     case "load": {
+      if (message.payload.wasmSource !== void 0) {
+        setWasmSource(message.payload.wasmSource);
+      }
       return loadWorkbook(
         message.payload.buffer,
         message.payload.skipXmlParsing,
@@ -4914,6 +5404,9 @@ async function handleMessage(message) {
       );
     }
     case "parseCharts": {
+      if (message.payload.wasmSource !== void 0) {
+        setWasmSource(message.payload.wasmSource);
+      }
       return parseCharts(message.payload.buffer, message.payload.skipXmlParsing, message.payload.showHiddenSheets);
     }
     case "getCellSnapshot": {
