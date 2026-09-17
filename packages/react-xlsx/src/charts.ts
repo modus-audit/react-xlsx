@@ -38,6 +38,228 @@ const SERIES_COLORS = [
   "#636363",
   "#997300"
 ];
+
+export type ParsedChartSeriesFormula = {
+  bubbleSizeFormula?: string;
+  categoryFormula: string;
+  nameFormula?: string;
+  nameLiteral?: string;
+  order: number;
+  valueFormula: string;
+};
+
+function quoteSeriesFormulaString(value: string) {
+  return `"${value.replace(/"/g, "\"\"")}"`;
+}
+
+function unquoteSeriesFormulaString(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.length < 2 || !trimmed.startsWith("\"") || !trimmed.endsWith("\"")) {
+    return null;
+  }
+
+  return trimmed.slice(1, -1).replace(/""/g, "\"");
+}
+
+function splitTopLevelSeriesArguments(value: string) {
+  const args: string[] = [];
+  let current = "";
+  let doubleQuoted = false;
+  let singleQuoted = false;
+  let depth = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index] ?? "";
+    const next = value[index + 1] ?? "";
+
+    if (doubleQuoted) {
+      current += char;
+      if (char === "\"" && next === "\"") {
+        current += next;
+        index += 1;
+      } else if (char === "\"") {
+        doubleQuoted = false;
+      }
+      continue;
+    }
+
+    if (singleQuoted) {
+      current += char;
+      if (char === "'" && next === "'") {
+        current += next;
+        index += 1;
+      } else if (char === "'") {
+        singleQuoted = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      doubleQuoted = true;
+      current += char;
+      continue;
+    }
+
+    if (char === "'") {
+      singleQuoted = true;
+      current += char;
+      continue;
+    }
+
+    if (char === "(") {
+      depth += 1;
+      current += char;
+      continue;
+    }
+
+    if (char === ")") {
+      depth = Math.max(0, depth - 1);
+      current += char;
+      continue;
+    }
+
+    if (char === "," && depth === 0) {
+      args.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  args.push(current.trim());
+  return args;
+}
+
+function readSeriesNameFormula(series: XlsxChartSeries) {
+  const raw = series.raw && typeof series.raw === "object" ? series.raw as Record<string, unknown> : null;
+  return typeof raw?.name === "string" && raw.name.length > 0 ? raw.name : null;
+}
+
+export function buildChartSeriesFormula(chart: XlsxChart | null | undefined, seriesIndex: number) {
+  const series = chart?.series[seriesIndex];
+  if (!chart || !series) {
+    return "";
+  }
+
+  const nameFormula = readSeriesNameFormula(series);
+  const nameArgument = nameFormula ?? quoteSeriesFormulaString(series.name ?? `Series ${seriesIndex + 1}`);
+  const categoryArgument = series.categoriesRef?.formula ?? "";
+  const valueArgument = series.valuesRef?.formula ?? "";
+  const orderArgument = String(seriesIndex + 1);
+  const bubbleArgument = series.bubbleSizeRef?.formula;
+
+  return [
+    `=SERIES(${nameArgument}`,
+    categoryArgument,
+    valueArgument,
+    orderArgument,
+    ...(chart.chartType === "Bubble" || bubbleArgument ? [bubbleArgument ?? ""] : [])
+  ].join(",") + ")";
+}
+
+export function parseChartSeriesFormula(formula: string, chart: XlsxChart | null | undefined): ParsedChartSeriesFormula | null {
+  const trimmed = formula.trim();
+  const withoutEquals = trimmed.startsWith("=") ? trimmed.slice(1).trim() : trimmed;
+  const match = /^SERIES\s*\(([\s\S]*)\)$/i.exec(withoutEquals);
+  if (!match) {
+    return null;
+  }
+
+  const args = splitTopLevelSeriesArguments(match[1]);
+  const isBubble = chart?.chartType === "Bubble";
+  if (args.length < 4 || args.length > 5 || (isBubble && args.length !== 5)) {
+    return null;
+  }
+
+  const [nameArg = "", categoryFormula = "", valueFormula = "", orderArg = "", bubbleSizeFormula] = args;
+  if (!categoryFormula || !valueFormula) {
+    return null;
+  }
+
+  const parsedOrder = Number(orderArg);
+  if (!Number.isFinite(parsedOrder)) {
+    return null;
+  }
+
+  const nameLiteral = unquoteSeriesFormulaString(nameArg);
+  return {
+    bubbleSizeFormula: bubbleSizeFormula && bubbleSizeFormula.length > 0 ? bubbleSizeFormula : undefined,
+    categoryFormula,
+    nameFormula: nameLiteral == null && nameArg.length > 0 ? nameArg : undefined,
+    nameLiteral: nameLiteral ?? undefined,
+    order: parsedOrder,
+    valueFormula
+  };
+}
+
+export function applyChartSeriesFormula(
+  chart: XlsxChart,
+  seriesIndex: number,
+  formula: string,
+  workbook: Workbook | null
+) {
+  const parsed = parseChartSeriesFormula(formula, chart);
+  const currentSeries = chart.series[seriesIndex];
+  if (!parsed || !currentSeries) {
+    return null;
+  }
+
+  const categoriesRef: XlsxChartReference = {
+    ...(currentSeries.categoriesRef ?? {}),
+    formula: parsed.categoryFormula
+  };
+  const valuesRef: XlsxChartReference = {
+    ...(currentSeries.valuesRef ?? {}),
+    formula: parsed.valueFormula
+  };
+  const bubbleSizeRef: XlsxChartReference | null = chart.chartType === "Bubble" || parsed.bubbleSizeFormula
+    ? {
+        ...(currentSeries.bubbleSizeRef ?? {}),
+        formula: parsed.bubbleSizeFormula
+      }
+    : currentSeries.bubbleSizeRef ?? null;
+  const raw = {
+    ...(currentSeries.raw ?? {})
+  };
+  if (parsed.nameFormula) {
+    raw.name = parsed.nameFormula;
+  } else {
+    delete raw.name;
+  }
+
+  const nextSeries: XlsxChartSeries = {
+    ...currentSeries,
+    bubbleSizeRef,
+    bubbleSizes: workbook && bubbleSizeRef?.formula
+      ? resolveReferenceValues(workbook, chart.workbookSheetIndex, bubbleSizeRef, "value").map((value) => (
+          typeof value === "number" && Number.isFinite(value) ? value : null
+        ))
+      : currentSeries.bubbleSizes,
+    categories: workbook
+      ? resolveReferenceValues(workbook, chart.workbookSheetIndex, categoriesRef, "category")
+      : currentSeries.categories,
+    categoriesRef,
+    name: parsed.nameLiteral ?? (
+      parsed.nameFormula && workbook
+        ? resolveSeriesName(workbook, chart.workbookSheetIndex, parsed.nameFormula)
+        : parsed.nameFormula ?? currentSeries.name
+    ),
+    raw,
+    values: workbook
+      ? resolveReferenceValues(workbook, chart.workbookSheetIndex, valuesRef, "value").map((value) => (
+          typeof value === "number" && Number.isFinite(value) ? value : null
+        ))
+      : currentSeries.values,
+    valuesRef
+  };
+
+  return {
+    ...chart,
+    series: chart.series.map((series, index) => index === seriesIndex ? nextSeries : series)
+  };
+}
+
 function normalizeWorksheetVisibility(value: unknown): "hidden" | "veryHidden" | "visible" {
   return value === "hidden" || value === "veryHidden" ? value : "visible";
 }
@@ -798,7 +1020,7 @@ function parseChartPointDataLabelsFromXml(labelsNode: Element): XlsxChartPointDa
     }
 
     const layoutNode = getFirstLocalChild(pointLabelNode, "layout");
-    const manualLayoutNode = getFirstLocalChild(layoutNode, "manualLayout");
+    const manualLayoutNode = layoutNode ? getFirstLocalChild(layoutNode, "manualLayout") : null;
     labels.push({
       deleted: readChartBooleanAttribute(pointLabelNode, "delete"),
       fontSizePt: readChartLabelFontSizePt(getFirstLocalChild(pointLabelNode, "txPr")) ?? fallbackFontSizePt,
@@ -1978,6 +2200,10 @@ function getLocalChildren(parent: ParentNode, localName: string) {
   );
 }
 
+function removeLocalChildren(parent: ParentNode, localName: string) {
+  getLocalChildren(parent, localName).forEach((node) => node.parentNode?.removeChild(node));
+}
+
 function getLocalDescendants(parent: ParentNode, localName: string) {
   return Array.from((parent as Element | Document).getElementsByTagName("*")).filter(
     (node) => node.localName === localName
@@ -2228,8 +2454,8 @@ function normalizeChartExLegend(raw: unknown): XlsxChartLegend | null {
   }
 
   const legend = raw as Record<string, unknown>;
-  const position = typeof legend.pos === "string"
-    ? normalizeLegendPosition(String(legend.pos))
+  const position = typeof legend.position === "string"
+    ? normalizeLegendPosition(String(legend.position))
     : undefined;
   return {
     overlay: typeof legend.overlay === "boolean" ? legend.overlay : undefined,
@@ -2385,19 +2611,17 @@ function buildChartExHistogramBins(values: number[], rawSeries: unknown, sortByF
   }
 
   const rawRecord = rawSeries && typeof rawSeries === "object" ? rawSeries as Record<string, unknown> : null;
-  const layoutProperties = rawRecord?.layoutPr && typeof rawRecord.layoutPr === "object"
-    ? rawRecord.layoutPr as Record<string, unknown>
+  const layoutProperties = rawRecord?.layoutProperties && typeof rawRecord.layoutProperties === "object"
+    ? rawRecord.layoutProperties as Record<string, unknown>
     : null;
   const rawBinning = layoutProperties?.binning && typeof layoutProperties.binning === "object"
     ? layoutProperties.binning as Record<string, unknown>
     : null;
   const minValue = Math.min(...values);
   const maxValue = Math.max(...values);
-  const explicitWidth = typeof rawBinning?.binWidth === "number" && Number.isFinite(rawBinning.binWidth) && rawBinning.binWidth > 0
-    ? rawBinning.binWidth
-    : typeof rawBinning?.width === "number" && Number.isFinite(rawBinning.width) && rawBinning.width > 0
-      ? rawBinning.width
-      : undefined;
+  const explicitWidth = typeof rawBinning?.binSize === "number" && Number.isFinite(rawBinning.binSize) && rawBinning.binSize > 0
+    ? rawBinning.binSize
+    : undefined;
   const explicitCount = typeof rawBinning?.binCount === "number" && Number.isFinite(rawBinning.binCount) && rawBinning.binCount > 0
     ? rawBinning.binCount
     : typeof rawBinning?.count === "number" && Number.isFinite(rawBinning.count) && rawBinning.count > 0
@@ -2474,9 +2698,9 @@ function buildChartExHistogramSeries(
   const rawRecord = rawSeries && typeof rawSeries === "object" ? rawSeries as Record<string, unknown> : null;
   const hasBinning = Boolean(
     layout === "clusteredColumn"
-    && rawRecord?.layoutPr
-    && typeof rawRecord.layoutPr === "object"
-    && (rawRecord.layoutPr as Record<string, unknown>).binning != null
+    && rawRecord?.layoutProperties
+    && typeof rawRecord.layoutProperties === "object"
+    && (rawRecord.layoutProperties as Record<string, unknown>).binning != null
   );
   if (!hasBinning) {
     return series;
@@ -2773,7 +2997,10 @@ function normalizeChartExChart(
   index: number,
   themePalette?: XlsxThemePalette | null
 ): XlsxChart {
-  const chart = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const drawing = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const chart = drawing.chartEx && typeof drawing.chartEx === "object"
+    ? drawing.chartEx as Record<string, unknown>
+    : {};
   const plotArea = chart.plotArea && typeof chart.plotArea === "object"
     ? chart.plotArea as Record<string, unknown>
     : {};
@@ -2854,7 +3081,7 @@ function normalizeChartExChart(
       ]
     : [];
   const normalizedChart: XlsxChart = {
-    anchor: normalizeChartAnchor(chart.anchor),
+    anchor: normalizeChartAnchor(drawing.anchor),
     autoTitleDeleted: undefined,
     axes,
     axisLabelColor: undefined,
@@ -2880,7 +3107,7 @@ function normalizeChartExChart(
     id: `chart-ex-${workbookSheetIndex}-${index}`,
     is3d: undefined,
     legend: normalizeChartExLegend(chart.legend),
-    name: chartTitle,
+    name: typeof drawing.name === "string" ? drawing.name : chartTitle,
     overlap: undefined,
     plotVisibleOnly: undefined,
     raw: chart,
@@ -2908,7 +3135,9 @@ function normalizeChartExChart(
     view3d: undefined,
     wireframe: undefined,
     workbookSheetIndex,
-    zIndex: index
+    zIndex: Array.isArray(drawing.drawingPath) && typeof drawing.drawingPath[0] === "number"
+      ? drawing.drawingPath[0] + 1
+      : index + 1
   };
 
   applyBuiltinChartDefaults(normalizedChart, themePalette);
@@ -3054,10 +3283,15 @@ function normalizeChartReference(raw: unknown): XlsxChartReference | null {
   }
 
   const record = raw as Record<string, unknown>;
+  const values = Array.isArray(record.numbers)
+    ? record.numbers
+    : Array.isArray(record.strings)
+      ? record.strings
+      : undefined;
   return {
     formula: typeof record.formula === "string" ? record.formula : undefined,
     refType: typeof record.refType === "string" ? record.refType : undefined,
-    values: Array.isArray(record.values) ? record.values as Array<number | string | null> : undefined
+    values: values as Array<number | string | null> | undefined
   };
 }
 
@@ -3084,8 +3318,8 @@ function normalizeChartAxis(raw: unknown): XlsxChartAxis | null {
     logBase: typeof axis.logBase === "number" ? axis.logBase : undefined,
     orientation: typeof axis.orientation === "string" ? axis.orientation : undefined,
     majorUnit: typeof axis.majorUnit === "number" ? axis.majorUnit : undefined,
-    max: typeof axis.max === "number" ? axis.max : undefined,
-    min: typeof axis.min === "number" ? axis.min : undefined,
+    max: typeof axis.maximum === "number" ? axis.maximum : undefined,
+    min: typeof axis.minimum === "number" ? axis.minimum : undefined,
     majorGridlines: typeof axis.majorGridlines === "boolean" ? axis.majorGridlines : undefined,
     majorTickMark: typeof axis.majorTickMark === "string" ? axis.majorTickMark : undefined,
     minorUnit: typeof axis.minorUnit === "number" ? axis.minorUnit : undefined,
@@ -3231,11 +3465,17 @@ function normalizeChartDataLabels(raw: unknown): XlsxChartDataLabels | null {
     pointLabels: pointLabels && pointLabels.length > 0 ? pointLabels : undefined,
     raw: labels,
     showBubbleSize: typeof labels.showBubbleSize === "boolean" ? labels.showBubbleSize : undefined,
-    showCategoryName: typeof labels.showCategoryName === "boolean" ? labels.showCategoryName : undefined,
+    showCategoryName: typeof (labels.showCategoryName ?? labels.visibilityCategoryName) === "boolean"
+      ? Boolean(labels.showCategoryName ?? labels.visibilityCategoryName)
+      : undefined,
     showLegendKey: typeof labels.showLegendKey === "boolean" ? labels.showLegendKey : undefined,
     showPercent: typeof labels.showPercent === "boolean" ? labels.showPercent : undefined,
-    showSeriesName: typeof labels.showSeriesName === "boolean" ? labels.showSeriesName : undefined,
-    showValue: typeof labels.showValue === "boolean" ? labels.showValue : undefined
+    showSeriesName: typeof (labels.showSeriesName ?? labels.visibilitySeriesName) === "boolean"
+      ? Boolean(labels.showSeriesName ?? labels.visibilitySeriesName)
+      : undefined,
+    showValue: typeof (labels.showValue ?? labels.visibilityValue) === "boolean"
+      ? Boolean(labels.showValue ?? labels.visibilityValue)
+      : undefined
   };
 }
 
@@ -3249,26 +3489,59 @@ function normalizeChartAnchor(raw: unknown): XlsxImageAnchor {
   }
 
   const anchor = raw as Record<string, unknown>;
-  const fromCol = typeof anchor.fromCol === "number" ? anchor.fromCol : 0;
-  const fromColOffsetEmu = typeof anchor.fromColOffset === "number" ? anchor.fromColOffset : 0;
-  const fromRow = typeof anchor.fromRow === "number" ? anchor.fromRow : 0;
-  const fromRowOffsetEmu = typeof anchor.fromRowOffset === "number" ? anchor.fromRowOffset : 0;
-  const rawToCol = typeof anchor.toCol === "number" ? anchor.toCol : null;
-  const rawToColOffsetEmu = typeof anchor.toColOffset === "number" ? anchor.toColOffset : 0;
-  const rawToRow = typeof anchor.toRow === "number" ? anchor.toRow : null;
-  const rawToRowOffsetEmu = typeof anchor.toRowOffset === "number" ? anchor.toRowOffset : 0;
-  const hasExplicitTo = rawToCol !== null && rawToRow !== null;
-  const collapsedWidth = hasExplicitTo && (
-    rawToCol < fromCol ||
-    (rawToCol === fromCol && rawToColOffsetEmu <= fromColOffsetEmu)
-  );
-  const collapsedHeight = hasExplicitTo && (
-    rawToRow < fromRow ||
-    (rawToRow === fromRow && rawToRowOffsetEmu <= fromRowOffsetEmu)
-  );
-  const fallbackToCol = Math.max(fromCol + 8, 8);
-  const fallbackToRow = Math.max(fromRow + 15, 15);
+  const from = anchor.from && typeof anchor.from === "object"
+    ? anchor.from as Record<string, unknown>
+    : null;
 
+  if (anchor.type === "oneCell") {
+    return {
+      from: {
+        col: typeof from?.col === "number" ? from.col : 0,
+        colOffsetEmu: typeof from?.colOffsetEmu === "number" ? from.colOffsetEmu : 0,
+        row: typeof from?.row === "number" ? from.row : 0,
+        rowOffsetEmu: typeof from?.rowOffsetEmu === "number" ? from.rowOffsetEmu : 0
+      },
+      kind: "one-cell",
+      sizeEmu: {
+        cx: typeof anchor.widthEmu === "number" ? anchor.widthEmu : 0,
+        cy: typeof anchor.heightEmu === "number" ? anchor.heightEmu : 0
+      }
+    };
+  }
+
+  if (anchor.type === "absolute") {
+    return {
+      kind: "absolute",
+      positionEmu: {
+        x: typeof anchor.xEmu === "number" ? anchor.xEmu : 0,
+        y: typeof anchor.yEmu === "number" ? anchor.yEmu : 0
+      },
+      sizeEmu: {
+        cx: typeof anchor.widthEmu === "number" ? anchor.widthEmu : 0,
+        cy: typeof anchor.heightEmu === "number" ? anchor.heightEmu : 0
+      }
+    };
+  }
+
+  const to = anchor.to && typeof anchor.to === "object"
+    ? anchor.to as Record<string, unknown>
+    : null;
+  const fromColValue = from?.col;
+  const fromColOffsetValue = from?.colOffsetEmu;
+  const fromRowValue = from?.row;
+  const fromRowOffsetValue = from?.rowOffsetEmu;
+  const toColValue = to?.col;
+  const toColOffsetValue = to?.colOffsetEmu;
+  const toRowValue = to?.row;
+  const toRowOffsetValue = to?.rowOffsetEmu;
+  const fromCol = typeof fromColValue === "number" ? fromColValue : 0;
+  const fromColOffsetEmu = typeof fromColOffsetValue === "number" ? fromColOffsetValue : 0;
+  const fromRow = typeof fromRowValue === "number" ? fromRowValue : 0;
+  const fromRowOffsetEmu = typeof fromRowOffsetValue === "number" ? fromRowOffsetValue : 0;
+  const rawToCol = typeof toColValue === "number" ? toColValue : 0;
+  const rawToColOffsetEmu = typeof toColOffsetValue === "number" ? toColOffsetValue : 0;
+  const rawToRow = typeof toRowValue === "number" ? toRowValue : 0;
+  const rawToRowOffsetEmu = typeof toRowOffsetValue === "number" ? toRowOffsetValue : 0;
   return {
     kind: "two-cell",
     from: {
@@ -3278,10 +3551,10 @@ function normalizeChartAnchor(raw: unknown): XlsxImageAnchor {
       rowOffsetEmu: fromRowOffsetEmu
     },
     to: {
-      col: !hasExplicitTo || collapsedWidth ? fallbackToCol : rawToCol,
-      colOffsetEmu: !hasExplicitTo || collapsedWidth ? 0 : rawToColOffsetEmu,
-      row: !hasExplicitTo || collapsedHeight ? fallbackToRow : rawToRow,
-      rowOffsetEmu: !hasExplicitTo || collapsedHeight ? 0 : rawToRowOffsetEmu
+      col: rawToCol,
+      colOffsetEmu: rawToColOffsetEmu,
+      row: rawToRow,
+      rowOffsetEmu: rawToRowOffsetEmu
     }
   };
 }
@@ -3444,7 +3717,7 @@ function normalizeChartTypeGroup(
     chartType: typeof group.chartType === "string" ? group.chartType : "ColumnClustered",
     dataLabels: normalizeChartDataLabels(group.dataLabels),
     gapWidth: typeof group.gapWidth === "number" && Number.isFinite(group.gapWidth) ? group.gapWidth : undefined,
-    is3d: typeof group.is3d === "boolean" ? group.is3d : undefined,
+    is3d: typeof group.is3D === "boolean" ? group.is3D : undefined,
     overlap: typeof group.overlap === "number" && Number.isFinite(group.overlap) ? group.overlap : undefined,
     raw: group,
     series: rawSeries.map((entry, seriesIndex) => (
@@ -3639,23 +3912,45 @@ function applyChartOrigins(
   }
 }
 
+export function hydrateWorkbookChartStyles(
+  chartsByWorkbookSheetIndex: XlsxChart[][],
+  imageAssets: Pick<WorkbookImageAssets, "archive" | "sheetOrigins" | "themePalette">
+) {
+  const chartOriginsById = new Map<string, WorkbookChartOrigin>();
+  applyChartOrigins(chartsByWorkbookSheetIndex, chartOriginsById, imageAssets.archive, imageAssets.sheetOrigins);
+  for (const charts of chartsByWorkbookSheetIndex) {
+    for (const chart of charts) {
+      applyChartStyleFromXml(chart, chart.chartPath, imageAssets.archive, imageAssets.themePalette);
+      applyBuiltinChartDefaults(chart, imageAssets.themePalette);
+    }
+  }
+  return chartOriginsById;
+}
+
 export function loadWorkbookChartAssets(
   workbook: Workbook,
   imageAssets: Pick<WorkbookImageAssets, "archive" | "sheetOrigins" | "themePalette"> | null,
   visibleSheetIndexByWorkbookSheetIndex: Map<number, number>,
   showHiddenSheets = false
 ): WorkbookChartAssets {
+  const excludedChartIds = new Set<string>();
   const chartsByWorkbookSheetIndex = Array.from({ length: workbook.sheetCount }, (_, workbookSheetIndex) => {
     const worksheet = workbook.getSheet(workbookSheetIndex);
-    const rawCharts = Array.isArray(worksheet.charts) ? worksheet.charts : [];
-    const rawChartsEx = Array.isArray(worksheet.chartsEx) ? worksheet.chartsEx : [];
+    const rawCharts = worksheet.charts;
+    const rawChartsEx = worksheet.chartsEx;
     const visibleSheetIndex = visibleSheetIndexByWorkbookSheetIndex.get(workbookSheetIndex) ?? workbookSheetIndex;
 
     const classicCharts = rawCharts.map((rawChart, chartIndex) => {
       const chartId = `chart-${workbookSheetIndex}-${chartIndex}`;
-      const chart = rawChart && typeof rawChart === "object" ? rawChart as Record<string, unknown> : {};
-      const rawView3d = chart.view3d && typeof chart.view3d === "object"
-        ? chart.view3d as Record<string, unknown>
+      if (rawChart.hidden || !rawChart.anchor) {
+        excludedChartIds.add(chartId);
+      }
+      const drawing = rawChart && typeof rawChart === "object" ? rawChart as unknown as Record<string, unknown> : {};
+      const chart = drawing.chart && typeof drawing.chart === "object"
+        ? drawing.chart as Record<string, unknown>
+        : {};
+      const rawView3d = chart.view3D && typeof chart.view3D === "object"
+        ? chart.view3D as Record<string, unknown>
         : null;
       const rawSeries = Array.isArray(chart.series) ? chart.series : [];
       const chartLevelDataLabels = normalizeChartDataLabels(chart.dataLabels);
@@ -3663,7 +3958,7 @@ export function loadWorkbookChartAssets(
         ? normalizeChartDataLabels((rawSeries[0] as Record<string, unknown>).dataLabels)
         : null;
       return {
-        anchor: normalizeChartAnchor(chart.anchor),
+        anchor: normalizeChartAnchor(drawing.anchor),
         autoTitleDeleted: typeof chart.autoTitleDeleted === "boolean" ? chart.autoTitleDeleted : undefined,
         axes: Array.isArray(chart.axes) ? chart.axes.map(normalizeChartAxis).filter((value): value is XlsxChartAxis => Boolean(value)) : [],
         axisLabelColor: undefined,
@@ -3684,14 +3979,14 @@ export function loadWorkbookChartAssets(
         gapWidth: typeof chart.gapWidth === "number" ? chart.gapWidth : undefined,
         holeSize: typeof chart.holeSize === "number" ? chart.holeSize : undefined,
         id: chartId,
-        is3d: typeof chart.is3d === "boolean" ? chart.is3d : undefined,
+        is3d: typeof chart.is3D === "boolean" ? chart.is3D : undefined,
         legend: normalizeLegend(chart.legend)
           ? {
               ...normalizeLegend(chart.legend),
               position: normalizeLegendPosition(normalizeLegend(chart.legend)?.position)
             }
           : null,
-        name: typeof chart.name === "string" ? chart.name : undefined,
+        name: typeof drawing.name === "string" ? drawing.name : undefined,
         overlap: typeof chart.overlap === "number" ? chart.overlap : undefined,
         plotVisibleOnly: typeof chart.plotVisibleOnly === "boolean" ? chart.plotVisibleOnly : undefined,
         raw: chart,
@@ -3747,20 +4042,26 @@ export function loadWorkbookChartAssets(
           : undefined,
         wireframe: typeof chart.wireframe === "boolean" ? chart.wireframe : undefined,
         workbookSheetIndex,
-        zIndex: 200 + chartIndex
+        zIndex: Array.isArray(drawing.drawingPath) && typeof drawing.drawingPath[0] === "number"
+          ? drawing.drawingPath[0] + 1
+          : chartIndex + 1
       } satisfies XlsxChart;
     });
 
-    const modernCharts = rawChartsEx.map((rawChartEx, chartExIndex) => (
-      normalizeChartExChart(
+    const modernCharts = rawChartsEx.map((rawChartEx, chartExIndex) => {
+      const chartId = `chart-ex-${workbookSheetIndex}-${chartExIndex}`;
+      if (rawChartEx.hidden || !rawChartEx.anchor) {
+        excludedChartIds.add(chartId);
+      }
+      return normalizeChartExChart(
         workbook,
         workbookSheetIndex,
         visibleSheetIndex,
         rawChartEx,
         chartExIndex,
         imageAssets?.themePalette ?? null
-      )
-    ));
+      );
+    });
 
     return [...classicCharts, ...modernCharts];
   });
@@ -3769,17 +4070,23 @@ export function loadWorkbookChartAssets(
     ? workbook.chartsheets.map((entry, index) => normalizeChartsheet(entry, index))
     : [];
   const tabs = buildTabs(workbook, chartsheets, visibleSheetIndexByWorkbookSheetIndex, showHiddenSheets);
-  const chartOriginsById = new Map<string, WorkbookChartOrigin>();
+  const chartOriginsById = imageAssets
+    ? hydrateWorkbookChartStyles(chartsByWorkbookSheetIndex, imageAssets)
+    : new Map<string, WorkbookChartOrigin>();
 
   if (imageAssets) {
-    applyChartOrigins(chartsByWorkbookSheetIndex, chartOriginsById, imageAssets.archive, imageAssets.sheetOrigins);
-    for (const charts of chartsByWorkbookSheetIndex) {
-      for (const chart of charts) {
-        applyChartStyleFromXml(chart, chart.chartPath, imageAssets.archive, imageAssets.themePalette);
-        applyBuiltinChartDefaults(chart, imageAssets.themePalette);
-      }
+    for (let index = 0; index < chartsByWorkbookSheetIndex.length; index += 1) {
+      chartsByWorkbookSheetIndex[index] = (chartsByWorkbookSheetIndex[index] ?? [])
+        .filter((chart) => !excludedChartIds.has(chart.id));
+    }
+    for (const id of excludedChartIds) {
+      chartOriginsById.delete(id);
     }
   } else {
+    for (let index = 0; index < chartsByWorkbookSheetIndex.length; index += 1) {
+      chartsByWorkbookSheetIndex[index] = (chartsByWorkbookSheetIndex[index] ?? [])
+        .filter((chart) => !excludedChartIds.has(chart.id));
+    }
     for (const charts of chartsByWorkbookSheetIndex) {
       for (const chart of charts) {
         applyBuiltinChartDefaults(chart, null);
@@ -3883,6 +4190,7 @@ function setChartTitle(chartNode: Element, value: string | undefined) {
 
 function setRefFormula(parent: Element, refNodeName: string, formula: string | undefined) {
   if (!formula) {
+    removeLocalChildren(parent, refNodeName);
     return;
   }
 
@@ -3890,38 +4198,62 @@ function setRefFormula(parent: Element, refNodeName: string, formula: string | u
   setLeafValue(refNode, "f", formula);
 }
 
-function updateSeriesNodes(chartTypeNode: Element, chart: Partial<XlsxChart>) {
+function setSeriesText(seriesNode: Element, series: XlsxChartSeries) {
+  const raw = series.raw && typeof series.raw === "object" ? series.raw as Record<string, unknown> : null;
+  const nameFormula = typeof raw?.name === "string" && raw.name.length > 0 ? raw.name : undefined;
+  if (!nameFormula && series.name === undefined) {
+    return;
+  }
+
+  const tx = ensureChild(seriesNode, "tx");
+  removeLocalChildren(tx, "strRef");
+  removeLocalChildren(tx, "v");
+  if (nameFormula) {
+    const strRef = ensureChild(tx, "strRef");
+    setLeafValue(strRef, "f", nameFormula);
+    return;
+  }
+
+  setLeafValue(tx, "v", series.name ?? "");
+}
+
+function updateSeriesNodes(plotAreaNode: Element, chart: Partial<XlsxChart>) {
   if (!chart.series) {
     return;
   }
 
-  const seriesNodes = getLocalDescendants(chartTypeNode, "ser");
+  const seriesNodes = getLocalDescendants(plotAreaNode, "ser");
   chart.series.forEach((series, index) => {
     const seriesNode = seriesNodes[index];
     if (!seriesNode) {
       return;
     }
 
-    if (series.name !== undefined) {
-      const tx = ensureChild(seriesNode, "tx");
-      const strRef = ensureChild(tx, "strRef");
-      setLeafValue(strRef, "f", series.name);
-    }
+    setSeriesText(seriesNode, series);
     if (series.categoriesRef?.formula) {
-      const target = (
-        chart.chartType === "Scatter" || chart.chartType === "ScatterLines" || chart.chartType === "ScatterSmooth"
-      )
-        ? ensureChild(seriesNode, "xVal")
-        : ensureChild(seriesNode, "cat");
-      setRefFormula(target, "strRef", series.categoriesRef.formula);
+      const target = getFirstLocalChild(seriesNode, "xVal")
+        ?? getFirstLocalChild(seriesNode, "cat")
+        ?? (
+          chart.chartType === "Scatter" || chart.chartType === "ScatterLines" || chart.chartType === "ScatterSmooth" || chart.chartType === "Bubble"
+            ? ensureChild(seriesNode, "xVal")
+            : ensureChild(seriesNode, "cat")
+        );
+      const categoryRefName = target.localName === "xVal" || getFirstLocalChild(target, "numRef") ? "numRef" : "strRef";
+      setRefFormula(target, categoryRefName, series.categoriesRef.formula);
     }
     if (series.valuesRef?.formula) {
-      const target = (
-        chart.chartType === "Scatter" || chart.chartType === "ScatterLines" || chart.chartType === "ScatterSmooth"
-      )
-        ? ensureChild(seriesNode, "yVal")
-        : ensureChild(seriesNode, "val");
+      const target = getFirstLocalChild(seriesNode, "yVal")
+        ?? getFirstLocalChild(seriesNode, "val")
+        ?? (
+          chart.chartType === "Scatter" || chart.chartType === "ScatterLines" || chart.chartType === "ScatterSmooth" || chart.chartType === "Bubble"
+            ? ensureChild(seriesNode, "yVal")
+            : ensureChild(seriesNode, "val")
+        );
       setRefFormula(target, "numRef", series.valuesRef.formula);
+    }
+    if (series.bubbleSizeRef) {
+      const target = getFirstLocalChild(seriesNode, "bubbleSize") ?? ensureChild(seriesNode, "bubbleSize");
+      setRefFormula(target, "numRef", series.bubbleSizeRef.formula);
     }
     if (series.invertIfNegative !== undefined) {
       setBooleanValue(seriesNode, "invertIfNegative", series.invertIfNegative);
@@ -4016,7 +4348,7 @@ function updateDataLabels(chartTypeNode: Element, labels: XlsxChartDataLabels | 
 }
 
 export function updateWorkbookChartAnchor(
-  imageAssets: Pick<WorkbookImageAssets, "archive">,
+  imageAssets: Pick<WorkbookImageAssets, "archive" | "dirtyArchivePaths">,
   chartAssets: WorkbookChartAssets,
   chartId: string,
   anchor: XlsxImageAnchor
@@ -4043,11 +4375,12 @@ export function updateWorkbookChartAnchor(
 
   updateAnchorNode(anchorNode, anchor);
   imageAssets.archive[normalizeArchivePath(origin.drawingPath)] = strToU8(serializeXml(drawingDocument));
+  imageAssets.dirtyArchivePaths.add(normalizeArchivePath(origin.drawingPath));
   return true;
 }
 
 export function updateWorkbookChartDefinition(
-  imageAssets: Pick<WorkbookImageAssets, "archive">,
+  imageAssets: Pick<WorkbookImageAssets, "archive" | "dirtyArchivePaths">,
   chartAssets: WorkbookChartAssets,
   chartId: string,
   patch: Partial<XlsxChart>
@@ -4100,7 +4433,7 @@ export function updateWorkbookChartDefinition(
   if (patch.dataLabels) {
     updateDataLabels(chartTypeNode, patch.dataLabels);
   }
-  updateSeriesNodes(chartTypeNode, patch);
+  updateSeriesNodes(plotAreaNode, patch);
   updateAxisNode(
     getLocalChildren(plotAreaNode, "catAx")[0]
       ?? getLocalChildren(plotAreaNode, "dateAx")[0]
@@ -4111,5 +4444,6 @@ export function updateWorkbookChartDefinition(
   updateAxisNode(getLocalChildren(plotAreaNode, "valAx")[0] ?? null, patch.valueAxis);
 
   imageAssets.archive[normalizeArchivePath(origin.chartPath)] = strToU8(serializeXml(chartDocument));
+  imageAssets.dirtyArchivePaths.add(normalizeArchivePath(origin.chartPath));
   return true;
 }

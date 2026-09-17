@@ -1,7 +1,21 @@
 import * as React from "react";
-import type { Workbook } from "@dukelib/sheets-wasm";
+import type {
+  DrawingAnchor as DukeDrawingAnchor,
+  DrawingColor as DukeDrawingColor,
+  DrawingInput as DukeDrawingInput,
+  DrawingRunFont as DukeDrawingRunFont,
+  DrawingText as DukeDrawingText,
+  FormControlDrawing as DukeFormControlDrawing,
+  FormControlKind as DukeFormControlKind,
+  FormControlKindInput as DukeFormControlKindInput,
+  ImageDrawing as DukeImageDrawing,
+  Workbook
+} from "@dukelib/sheets-wasm";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
+  applyChartSeriesFormula,
+  buildChartSeriesFormula,
+  hydrateWorkbookChartStyles,
   loadWorkbookChartAssets,
   updateWorkbookChartAnchor,
   updateWorkbookChartDefinition,
@@ -9,34 +23,51 @@ import {
 } from "./charts";
 import { resolveWorkbookColor, resolveWorkbookFillStyle } from "./colors";
 import {
+  collectWorkbookFormControls,
+  dukeDrawingAnchorToXlsxAnchor,
   mergeWorkbookImageAssets,
   parseWorkbookImageAssets,
   pxToSheetColumnWidth,
   rectToImageAnchor,
+  refreshWorkbookFormControls,
   resolveContentSheetAxisPixels,
+  resolveWorksheetDefaultColumnWidthPixels,
+  resolveWorksheetDefaultRowHeightPixels,
+  resolveWorksheetHiddenCols,
+  resolveWorksheetHiddenRows,
+  resolveWorksheetMergeMetadata,
   resolveSheetColumnWidthPixels,
   resolveRenderedSheetAxisPixels,
   resolveSheetRowHeightPixels,
   resizeImageRect,
   revokeWorkbookImageAssets,
   updateWorkbookImageAnchor,
+  xlsxAnchorToDukeDrawingAnchor,
   type WorkbookImageAssets,
-  type WorkbookImageSheetOrigin,
-  type WorkbookTableMetadata
+  type WorkbookImageSheetOrigin
 } from "./images";
+import { type ExternalFnValues, makeExternalFn } from "./external-fn";
 import { safeCalculate, tryRecalculate } from "./safe-calculate";
-import { getSheetsWasmModule } from "./wasm";
+import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
 import { XlsxWorkerClient } from "./worker-client";
+import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
 import type {
   UseXlsxViewerControllerOptions,
   XlsxChart,
+  XlsxChartElementSelection,
   XlsxChartsheet,
   XlsxCellAddress,
   XlsxCellRange,
+  XlsxCellStyleColorInput,
+  XlsxCellStyleInput,
   XlsxClipboardData,
   XlsxConditionalFormatRule,
   XlsxDataValidation,
+  XlsxDrawingLayout,
   XlsxFormControl,
+  XlsxFormControlCaptionInput,
+  XlsxFormControlInput,
+  XlsxFormControlPatch,
   XlsxFreezePanes,
   XlsxImage,
   XlsxImageRect,
@@ -72,7 +103,6 @@ const MAX_INTERACTIVE_WORKSHEET_XML_BYTES = 200 * 1024 * 1024;
 const MAX_INTERACTIVE_SHARED_STRINGS_BYTES = 50 * 1024 * 1024;
 const MAX_INTERACTIVE_TOTAL_XML_BYTES = 256 * 1024 * 1024;
 const EMU_PER_PIXEL = 9525;
-const IMAGE_BATCH_ROW_COUNT = 256;
 const DEFAULT_ZOOM_SCALE = 100;
 const MIN_ZOOM_SCALE = 10;
 const MAX_ZOOM_SCALE = 400;
@@ -110,6 +140,7 @@ type SnapshotHistoryEntry = {
 
 type CellMutationState = {
   formula: string | null;
+  style: unknown;
   value: unknown;
 };
 
@@ -186,112 +217,6 @@ function resolveNextZoomScale(currentZoomScale: number, direction: 1 | -1) {
       : Math.floor(currentZoomScale / ZOOM_STEP) * ZOOM_STEP
   );
 }
-
-type WorksheetApiImageInfo = {
-  altText?: unknown;
-  height?: unknown;
-  source?: unknown;
-  width?: unknown;
-};
-
-type WorksheetDirectImageAnchorInfo = {
-  fromCol?: unknown;
-  fromColOffset?: unknown;
-  fromRow?: unknown;
-  fromRowOffset?: unknown;
-  toCol?: unknown;
-  toColOffset?: unknown;
-  toRow?: unknown;
-  toRowOffset?: unknown;
-};
-
-type WorksheetDirectImageInfo = {
-  anchor?: unknown;
-  data?: unknown;
-  format?: unknown;
-  id?: unknown;
-  mediaPath?: unknown;
-  name?: unknown;
-  widthEmu?: unknown;
-  heightEmu?: unknown;
-};
-
-type WorksheetDirectShapeParagraphRunInfo = {
-  bold?: unknown;
-  color?: unknown;
-  fontFamily?: unknown;
-  fontSizePt?: unknown;
-  italic?: unknown;
-  text?: unknown;
-  underline?: unknown;
-};
-
-type WorksheetDirectShapeParagraphInfo = {
-  align?: unknown;
-  runs?: unknown;
-};
-
-type WorksheetDirectShapeTextBoxInfo = {
-  horizontalAlign?: unknown;
-  insetPx?: {
-    bottom?: unknown;
-    left?: unknown;
-    right?: unknown;
-    top?: unknown;
-  } | null;
-  verticalAlign?: unknown;
-};
-
-type WorksheetDirectShapeInfo = {
-  anchor?: unknown;
-  description?: unknown;
-  fill?: {
-    color?: unknown;
-    none?: unknown;
-    opacity?: unknown;
-  } | null;
-  flipH?: unknown;
-  flipV?: unknown;
-  geometry?: unknown;
-  geometryAdjustments?: unknown;
-  hyperlink?: unknown;
-  id?: unknown;
-  name?: unknown;
-  paragraphs?: unknown;
-  rotationDeg?: unknown;
-  scaleX?: unknown;
-  scaleY?: unknown;
-  stroke?: {
-    color?: unknown;
-    dash?: unknown;
-    headEndType?: unknown;
-    none?: unknown;
-    opacity?: unknown;
-    tailEndType?: unknown;
-    widthPx?: unknown;
-  } | null;
-  svgPath?: unknown;
-  svgViewBox?: {
-    height?: unknown;
-    width?: unknown;
-  } | null;
-  text?: unknown;
-  textBox?: WorksheetDirectShapeTextBoxInfo | null;
-};
-
-type WorksheetApiRowCell = {
-  col?: unknown;
-  image?: WorksheetApiImageInfo | null;
-};
-
-type WorksheetApiRow = {
-  cells?: unknown;
-  index?: unknown;
-};
-
-type WorksheetWithRowsBatch = ReturnType<Workbook["getSheet"]> & {
-  getRowsBatch?: (startRow: number, maxRows: number, options?: unknown) => unknown;
-};
 
 type ZipEntryMetadata = {
   compressedSize: number;
@@ -502,8 +427,12 @@ function resolveSheetDisplayUsedRange(
   } | null
 ): [number, number, number, number] {
   const [minRow, minCol, maxRow, maxCol] = usedRange;
-  const maxMeaningfulRow = Math.max(sheetState?.maxContentRow ?? -1, sheetState?.maxVerticalMergeEndRow ?? -1);
-  const maxMeaningfulCol = Math.max(sheetState?.maxContentCol ?? -1, sheetState?.maxHorizontalMergeEndCol ?? -1);
+  const maxContentRow = sheetState?.maxContentRow ?? -1;
+  const maxContentCol = sheetState?.maxContentCol ?? -1;
+  const maxVerticalMergeEndRow = sheetState?.maxVerticalMergeEndRow ?? -1;
+  const maxHorizontalMergeEndCol = sheetState?.maxHorizontalMergeEndCol ?? -1;
+  const maxMeaningfulRow = Math.max(maxContentRow, maxVerticalMergeEndRow);
+  const maxMeaningfulCol = Math.max(maxContentCol, maxHorizontalMergeEndCol);
 
   if (maxMeaningfulRow < 0 && maxMeaningfulCol < 0) {
     return usedRange;
@@ -512,14 +441,19 @@ function resolveSheetDisplayUsedRange(
   return [
     sheetState?.minContentRow !== undefined && sheetState.minContentRow >= 0 ? Math.min(minRow, sheetState.minContentRow) : minRow,
     sheetState?.minContentCol !== undefined && sheetState.minContentCol >= 0 ? Math.min(minCol, sheetState.minContentCol) : minCol,
-    maxMeaningfulRow >= 0 ? Math.min(maxRow, maxMeaningfulRow) : maxRow,
-    maxMeaningfulCol >= 0 ? Math.min(maxCol, maxMeaningfulCol) : maxCol
+    maxMeaningfulRow >= 0
+      ? (maxContentRow >= 0 ? Math.min(maxRow, maxMeaningfulRow) : Math.max(maxRow, maxMeaningfulRow))
+      : maxRow,
+    maxMeaningfulCol >= 0
+      ? (maxContentCol >= 0 ? Math.min(maxCol, maxMeaningfulCol) : Math.max(maxCol, maxMeaningfulCol))
+      : maxCol
   ];
 }
 
 function buildSheetList(
   workbook: Workbook,
   sheetStatesByWorkbookSheetIndex?: Array<{
+    autoFilterRanges?: XlsxCellRange[];
     cachedFormulaValues?: Record<string, string>;
     columnWidthCharacterWidthPx?: number;
     colWidthOverridesPx?: Record<number, number>;
@@ -553,6 +487,20 @@ function buildSheetList(
   for (let index = 0; index < workbook.sheetCount; index += 1) {
     const worksheet = workbook.getSheet(index);
     const sheetState = sheetStatesByWorkbookSheetIndex?.[index] ?? null;
+    const mergeMetadata = resolveWorksheetMergeMetadata(worksheet);
+    const effectiveSheetState = {
+      ...sheetState,
+      ...mergeMetadata
+    };
+    const defaultColWidthPx = resolveWorksheetDefaultColumnWidthPixels(
+      worksheet,
+      sheetState?.columnWidthCharacterWidthPx,
+      sheetState?.defaultColWidthPx ?? DEFAULT_COL_WIDTH
+    );
+    const defaultRowHeightPx = resolveWorksheetDefaultRowHeightPixels(
+      worksheet,
+      sheetState?.defaultRowHeightPx ?? DEFAULT_ROW_HEIGHT
+    );
     const visibility = normalizeWorksheetVisibility(worksheet.visibility);
     if (!showHiddenSheets && visibility !== "visible") {
       continue;
@@ -564,7 +512,7 @@ function buildSheetList(
         return resolveSheetColumnWidthPixels(width, sheetState?.columnWidthCharacterWidthPx);
       }
 
-      return sheetState?.colWidthOverridesPx?.[col] ?? sheetState?.defaultColWidthPx ?? DEFAULT_COL_WIDTH;
+      return sheetState?.colWidthOverridesPx?.[col] ?? defaultColWidthPx;
     };
 
     const resolveRowHeightPx = (row: number) => {
@@ -573,27 +521,28 @@ function buildSheetList(
         return Math.max(Math.round(height * 1.33), MIN_ROW_HEIGHT_PX);
       }
 
-      return sheetState?.rowHeightOverridesPx?.[row] ?? sheetState?.defaultRowHeightPx ?? DEFAULT_ROW_HEIGHT;
+      return sheetState?.rowHeightOverridesPx?.[row] ?? defaultRowHeightPx;
     };
 
     const usedRange = worksheet.usedRange() as [number, number, number, number] | null;
     if (!usedRange) {
       sheets.push({
+        autoFilterRanges: sheetState?.autoFilterRanges ?? [],
         cachedFormulaValues: sheetState?.cachedFormulaValues ?? {},
         columnWidthCharacterWidthPx: sheetState?.columnWidthCharacterWidthPx,
         colWidthOverridesPx: sheetState?.colWidthOverridesPx ?? {},
         colStyleIds: sheetState?.colStyleIds ?? {},
         conditionalFormatRules: sheetState?.conditionalFormatRules ?? [],
         dataValidations: parseWorksheetDataValidations(worksheet),
-        defaultColWidthPx: sheetState?.defaultColWidthPx ?? DEFAULT_COL_WIDTH,
-        defaultRowHeightPx: sheetState?.defaultRowHeightPx ?? DEFAULT_ROW_HEIGHT,
+        defaultColWidthPx,
+        defaultRowHeightPx,
         freezePanes: parseWorksheetFreezePanes(worksheet),
-        hasHorizontalMerges: sheetState?.hasHorizontalMerges ?? false,
-        hasVerticalMerges: sheetState?.hasVerticalMerges ?? false,
-        maxHorizontalMergeEndCol: sheetState?.maxHorizontalMergeEndCol ?? -1,
-        maxVerticalMergeEndRow: sheetState?.maxVerticalMergeEndRow ?? -1,
-        hiddenCols: sheetState?.hiddenCols ?? [],
-        hiddenRows: sheetState?.hiddenRows ?? [],
+        hasHorizontalMerges: mergeMetadata.hasHorizontalMerges,
+        hasVerticalMerges: mergeMetadata.hasVerticalMerges,
+        maxHorizontalMergeEndCol: mergeMetadata.maxHorizontalMergeEndCol,
+        maxVerticalMergeEndRow: mergeMetadata.maxVerticalMergeEndRow,
+        hiddenCols: [],
+        hiddenRows: [],
         minUsedCol: -1,
         minUsedRow: -1,
         maxUsedCol: -1,
@@ -620,7 +569,7 @@ function buildSheetList(
       continue;
     }
 
-    const [minRow, minCol, maxRow, maxCol] = resolveSheetDisplayUsedRange(usedRange, sheetState);
+    const [minRow, minCol, maxRow, maxCol] = resolveSheetDisplayUsedRange(usedRange, effectiveSheetState);
     let visibleRowsCache: number[] | null = null;
     let visibleColsCache: number[] | null = null;
     let rowHeightsCache: number[] | null = null;
@@ -677,21 +626,22 @@ function buildSheetList(
     };
 
     const sheet: XlsxSheetData = {
+      autoFilterRanges: sheetState?.autoFilterRanges ?? [],
       cachedFormulaValues: sheetState?.cachedFormulaValues ?? {},
       columnWidthCharacterWidthPx: sheetState?.columnWidthCharacterWidthPx,
       colWidthOverridesPx: sheetState?.colWidthOverridesPx ?? {},
       colStyleIds: sheetState?.colStyleIds ?? {},
       conditionalFormatRules: sheetState?.conditionalFormatRules ?? [],
       dataValidations: parseWorksheetDataValidations(worksheet),
-      defaultColWidthPx: sheetState?.defaultColWidthPx ?? DEFAULT_COL_WIDTH,
-      defaultRowHeightPx: sheetState?.defaultRowHeightPx ?? DEFAULT_ROW_HEIGHT,
+      defaultColWidthPx,
+      defaultRowHeightPx,
       freezePanes: parseWorksheetFreezePanes(worksheet),
-      hasHorizontalMerges: sheetState?.hasHorizontalMerges ?? false,
-      hasVerticalMerges: sheetState?.hasVerticalMerges ?? false,
-      maxHorizontalMergeEndCol: sheetState?.maxHorizontalMergeEndCol ?? -1,
-      maxVerticalMergeEndRow: sheetState?.maxVerticalMergeEndRow ?? -1,
-      hiddenCols: sheetState?.hiddenCols ?? [],
-      hiddenRows: sheetState?.hiddenRows ?? [],
+      hasHorizontalMerges: mergeMetadata.hasHorizontalMerges,
+      hasVerticalMerges: mergeMetadata.hasVerticalMerges,
+      maxHorizontalMergeEndCol: mergeMetadata.maxHorizontalMergeEndCol,
+      maxVerticalMergeEndRow: mergeMetadata.maxVerticalMergeEndRow,
+      hiddenCols: resolveWorksheetHiddenCols(worksheet, maxCol),
+      hiddenRows: resolveWorksheetHiddenRows(worksheet, maxRow),
       minUsedCol: minCol,
       minUsedRow: minRow,
       maxUsedCol: maxCol,
@@ -801,6 +751,275 @@ function parseA1RangeReference(reference: string): XlsxCellRange | null {
   return normalizeRange({ start, end });
 }
 
+type ResolvedWorkbookReference = {
+  range: XlsxCellRange;
+  workbookSheetIndex: number;
+  worksheet: ReturnType<Workbook["getSheet"]>;
+};
+
+function resolveWorkbookReference(
+  workbook: Workbook,
+  defaultWorkbookSheetIndex: number,
+  rawReference: string,
+  resolvingNamedRange = false
+): ResolvedWorkbookReference | null {
+  const reference = rawReference.trim().replace(/^=/, "");
+  if (!reference) {
+    return null;
+  }
+
+  let workbookSheetIndex = defaultWorkbookSheetIndex;
+  let rangeReference = reference;
+  const bangIndex = reference.lastIndexOf("!");
+  if (bangIndex >= 0) {
+    let sheetName = reference.slice(0, bangIndex).trim();
+    rangeReference = reference.slice(bangIndex + 1).trim();
+    if (sheetName.startsWith("'") && sheetName.endsWith("'")) {
+      sheetName = sheetName.slice(1, -1).replace(/''/g, "'");
+    }
+    const resolvedSheetIndex = workbook.sheetIndex(sheetName);
+    if (resolvedSheetIndex === undefined) {
+      return null;
+    }
+    workbookSheetIndex = resolvedSheetIndex;
+  } else if (!resolvingNamedRange) {
+    const namedRange = workbook.getNamedRange(reference);
+    if (namedRange) {
+      return resolveWorkbookReference(workbook, defaultWorkbookSheetIndex, namedRange, true);
+    }
+  }
+
+  const range = parseA1RangeReference(rangeReference.replace(/\$/g, ""));
+  if (!range || workbookSheetIndex < 0 || workbookSheetIndex >= workbook.sheetCount) {
+    return null;
+  }
+
+  try {
+    return {
+      range,
+      workbookSheetIndex,
+      worksheet: workbook.getSheet(workbookSheetIndex)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseColorHex(hex: string | undefined) {
+  const normalized = hex?.replace(/^#/, "");
+  return normalized && /^[0-9a-f]{6}$/i.test(normalized)
+    ? [0, 2, 4].map((offset) => Number.parseInt(normalized.slice(offset, offset + 2), 16))
+    : null;
+}
+
+function xlsxColorToDukeColor(color: XlsxCellStyleColorInput | undefined): DukeDrawingColor | undefined {
+  if (!color) {
+    return undefined;
+  }
+  const normalizedHex = color.hex?.replace(/^#/, "");
+  const colorType = color.colorType
+    ?? (normalizedHex?.length === 8 ? "argb" : normalizedHex?.length === 6 ? "rgb" : undefined)
+    ?? (color.r !== undefined && color.g !== undefined && color.b !== undefined
+      ? color.a !== undefined ? "argb" : "rgb"
+      : undefined)
+    ?? (color.themeIndex !== undefined ? "theme" : color.paletteIndex !== undefined ? "indexed" : undefined);
+  switch (colorType) {
+    case "auto":
+      return { colorType: "auto" };
+    case "rgb": {
+      const channels = color.r !== undefined && color.g !== undefined && color.b !== undefined
+        ? [color.r, color.g, color.b]
+        : parseColorHex(color.hex);
+      return channels ? { b: channels[2]!, colorType: "rgb", g: channels[1]!, r: channels[0]! } : undefined;
+    }
+    case "argb": {
+      const normalized = color.hex?.replace(/^#/, "");
+      const channels = normalized && /^[0-9a-f]{8}$/i.test(normalized)
+        ? [0, 2, 4, 6].map((offset) => Number.parseInt(normalized.slice(offset, offset + 2), 16))
+        : color.a !== undefined && color.r !== undefined && color.g !== undefined && color.b !== undefined
+          ? [color.a, color.r, color.g, color.b]
+          : null;
+      return channels
+        ? { a: channels[0]!, b: channels[3]!, colorType: "argb", g: channels[2]!, r: channels[1]! }
+        : undefined;
+    }
+    case "theme":
+      return color.themeIndex === undefined
+        ? undefined
+        : { colorType: "theme", index: color.themeIndex, tint: color.tint ?? 0 };
+    case "indexed":
+      return color.paletteIndex === undefined
+        ? undefined
+        : { colorType: "indexed", index: color.paletteIndex };
+  }
+}
+
+function xlsxFontToDukeFont(font: NonNullable<Exclude<XlsxFormControlCaptionInput, string>["runs"][number]["font"]>): DukeDrawingRunFont {
+  return {
+    bold: font.bold,
+    charset: font.charset,
+    color: xlsxColorToDukeColor(font.color),
+    family: font.family,
+    italic: font.italic,
+    name: font.name,
+    scheme: font.scheme,
+    size: font.size,
+    strikethrough: font.strikethrough,
+    underline: font.underline,
+    verticalAlign: font.verticalAlign
+  };
+}
+
+function xlsxCaptionToDukeText(caption: XlsxFormControlCaptionInput): DukeDrawingText {
+  if (typeof caption === "string") {
+    return { runs: [{ text: caption }] };
+  }
+  return {
+    horizontalAlignment: caption.horizontalAlignment,
+    runs: caption.runs.map((run) => ({
+      font: run.font ? xlsxFontToDukeFont(run.font) : undefined,
+      text: run.text
+    })),
+    verticalAlignment: caption.verticalAlignment
+  };
+}
+
+function xlsxFormControlKindToDukeKind(kind: XlsxFormControlInput["kind"]): DukeFormControlKindInput {
+  switch (kind.kind) {
+    case "button":
+    case "label":
+      return { caption: xlsxCaptionToDukeText(kind.caption), kind: kind.kind };
+    case "checkbox":
+      return { ...kind, caption: xlsxCaptionToDukeText(kind.caption) };
+    case "optionButton":
+      return { ...kind, caption: xlsxCaptionToDukeText(kind.caption) };
+    case "groupBox":
+      return { ...kind, caption: xlsxCaptionToDukeText(kind.caption) };
+    case "editbox":
+      return {
+        caption: xlsxCaptionToDukeText(kind.caption),
+        kind: "unknown",
+        legacyObjectType: kind.legacyObjectType,
+        objectType: "EditBox"
+      };
+    case "unknown":
+      return {
+        caption: kind.caption ? xlsxCaptionToDukeText(kind.caption) : undefined,
+        kind: "unknown",
+        legacyObjectType: kind.legacyObjectType,
+        objectType: kind.objectType
+      };
+    default:
+      return { ...kind };
+  }
+}
+
+function dukeFormControlKindToInput(kind: DukeFormControlKind): DukeFormControlKindInput {
+  if (kind.kind === "optionButton") {
+    return { ...kind, state: kind.state === "checked" ? "checked" : "unchecked" };
+  }
+  if (kind.kind === "unknown") {
+    return {
+      caption: kind.caption,
+      kind: "unknown",
+      legacyObjectType: kind.legacyObjectType,
+      objectType: kind.objectType
+    };
+  }
+  return { ...kind };
+}
+
+function formControlInputFromDukeControl(control: DukeFormControlDrawing): DukeDrawingInput {
+  return {
+    altText: control.altText,
+    ...(control.anchor ? { anchor: control.anchor } : { transform: control.transform! }),
+    formControl: {
+      kind: dukeFormControlKindToInput(control.formControl.kind),
+      macroName: control.formControl.macroName,
+      rawClientData: control.formControl.rawClientData,
+      rawObj: control.formControl.rawObj,
+      rawProperties: control.formControl.rawProperties
+    },
+    hidden: control.hidden,
+    kind: "formControl",
+    locked: control.locked,
+    name: control.name,
+    printable: control.printable,
+    title: control.title
+  };
+}
+
+type DukeFormControlDrawingInput = Extract<DukeDrawingInput, { kind: "formControl" }> & {
+  anchor: DukeDrawingAnchor;
+};
+
+function xlsxFormControlInputToDukeDrawing(input: XlsxFormControlInput): DukeFormControlDrawingInput {
+  return {
+    altText: input.altText,
+    anchor: xlsxAnchorToDukeDrawingAnchor(input.anchor, input.editAs),
+    formControl: {
+      kind: xlsxFormControlKindToDukeKind(input.kind),
+      macroName: input.macroName,
+      rawClientData: input.rawClientData,
+      rawObj: input.kind.kind === "editbox" || input.kind.kind === "unknown" ? input.kind.rawObj : undefined,
+      rawProperties: input.kind.kind === "editbox" || input.kind.kind === "unknown" ? input.kind.rawProperties : undefined
+    },
+    hidden: input.hidden,
+    kind: "formControl",
+    locked: input.locked,
+    name: input.name,
+    printable: input.printable,
+    title: input.title
+  };
+}
+
+function reconcileCheckedOptionButtons(worksheet: ReturnType<Workbook["getSheet"]>) {
+  const checkedPaths = worksheet.formControls.flatMap((control) => (
+    control.formControl.kind.kind === "optionButton" && control.formControl.kind.state === "checked"
+      ? [control.drawingPath]
+      : []
+  ));
+  for (const path of checkedPaths) {
+    const current = worksheet.formControls.find((control) => (
+      control.drawingPath.length === path.length
+      && control.drawingPath.every((segment, index) => segment === path[index])
+    ));
+    if (current?.formControl.kind.kind === "optionButton" && current.formControl.kind.state === "checked") {
+      worksheet.setFormControlCheckState(current.drawingPath, "checked");
+    }
+  }
+}
+
+function formControlInteractionChanged(
+  current: DukeFormControlKind,
+  next: DukeFormControlKind
+) {
+  if (current.kind !== next.kind) {
+    return true;
+  }
+  if ("cellLink" in current && "cellLink" in next && current.cellLink !== next.cellLink) {
+    return true;
+  }
+  switch (current.kind) {
+    case "checkbox":
+    case "optionButton":
+      return next.kind === current.kind && current.state !== next.state;
+    case "dropdown":
+      return next.kind === "dropdown" && current.selected !== next.selected;
+    case "listBox":
+      return next.kind === "listBox" && (
+        current.selection !== next.selection
+        || current.selected.length !== next.selected.length
+        || current.selected.some((value, index) => value !== next.selected[index])
+      );
+    case "scrollbar":
+    case "spinner":
+      return next.kind === current.kind && current.value !== next.value;
+    default:
+      return false;
+  }
+}
+
 function parseWorksheetFreezePanes(worksheet: ReturnType<Workbook["getSheet"]>): XlsxFreezePanes | null {
   const rawFreezePanes = worksheet.freezePanes as Record<string, unknown> | null | undefined;
   const row = typeof rawFreezePanes?.row === "number" && rawFreezePanes.row >= 0 ? rawFreezePanes.row : null;
@@ -897,10 +1116,10 @@ function rangeContainsCell(range: XlsxCellRange, cell: XlsxCellAddress): boolean
 
 function mapWorksheetTables(
   worksheet: ReturnType<Workbook["getSheet"]> | null,
-  metadataForSheet?: WorkbookTableMetadata[] | null
+  autoFilterRanges: XlsxCellRange[] = []
 ): XlsxTable[] {
   const rawTables = (worksheet?.tables ?? []) as Array<Record<string, unknown>>;
-  return rawTables.flatMap((table, index) => {
+  const mappedTables = rawTables.flatMap((table, index) => {
     const rawColumns = Array.isArray(table.columns) ? table.columns : [];
     const rawName = typeof table.name === "string" ? table.name : `Table${index + 1}`;
     const rawDisplayName =
@@ -909,13 +1128,8 @@ function mapWorksheetTables(
         : typeof table.name === "string"
           ? table.name
           : `Table ${index + 1}`;
-    const metadata = metadataForSheet?.find((entry) =>
-      (entry.name && entry.name === rawName)
-      || (entry.displayName && entry.displayName === rawDisplayName)
-      || (entry.reference && entry.reference === table.reference)
-    );
     const rawReference = typeof table.reference === "string" ? table.reference : "";
-    const reference = metadata?.reference ?? rawReference;
+    const reference = rawReference;
     const parsedRange = parseA1RangeReference(reference);
     if (!parsedRange) {
       return [];
@@ -929,16 +1143,50 @@ function mapWorksheetTables(
       })),
       displayName: rawDisplayName,
       end: parsedRange.end,
-      headerRowCount: metadata?.headerRowCount ?? resolveWorkbookTableCount(table.headerRowCount, 1),
-      headerRowCellStyle: metadata?.headerRowCellStyle,
+      headerRowCount: resolveWorkbookTableCount(table.headerRowCount, 1),
+      headerRowCellStyle: typeof table.headerRowCellStyle === "string" ? table.headerRowCellStyle : undefined,
       name: rawName,
       reference,
       start: parsedRange.start,
       styleInfo: table.styleInfo as XlsxTable["styleInfo"] | undefined,
-      totalsRowCount: metadata?.totalsRowCount ?? resolveWorkbookTableCount(table.totalsRowCount, 0),
-      totalsRowShown: metadata?.totalsRowShown ?? resolveWorkbookTableBoolean(table.totalsRowShown)
+      totalsRowCount: resolveWorkbookTableCount(table.totalsRowCount, 0),
+      totalsRowShown: resolveWorkbookTableBoolean(table.totalsRowShown)
     }];
   });
+
+  const existingReferences = new Set(mappedTables.map((table) => table.reference));
+  const mappedAutoFilterTables = autoFilterRanges.flatMap((range, index) => {
+    const reference = rangeToA1(range);
+    if (existingReferences.has(reference)) {
+      return [];
+    }
+
+    const columnCount = Math.max(0, range.end.col - range.start.col + 1);
+    const columns = Array.from({ length: columnCount }, (_, columnIndex) => {
+      const headerValue = worksheet
+        ? decodeHtmlEntities(worksheet.getFormattedValueAt(range.start.row, range.start.col + columnIndex) ?? "")
+        : "";
+      return {
+        id: columnIndex + 1,
+        index: columnIndex,
+        name: headerValue.trim().length > 0 ? headerValue : `Column ${columnIndex + 1}`
+      };
+    });
+
+    return [{
+      columns,
+      displayName: `AutoFilter ${index + 1}`,
+      end: range.end,
+      headerRowCount: 1,
+      name: `__autofilter_${index + 1}_${reference}`,
+      reference,
+      start: range.start,
+      totalsRowCount: 0,
+      totalsRowShown: false
+    } satisfies XlsxTable];
+  });
+
+  return [...mappedTables, ...mappedAutoFilterTables];
 }
 
 function resolveWorkbookTableCount(value: unknown, fallback: number) {
@@ -1073,6 +1321,26 @@ function normalizeCellValue(value: unknown) {
   return value ?? "";
 }
 
+function cloneCellStyle(style: unknown): unknown {
+  if (!style || typeof style !== "object") {
+    return style;
+  }
+
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(style);
+    } catch {
+      // Fall through to the JSON clone below.
+    }
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(style));
+  } catch {
+    return style;
+  }
+}
+
 function coerceUserEnteredValue(value: string): unknown {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -1104,10 +1372,13 @@ function applyCellMutationState(
 ) {
   if (state.formula) {
     worksheet.setFormula(cellAddressToA1(cell), state.formula);
-    return;
+  } else {
+    worksheet.setCell(cellAddressToA1(cell), normalizeCellValue(state.value));
   }
 
-  worksheet.setCell(cellAddressToA1(cell), normalizeCellValue(state.value));
+  if (state.style && typeof state.style === "object") {
+    worksheet.setCellStyleAt(cell.row, cell.col, state.style);
+  }
 }
 
 function escapeHtml(value: string) {
@@ -1180,7 +1451,10 @@ async function resolveWorkbookBuffer(
   return buffer;
 }
 
-async function parseWorkbookBuffer(buffer: ArrayBuffer): Promise<{
+async function parseWorkbookBuffer(
+  buffer: ArrayBuffer,
+  externalFnValues?: ExternalFnValues,
+): Promise<{
   shouldAutoCalculate: boolean;
   workbook: Workbook;
 }> {
@@ -1198,7 +1472,8 @@ async function parseWorkbookBuffer(buffer: ArrayBuffer): Promise<{
   }
 
   const result = safeCalculate(initialWorkbook, {
-    reparse: () => wasmModule.Workbook.fromBytes(new Uint8Array(buffer))
+    reparse: () => wasmModule.Workbook.fromBytes(new Uint8Array(buffer)),
+    calcOptions: externalFnValues ? { externalFnFn: makeExternalFn(externalFnValues) } : undefined
   });
 
   return {
@@ -1256,19 +1531,28 @@ function inferImageMimeType(source: string) {
   return "image/png";
 }
 
-function inferWorksheetDirectImageMimeType(info: WorksheetDirectImageInfo) {
-  const format = typeof info.format === "string" ? info.format.trim().toLowerCase() : "";
+function inferWorksheetDirectImageMimeType(info: DukeImageDrawing["image"]) {
+  const format = info.format;
   if (format === "gif") {
     return "image/gif";
   }
-  if (format === "jpg" || format === "jpeg") {
+  if (format === "jpeg") {
     return "image/jpeg";
   }
   if (format === "svg") {
     return "image/svg+xml";
   }
-  if (format === "webp") {
-    return "image/webp";
+  if (format === "bmp") {
+    return "image/bmp";
+  }
+  if (format === "tiff") {
+    return "image/tiff";
+  }
+  if (format === "emf") {
+    return "image/emf";
+  }
+  if (format === "wmf") {
+    return "image/wmf";
   }
   if (format === "png") {
     return "image/png";
@@ -1303,247 +1587,42 @@ function createWorksheetDirectImageSource(
   return objectUrl;
 }
 
-function buildWorksheetDirectImageAnchor(
-  rawAnchor: unknown,
-  widthEmu: number,
-  heightEmu: number
-): XlsxImage["anchor"] {
-  const anchor = rawAnchor && typeof rawAnchor === "object" ? rawAnchor as WorksheetDirectImageAnchorInfo : {};
-  const fromCol = asFiniteNumber(anchor.fromCol) ?? 0;
-  const fromRow = asFiniteNumber(anchor.fromRow) ?? 0;
-  const fromColOffset = asFiniteNumber(anchor.fromColOffset) ?? 0;
-  const fromRowOffset = asFiniteNumber(anchor.fromRowOffset) ?? 0;
-  const toCol = asFiniteNumber(anchor.toCol);
-  const toRow = asFiniteNumber(anchor.toRow);
-  const toColOffset = asFiniteNumber(anchor.toColOffset) ?? 0;
-  const toRowOffset = asFiniteNumber(anchor.toRowOffset) ?? 0;
-
-  if (toCol !== null && toRow !== null) {
-    return {
-      from: {
-        col: Math.max(0, Math.round(fromCol)),
-        colOffsetEmu: Math.max(0, Math.round(fromColOffset)),
-        row: Math.max(0, Math.round(fromRow)),
-        rowOffsetEmu: Math.max(0, Math.round(fromRowOffset))
-      },
-      kind: "two-cell",
-      to: {
-        col: Math.max(0, Math.round(toCol)),
-        colOffsetEmu: Math.max(0, Math.round(toColOffset)),
-        row: Math.max(0, Math.round(toRow)),
-        rowOffsetEmu: Math.max(0, Math.round(toRowOffset))
-      }
-    };
-  }
-
-  return {
-    from: {
-      col: Math.max(0, Math.round(fromCol)),
-      colOffsetEmu: Math.max(0, Math.round(fromColOffset)),
-      row: Math.max(0, Math.round(fromRow)),
-      rowOffsetEmu: Math.max(0, Math.round(fromRowOffset))
-    },
-    kind: "one-cell",
-    sizeEmu: {
-      cx: Math.max(EMU_PER_PIXEL, Math.round(widthEmu)),
-      cy: Math.max(EMU_PER_PIXEL, Math.round(heightEmu))
-    }
-  };
-}
-
-function normalizeWorksheetDirectShapeParagraphs(rawParagraphs: unknown, fallbackText: unknown): XlsxShape["paragraphs"] {
-  const normalizedParagraphs: XlsxShape["paragraphs"] = [];
-
-  if (Array.isArray(rawParagraphs)) {
-    for (const entry of rawParagraphs) {
-        const paragraph = entry && typeof entry === "object" ? entry as WorksheetDirectShapeParagraphInfo : {};
-        const runs: XlsxShape["paragraphs"][number]["runs"] = [];
-        if (Array.isArray(paragraph.runs)) {
-          for (const runEntry of paragraph.runs) {
-            const run = runEntry && typeof runEntry === "object" ? runEntry as WorksheetDirectShapeParagraphRunInfo : {};
-            const text = typeof run.text === "string" ? run.text : "";
-            if (!text) {
-              continue;
-            }
-            runs.push({
-              bold: typeof run.bold === "boolean" ? run.bold : undefined,
-              color: typeof run.color === "string" && run.color.trim() ? run.color : undefined,
-              fontFamily: typeof run.fontFamily === "string" && run.fontFamily.trim() ? run.fontFamily : undefined,
-              fontSizePt: asFiniteNumber(run.fontSizePt) ?? undefined,
-              italic: typeof run.italic === "boolean" ? run.italic : undefined,
-              text,
-              underline: typeof run.underline === "boolean" ? run.underline : undefined
-            });
-          }
-        }
-        if (runs.length === 0) {
-          continue;
-        }
-        const align = paragraph.align;
-        normalizedParagraphs.push({
-          align: align === "center" || align === "justify" || align === "left" || align === "right" ? align : undefined,
-          runs
-        });
-    }
-  }
-
-  if (normalizedParagraphs.length > 0) {
-    return normalizedParagraphs;
-  }
-
-  const text = typeof fallbackText === "string" ? fallbackText : "";
-  return text
-    ? [{ runs: [{ text }] }]
-    : [];
-}
-
-function buildWorksheetDirectApiShape(
-  workbookSheetIndex: number,
-  info: WorksheetDirectShapeInfo,
-  zIndex: number
-): XlsxShape {
-  const fill = info.fill && typeof info.fill === "object"
-    ? {
-        color: typeof info.fill.color === "string" && info.fill.color.trim() ? info.fill.color : undefined,
-        none: typeof info.fill.none === "boolean" ? info.fill.none : undefined,
-        opacity: asFiniteNumber(info.fill.opacity) ?? undefined
-      }
-    : undefined;
-  const stroke = info.stroke && typeof info.stroke === "object"
-    ? {
-        color: typeof info.stroke.color === "string" && info.stroke.color.trim() ? info.stroke.color : undefined,
-        dash: typeof info.stroke.dash === "string" && info.stroke.dash.trim() ? info.stroke.dash : undefined,
-        headEndType: typeof info.stroke.headEndType === "string" && info.stroke.headEndType.trim() ? info.stroke.headEndType : undefined,
-        none: typeof info.stroke.none === "boolean" ? info.stroke.none : undefined,
-        opacity: asFiniteNumber(info.stroke.opacity) ?? undefined,
-        tailEndType: typeof info.stroke.tailEndType === "string" && info.stroke.tailEndType.trim() ? info.stroke.tailEndType : undefined,
-        widthPx: asFiniteNumber(info.stroke.widthPx) ?? undefined
-      }
-    : undefined;
-  const rawSvgViewBox = info.svgViewBox && typeof info.svgViewBox === "object" ? info.svgViewBox : null;
-  const rawTextBox = info.textBox && typeof info.textBox === "object" ? info.textBox : null;
-  const rawInset = rawTextBox?.insetPx && typeof rawTextBox.insetPx === "object" ? rawTextBox.insetPx : null;
-
-  return {
-    anchor: buildWorksheetDirectImageAnchor(
-      info.anchor,
-      DEFAULT_COL_WIDTH * EMU_PER_PIXEL,
-      DEFAULT_ROW_HEIGHT * EMU_PER_PIXEL
-    ),
-    description: typeof info.description === "string" && info.description.trim() ? info.description : undefined,
-    fill,
-    flipH: typeof info.flipH === "boolean" ? info.flipH : undefined,
-    flipV: typeof info.flipV === "boolean" ? info.flipV : undefined,
-    geometry: typeof info.geometry === "string" && info.geometry.trim() ? info.geometry : "rect",
-    geometryAdjustments: info.geometryAdjustments && typeof info.geometryAdjustments === "object"
-      ? Object.fromEntries(
-          Object.entries(info.geometryAdjustments as Record<string, unknown>)
-            .map(([key, value]) => [key, asFiniteNumber(value)])
-            .filter((entry): entry is [string, number] => typeof entry[1] === "number")
-        )
-      : undefined,
-    hyperlink: typeof info.hyperlink === "string" && info.hyperlink.trim() ? info.hyperlink : undefined,
-    id: `shape-${workbookSheetIndex}-${String(info.id ?? zIndex)}`,
-    name: typeof info.name === "string" && info.name.trim() ? info.name : undefined,
-    paragraphs: normalizeWorksheetDirectShapeParagraphs(info.paragraphs, info.text),
-    rotationDeg: asFiniteNumber(info.rotationDeg) ?? undefined,
-    scaleX: asFiniteNumber(info.scaleX) ?? undefined,
-    scaleY: asFiniteNumber(info.scaleY) ?? undefined,
-    sheetIndex: workbookSheetIndex,
-    svgPath: typeof info.svgPath === "string" && info.svgPath.trim() ? info.svgPath : undefined,
-    svgViewBox: rawSvgViewBox
-      && asFiniteNumber(rawSvgViewBox.width) !== null
-      && asFiniteNumber(rawSvgViewBox.height) !== null
-      ? {
-          height: asFiniteNumber(rawSvgViewBox.height) ?? 0,
-          width: asFiniteNumber(rawSvgViewBox.width) ?? 0
-        }
-      : undefined,
-    stroke,
-    textBox: rawTextBox
-      ? {
-          horizontalAlign: rawTextBox.horizontalAlign === "center" || rawTextBox.horizontalAlign === "left"
-            ? rawTextBox.horizontalAlign
-            : undefined,
-          insetPx: rawInset
-            ? {
-                bottom: asFiniteNumber(rawInset.bottom) ?? 0,
-                left: asFiniteNumber(rawInset.left) ?? 0,
-                right: asFiniteNumber(rawInset.right) ?? 0,
-                top: asFiniteNumber(rawInset.top) ?? 0
-              }
-            : undefined,
-          verticalAlign: rawTextBox.verticalAlign === "bottom" || rawTextBox.verticalAlign === "middle" || rawTextBox.verticalAlign === "top"
-            ? rawTextBox.verticalAlign
-            : undefined
-        }
-      : undefined,
-    workbookSheetIndex,
-    zIndex
-  };
-}
-
-function buildWorksheetApiImage(
-  workbookSheetIndex: number,
-  row: number,
-  col: number,
-  info: WorksheetApiImageInfo,
-  zIndex: number
-): XlsxImage | null {
-  if (typeof info.source !== "string" || !info.source) {
-    return null;
-  }
-
-  const width = Math.max(1, Math.round(asFiniteNumber(info.width) ?? DEFAULT_COL_WIDTH));
-  const height = Math.max(1, Math.round(asFiniteNumber(info.height) ?? DEFAULT_ROW_HEIGHT));
-  const description = typeof info.altText === "string" && info.altText.trim() ? info.altText : undefined;
-
-  return {
-    anchor: {
-      from: {
-        col,
-        colOffsetEmu: 0,
-        row,
-        rowOffsetEmu: 0
-      },
-      kind: "one-cell",
-      sizeEmu: {
-        cx: width * EMU_PER_PIXEL,
-        cy: height * EMU_PER_PIXEL
-      }
-    },
-    description,
-    editable: false,
-    id: `worksheet-image-${workbookSheetIndex}-${row}-${col}-${zIndex}`,
-    mimeType: inferImageMimeType(info.source),
-    sheetIndex: workbookSheetIndex,
-    src: info.source,
-    workbookSheetIndex,
-    zIndex
-  };
-}
-
 function buildWorksheetDirectApiImage(
+  worksheet: ReturnType<Workbook["getSheet"]>,
   workbookSheetIndex: number,
-  info: WorksheetDirectImageInfo,
-  zIndex: number,
+  drawing: DukeImageDrawing & { anchor: DukeDrawingAnchor },
   objectUrls: string[]
 ): XlsxImage | null {
-  const mimeType = inferWorksheetDirectImageMimeType(info);
-  const src = createWorksheetDirectImageSource(info.data, mimeType, objectUrls);
+  const hasSvgCompanion = Boolean(drawing.image.svgMediaPath);
+  let mimeType = inferWorksheetDirectImageMimeType(drawing.image);
+  let data: Uint8Array;
+  try {
+    const svgData = drawing.image.format === "svg" || hasSvgCompanion
+      ? worksheet.drawingSvgData(drawing.drawingPath)
+      : undefined;
+    if (svgData) {
+      data = svgData;
+      mimeType = "image/svg+xml";
+    } else {
+      data = worksheet.drawingImageData(drawing.drawingPath);
+    }
+  } catch {
+    return null;
+  }
+  const src = createWorksheetDirectImageSource(data, mimeType, objectUrls);
   if (!src) {
     return null;
   }
 
-  const widthEmu = Math.max(EMU_PER_PIXEL, Math.round(asFiniteNumber(info.widthEmu) ?? DEFAULT_COL_WIDTH * EMU_PER_PIXEL));
-  const heightEmu = Math.max(EMU_PER_PIXEL, Math.round(asFiniteNumber(info.heightEmu) ?? DEFAULT_ROW_HEIGHT * EMU_PER_PIXEL));
+  const zIndex = (drawing.drawingPath[0] ?? 0) + 1;
   return {
-    anchor: buildWorksheetDirectImageAnchor(info.anchor, widthEmu, heightEmu),
+    anchor: dukeDrawingAnchorToXlsxAnchor(drawing.anchor),
+    description: drawing.altText,
     editable: false,
-    id: `worksheet-image-${workbookSheetIndex}-${String(info.id ?? zIndex)}`,
-    mediaPath: typeof info.mediaPath === "string" && info.mediaPath.trim() ? info.mediaPath : undefined,
+    id: `worksheet-image-${workbookSheetIndex}-${drawing.drawingPath.join("-")}`,
+    mediaPath: drawing.image.mediaPath || undefined,
     mimeType,
-    name: typeof info.name === "string" && info.name.trim() ? info.name : undefined,
+    name: drawing.name,
     sheetIndex: workbookSheetIndex,
     src,
     workbookSheetIndex,
@@ -1551,155 +1630,91 @@ function buildWorksheetDirectApiImage(
   };
 }
 
-function collectWorksheetBatchImages(workbook: Workbook) {
-  const imagesByWorkbookSheetIndex = Array.from({ length: workbook.sheetCount }, () => [] as XlsxImage[]);
-
-  for (let workbookSheetIndex = 0; workbookSheetIndex < workbook.sheetCount; workbookSheetIndex += 1) {
-    const worksheet = workbook.getSheet(workbookSheetIndex) as WorksheetWithRowsBatch;
-    if (typeof worksheet.getRowsBatch !== "function") {
-      continue;
-    }
-
-    const usedRange = worksheet.usedRange() as [number, number, number, number] | null;
-    const maxRow = usedRange?.[2] ?? -1;
-    if (maxRow < 0) {
-      continue;
-    }
-
-    let zIndex = 1;
-    let sheetFailed = false;
-    for (let startRow = 0; startRow <= maxRow; startRow += IMAGE_BATCH_ROW_COUNT) {
-      let rows: unknown;
-      try {
-        rows = worksheet.getRowsBatch(startRow, IMAGE_BATCH_ROW_COUNT, { includeImages: true });
-      } catch {
-        sheetFailed = true;
-        break;
-      }
-
-      if (!Array.isArray(rows)) {
-        continue;
-      }
-
-      for (const rowEntry of rows as WorksheetApiRow[]) {
-        const row = typeof rowEntry.index === "number" ? rowEntry.index : null;
-        if (row === null || !Array.isArray(rowEntry.cells)) {
-          continue;
-        }
-
-        for (const cellEntry of rowEntry.cells as WorksheetApiRowCell[]) {
-          const col = typeof cellEntry.col === "number" ? cellEntry.col : null;
-          if (col === null || !cellEntry.image || typeof cellEntry.image !== "object") {
-            continue;
-          }
-
-          const image = buildWorksheetApiImage(workbookSheetIndex, row, col, cellEntry.image, zIndex);
-          if (!image) {
-            continue;
-          }
-
-          imagesByWorkbookSheetIndex[workbookSheetIndex].push(image);
-          zIndex += 1;
-        }
-      }
-    }
-
-    if (sheetFailed) {
-      imagesByWorkbookSheetIndex[workbookSheetIndex] = [];
-    }
-  }
-
-  return imagesByWorkbookSheetIndex;
-}
-
 function collectWorksheetApiImages(workbook: Workbook, objectUrls: string[]) {
   const directImagesByWorkbookSheetIndex = Array.from({ length: workbook.sheetCount }, () => [] as XlsxImage[]);
-  let didUseDirectImages = false;
-
   for (let workbookSheetIndex = 0; workbookSheetIndex < workbook.sheetCount; workbookSheetIndex += 1) {
-    const worksheet = workbook.getSheet(workbookSheetIndex) as ReturnType<Workbook["getSheet"]> & {
-      images?: unknown;
-    };
-    const rawImages = Array.isArray(worksheet.images) ? worksheet.images as WorksheetDirectImageInfo[] : [];
+    const worksheet = workbook.getSheet(workbookSheetIndex);
+    const rawImages = worksheet.images;
     if (rawImages.length === 0) {
       continue;
     }
 
     const nextImages = rawImages
-      .map((info, index) => buildWorksheetDirectApiImage(workbookSheetIndex, info, index + 1, objectUrls))
+      .filter((drawing): drawing is DukeImageDrawing & { anchor: DukeDrawingAnchor } => !drawing.hidden && Boolean(drawing.anchor))
+      .map((drawing) => buildWorksheetDirectApiImage(worksheet, workbookSheetIndex, drawing, objectUrls))
       .filter((image): image is XlsxImage => Boolean(image));
     if (nextImages.length > 0) {
       directImagesByWorkbookSheetIndex[workbookSheetIndex] = nextImages;
-      didUseDirectImages = true;
     }
   }
 
-  if (didUseDirectImages) {
-    return directImagesByWorkbookSheetIndex;
-  }
-
-  return collectWorksheetBatchImages(workbook);
+  return directImagesByWorkbookSheetIndex;
 }
 
-function collectWorksheetApiShapes(workbook: Workbook) {
-  return Array.from({ length: workbook.sheetCount }, (_, workbookSheetIndex) => {
-    const worksheet = workbook.getSheet(workbookSheetIndex) as ReturnType<Workbook["getSheet"]> & {
-      shapes?: unknown;
-    };
-    const rawShapes = Array.isArray(worksheet.shapes) ? worksheet.shapes as WorksheetDirectShapeInfo[] : [];
-    return rawShapes
-      .map((shape, index) => buildWorksheetDirectApiShape(workbookSheetIndex, shape, index + 1));
-  });
-}
-
-function mergeParsedAndApiImages(parsedImages: XlsxImage[], apiImages: XlsxImage[]) {
-  if (parsedImages.length === 0) {
-    return apiImages;
-  }
-  if (apiImages.length === 0) {
-    return parsedImages;
-  }
-
-  const normalizeTextKey = (value: string | undefined) => value?.trim().toLowerCase() ?? "";
-  const anchorKey = (anchor: XlsxImage["anchor"]) => {
-    if (anchor.kind === "absolute") {
-      return [
-        "absolute",
-        Math.round(anchor.positionEmu.x),
-        Math.round(anchor.positionEmu.y),
-        Math.round(anchor.sizeEmu.cx),
-        Math.round(anchor.sizeEmu.cy)
-      ].join(":");
-    }
-    if (anchor.kind === "one-cell") {
-      return [
-        "one",
-        anchor.from.col,
-        anchor.from.row,
-        Math.round(anchor.from.colOffsetEmu),
-        Math.round(anchor.from.rowOffsetEmu),
-        Math.round(anchor.sizeEmu.cx),
-        Math.round(anchor.sizeEmu.cy)
-      ].join(":");
-    }
+function imageAnchorKey(anchor: XlsxImage["anchor"]) {
+  if (anchor.kind === "absolute") {
     return [
-      "two",
+      "absolute",
+      Math.round(anchor.positionEmu.x),
+      Math.round(anchor.positionEmu.y),
+      Math.round(anchor.sizeEmu.cx),
+      Math.round(anchor.sizeEmu.cy)
+    ].join(":");
+  }
+  if (anchor.kind === "one-cell") {
+    return [
+      "one",
       anchor.from.col,
       anchor.from.row,
       Math.round(anchor.from.colOffsetEmu),
       Math.round(anchor.from.rowOffsetEmu),
-      anchor.to.col,
-      anchor.to.row,
-      Math.round(anchor.to.colOffsetEmu),
-      Math.round(anchor.to.rowOffsetEmu)
+      Math.round(anchor.sizeEmu.cx),
+      Math.round(anchor.sizeEmu.cy)
     ].join(":");
-  };
+  }
+  return [
+    "two",
+    anchor.from.col,
+    anchor.from.row,
+    Math.round(anchor.from.colOffsetEmu),
+    Math.round(anchor.from.rowOffsetEmu),
+    anchor.to.col,
+    anchor.to.row,
+    Math.round(anchor.to.colOffsetEmu),
+    Math.round(anchor.to.rowOffsetEmu)
+  ].join(":");
+}
+
+function collectHiddenWorksheetImageAnchors(workbook: Workbook) {
+  return Array.from({ length: workbook.sheetCount }, (_, workbookSheetIndex) => new Set(
+    workbook.getSheet(workbookSheetIndex).images.flatMap((drawing) => (
+      drawing.hidden && drawing.anchor
+        ? [imageAnchorKey(dukeDrawingAnchorToXlsxAnchor(drawing.anchor))]
+        : []
+    ))
+  ));
+}
+
+function mergeParsedAndApiImages(
+  parsedImages: XlsxImage[],
+  apiImages: XlsxImage[],
+  hiddenAnchorKeys: Set<string>
+) {
+  const visibleParsedImages = parsedImages.filter((image) => !hiddenAnchorKeys.has(imageAnchorKey(image.anchor)));
+  if (visibleParsedImages.length === 0) {
+    return apiImages;
+  }
+  if (apiImages.length === 0) {
+    return visibleParsedImages;
+  }
+
+  const normalizeTextKey = (value: string | undefined) => value?.trim().toLowerCase() ?? "";
   const imageKeys = (image: XlsxImage) => {
     const keys = [
-      `${normalizeTextKey(image.mediaPath)}|${normalizeTextKey(image.name)}|${anchorKey(image.anchor)}`,
-      `${normalizeTextKey(image.mediaPath)}|${anchorKey(image.anchor)}`,
-      `${normalizeTextKey(image.name)}|${anchorKey(image.anchor)}`,
-      `${anchorKey(image.anchor)}`
+      `${normalizeTextKey(image.mediaPath)}|${normalizeTextKey(image.name)}|${imageAnchorKey(image.anchor)}`,
+      `${normalizeTextKey(image.mediaPath)}|${imageAnchorKey(image.anchor)}`,
+      `${normalizeTextKey(image.name)}|${imageAnchorKey(image.anchor)}`,
+      `${imageAnchorKey(image.anchor)}`
     ];
     return keys.filter((key, index) => key && keys.indexOf(key) === index);
   };
@@ -1732,7 +1747,7 @@ function mergeParsedAndApiImages(parsedImages: XlsxImage[], apiImages: XlsxImage
     return null;
   };
 
-  const merged = parsedImages.map((image) => {
+  const merged = visibleParsedImages.map((image) => {
     const apiImage = takeApiMatch(image);
     if (!apiImage) {
       return image;
@@ -1744,7 +1759,8 @@ function mergeParsedAndApiImages(parsedImages: XlsxImage[], apiImages: XlsxImage
       mediaPath: apiImage.mediaPath ?? image.mediaPath,
       mimeType: apiImage.mimeType,
       name: apiImage.name ?? image.name,
-      src: apiImage.src
+      src: apiImage.src,
+      zIndex: apiImage.zIndex
     };
   });
 
@@ -1775,16 +1791,17 @@ function createBasicWorkbookAssets(workbook: Workbook): WorkbookImageAssets {
   const objectUrls: string[] = [];
   return {
     archive: {},
-    formControlsByWorkbookSheetIndex: Array.from({ length: workbook.sheetCount }, () => [] as XlsxFormControl[]),
+    dirtyArchivePaths: new Set(),
+    formControlsByWorkbookSheetIndex: collectWorkbookFormControls(workbook),
     imageOriginsById: new Map(),
     imagesByWorkbookSheetIndex: collectWorksheetApiImages(workbook, objectUrls),
     namedCellStyleByName: {},
     objectUrls,
-    shapesByWorkbookSheetIndex: collectWorksheetApiShapes(workbook),
+    shapesByWorkbookSheetIndex: Array.from({ length: workbook.sheetCount }, () => []),
     sheetOrigins: Array.from({ length: workbook.sheetCount }, () => null as WorkbookImageSheetOrigin | null),
     sheetStatesByWorkbookSheetIndex: Array.from({ length: workbook.sheetCount }, () => null),
     styleById: {},
-    tableMetadataByWorkbookSheetIndex: Array.from({ length: workbook.sheetCount }, () => [] as WorkbookTableMetadata[]),
+    tableMetadataByWorkbookSheetIndex: Array.from({ length: workbook.sheetCount }, () => []),
     tableStyleByName: {},
     themePalette: { colorsByIndex: {} }
   };
@@ -1795,15 +1812,20 @@ function loadWorkbookImageAssets(bytes: Uint8Array, workbook: Workbook, skipXmlP
     return createBasicWorkbookAssets(workbook);
   }
 
-  const parsedAssets = parseWorkbookImageAssets(bytes);
+  const parsedAssets = parseWorkbookImageAssets(bytes, workbook);
   const apiImagesByWorkbookSheetIndex = collectWorksheetApiImages(workbook, parsedAssets.objectUrls);
+  const hiddenImageAnchorsByWorkbookSheetIndex = collectHiddenWorksheetImageAnchors(workbook);
 
   const imagesByWorkbookSheetIndex = Array.from(
     { length: Math.max(workbook.sheetCount, parsedAssets.imagesByWorkbookSheetIndex.length, apiImagesByWorkbookSheetIndex.length) },
     (_, index) => {
       const parsedImages = parsedAssets.imagesByWorkbookSheetIndex[index] ?? [];
       const apiImages = apiImagesByWorkbookSheetIndex[index] ?? [];
-      return mergeParsedAndApiImages(parsedImages, apiImages);
+      return mergeParsedAndApiImages(
+        parsedImages,
+        apiImages,
+        hiddenImageAnchorsByWorkbookSheetIndex[index] ?? new Set()
+      );
     }
   );
 
@@ -1865,6 +1887,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const {
     allowResizeInReadOnly = false,
     deferLoadingAboveBytes = DEFAULT_DEFER_LOADING_ABOVE_BYTES,
+    externalFnValues,
     file,
     fileName,
     maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES,
@@ -1892,23 +1915,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const [zoomScaleOverridesByTabId, setZoomScaleOverridesByTabId] = React.useState<Record<string, number>>({});
   const [activeCell, setActiveCell] = React.useState<XlsxCellAddress | null>(null);
   const [selection, setSelection] = React.useState<XlsxCellRange | null>(null);
-  // Non-contiguous multi-region selection. `selection` stays the active/last region for
-  // back-compat; `selections` is the full set. `selectCell`/`selectRange` update it explicitly.
   const [selections, setSelections] = React.useState<XlsxCellRange[]>([]);
-  // Mirror `selections` in a ref so `selectRange`'s toggle path can read the current region set
-  // synchronously without re-creating the callback on every selection change.
   const selectionsRef = React.useRef(selections);
   selectionsRef.current = selections;
-  // Safety net for the raw `setSelection` sites (tab change, undo/redo restore) that this change
-  // does not edit: whenever `selection` becomes something that is not already the active (last)
-  // region, collapse `selections` to it. Append/extend keep `selection` === the last region, so
-  // those paths leave a multi-selection intact.
   React.useEffect(() => {
     setSelections((prev) =>
       rangesEqual(prev[prev.length - 1] ?? null, selection) ? prev : selection ? [selection] : []
     );
   }, [selection]);
   const [selectedChartId, setSelectedChartId] = React.useState<string | null>(null);
+  const [selectedChartElement, setSelectedChartElement] = React.useState<XlsxChartElementSelection | null>(null);
   const [selectedImageId, setSelectedImageId] = React.useState<string | null>(null);
   const [revision, setRevision] = React.useState(0);
   const selectionAnchorRef = React.useRef<XlsxCellAddress | null>(null);
@@ -1934,11 +1950,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const shouldDeferLoading = deferLoadingAboveBytes > 0;
   const readOnly = requestedReadOnly || forcedReadOnly;
   const canResizeReadOnly = requestedReadOnly && allowResizeInReadOnly && !forcedReadOnly;
-  const workerSupported = useWorker && typeof Worker !== "undefined";
-  const shouldUseWorker = workerSupported && forcedReadOnly;
+  const workerSupported = useWorker && typeof Worker !== "undefined" && canUseConfiguredWasmSourceInWorker();
+  const canUseWorkerForRequestedReadOnly = requestedReadOnly;
   const shouldForceReadOnlyForBuffer = React.useCallback((bufferByteLength: number) => (
     !requestedReadOnly && readOnlyAboveBytes > 0 && bufferByteLength > readOnlyAboveBytes
   ), [readOnlyAboveBytes, requestedReadOnly]);
+  const shouldUseWorkerForReadOnlyLoad = React.useCallback((willForceReadOnly: boolean) => (
+    workerSupported && (willForceReadOnly || canUseWorkerForRequestedReadOnly)
+  ), [canUseWorkerForRequestedReadOnly, workerSupported]);
 
   const disposeWorkerClient = React.useCallback(() => {
     workerClientRef.current?.dispose();
@@ -2004,9 +2023,6 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }) => {
     for (const sheetCharts of snapshot.chartsByWorkbookSheetIndex) {
       for (const chart of sheetCharts) {
-        if (!chart.chartPath) {
-          return true;
-        }
         if (chart.chartType !== "Bubble") {
           continue;
         }
@@ -2032,7 +2048,19 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     targetWorkbook: Workbook | null,
     targetSheets: XlsxSheetData[]
   ) => {
-    if (chartAssetsRef.current || !targetWorkbook || !imageAssetsRef.current) {
+    const currentAssets = chartAssetsRef.current;
+    if (
+      currentAssets
+      && (
+        currentAssets.chartOriginsById.size > 0
+        || !targetWorkbook
+        || !imageAssetsRef.current
+      )
+    ) {
+      return currentAssets;
+    }
+
+    if (!targetWorkbook || !imageAssetsRef.current) {
       return chartAssetsRef.current;
     }
 
@@ -2092,6 +2120,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     }) => {
       if (requestToken !== chartLoadRequestTokenRef.current) {
         return;
+      }
+      if (imageAssetsRef.current && !effectiveSkipXmlParsing) {
+        const chartOriginsById = hydrateWorkbookChartStyles(result.chartsByWorkbookSheetIndex, imageAssetsRef.current);
+        chartAssetsRef.current = { ...result, chartOriginsById };
       }
       setChartsByWorkbookSheetIndex(result.chartsByWorkbookSheetIndex);
       setChartsheets(result.chartsheets);
@@ -2163,7 +2195,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [getWorkerClient, hasIncompleteWorkerChartSnapshot, setChartAssets, showHiddenSheets, skipXmlParsing, workerSupported]);
 
   const loadWorkbookOnMainThread = React.useCallback(async (buffer: ArrayBuffer) => {
-    const nextParsedWorkbook = await parseWorkbookBuffer(buffer);
+    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValues);
     const bytes = new Uint8Array(buffer);
     const nextImageAssets = loadWorkbookImageAssets(
       bytes,
@@ -2174,9 +2206,19 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       imageAssets: nextImageAssets,
       parsedWorkbook: nextParsedWorkbook
     };
-  }, [skipXmlParsing]);
+  }, [externalFnValues, skipXmlParsing]);
 
   const refreshWorkbookState = React.useCallback((targetWorkbook: Workbook) => {
+    const currentFormControls = imageAssetsRef.current?.formControlsByWorkbookSheetIndex ?? [];
+    const nextFormControls = refreshWorkbookFormControls(
+      targetWorkbook,
+      currentFormControls,
+      imageAssetsRef.current?.themePalette
+    );
+    if (imageAssetsRef.current) {
+      imageAssetsRef.current.formControlsByWorkbookSheetIndex = nextFormControls;
+    }
+    setFormControlsByWorkbookSheetIndex(nextFormControls);
     const nextSheets = buildSheetList(
       targetWorkbook,
       imageAssetsRef.current?.sheetStatesByWorkbookSheetIndex,
@@ -2224,6 +2266,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       setActiveCell(null);
       setSelection(null);
       setSelectedChartId(null);
+      setSelectedChartElement(null);
       setSelectedImageId(null);
       selectionAnchorRef.current = null;
       undoStackRef.current = [];
@@ -2253,6 +2296,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setActiveCell(null);
     setSelection(null);
     setSelectedChartId(null);
+    setSelectedChartElement(null);
     setSelectedImageId(null);
     selectionAnchorRef.current = null;
     undoStackRef.current = [];
@@ -2276,6 +2320,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
           throw new XlsxFileSizeLimitExceededError(buffer.byteLength, maxFileSizeBytes);
         }
 
+        buffer = normalizeWorkbookArrayBuffer(buffer);
+
         const preflight = preflightWorkbookBuffer(buffer);
         if (preflight?.tooLarge) {
           throw createWorkbookTooLargeError(preflight);
@@ -2283,7 +2329,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
         const shouldForceReadOnly = shouldForceReadOnlyForBuffer(buffer.byteLength);
         setForcedReadOnly(shouldForceReadOnly);
-        const shouldUseWorkerForLoad = workerSupported && shouldForceReadOnly;
+        const shouldUseWorkerForLoad = shouldUseWorkerForReadOnlyLoad(shouldForceReadOnly);
         const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(new Uint8Array(buffer), skipXmlParsing);
 
         if (shouldDeferLoading && buffer.byteLength > deferLoadingAboveBytes) {
@@ -2299,7 +2345,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
         if (shouldUseWorkerForLoad) {
           try {
-            const snapshot = await getWorkerClient().loadWorkbook(buffer, effectiveSkipXmlParsing, showHiddenSheets);
+            const snapshot = await getWorkerClient().loadWorkbook(buffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValues);
             if (!isCurrent || abortController.signal.aborted) {
               return;
             }
@@ -2307,12 +2353,25 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
               throw new Error("Worker chart payload incomplete");
             }
 
+            const workerImageAssets = effectiveSkipXmlParsing
+              ? null
+              : parseWorkbookImageAssets(new Uint8Array(buffer));
+            if (!isCurrent || abortController.signal.aborted) {
+              revokeWorkbookImageAssets(workerImageAssets);
+              return;
+            }
+
+            setImageAssets(workerImageAssets);
+            const chartOriginsById = workerImageAssets
+              ? hydrateWorkbookChartStyles(snapshot.chartsByWorkbookSheetIndex, workerImageAssets)
+              : new Map();
+            setFormControlsByWorkbookSheetIndex(snapshot.formControlsByWorkbookSheetIndex);
             setWorkbook(null);
             setSheets(snapshot.sheets);
             setChartsByWorkbookSheetIndex(snapshot.chartsByWorkbookSheetIndex);
             setChartsheets(snapshot.chartsheets);
             setTabs(snapshot.tabs);
-            chartAssetsRef.current = null;
+            chartAssetsRef.current = { ...snapshot, chartOriginsById };
             setWorkerTablesByWorkbookSheetIndex(snapshot.tablesByWorkbookSheetIndex);
             setShouldAutoCalculate(false);
             setIsWorkerBacked(true);
@@ -2389,13 +2448,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     hasIncompleteWorkerChartSnapshot,
     loadWorkbookOnMainThread,
     maxFileSizeBytes,
-    requestedReadOnly,
     setImageAssets,
     startChartDisplayHydration,
     shouldFallbackFromWorkerError,
     shouldDeferLoading,
     shouldForceReadOnlyForBuffer,
-    workerSupported,
+    shouldUseWorkerForReadOnlyLoad,
     src,
     showHiddenSheets
   ]);
@@ -2422,6 +2480,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setActiveCell(null);
     setSelection(null);
     setSelectedChartId(null);
+    setSelectedChartElement(null);
     setSelectedImageId(null);
     selectionAnchorRef.current = null;
     setSortState(null);
@@ -2542,15 +2601,22 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
     const shouldForceReadOnly = shouldForceReadOnlyForBuffer(deferredBuffer.byteLength);
     setForcedReadOnly(shouldForceReadOnly);
-    const shouldUseWorkerForLoad = workerSupported && shouldForceReadOnly;
+    const shouldUseWorkerForLoad = shouldUseWorkerForReadOnlyLoad(shouldForceReadOnly);
     const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(new Uint8Array(deferredBuffer), skipXmlParsing);
 
     if (shouldUseWorkerForLoad) {
-      void getWorkerClient().loadWorkbook(deferredBuffer, effectiveSkipXmlParsing, showHiddenSheets)
+      void getWorkerClient().loadWorkbook(deferredBuffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValues)
         .then((snapshot) => {
           if (!effectiveSkipXmlParsing && hasIncompleteWorkerChartSnapshot(snapshot)) {
             throw new Error("Worker chart payload incomplete");
           }
+          const workerImageAssets = effectiveSkipXmlParsing
+            ? null
+            : parseWorkbookImageAssets(new Uint8Array(deferredBuffer));
+          setImageAssets(workerImageAssets);
+          const chartOriginsById = workerImageAssets
+            ? hydrateWorkbookChartStyles(snapshot.chartsByWorkbookSheetIndex, workerImageAssets)
+            : new Map();
           deferredBufferRef.current = null;
           setDeferredLoadFileSize(null);
           setWorkbook(null);
@@ -2558,7 +2624,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
           setChartsByWorkbookSheetIndex(snapshot.chartsByWorkbookSheetIndex);
           setChartsheets(snapshot.chartsheets);
           setTabs(snapshot.tabs);
-          chartAssetsRef.current = null;
+          chartAssetsRef.current = { ...snapshot, chartOriginsById };
+          setFormControlsByWorkbookSheetIndex(snapshot.formControlsByWorkbookSheetIndex);
           setWorkerTablesByWorkbookSheetIndex(snapshot.tablesByWorkbookSheetIndex);
           setShouldAutoCalculate(false);
           setIsWorkerBacked(true);
@@ -2614,7 +2681,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
-    void parseWorkbookBuffer(deferredBuffer)
+    void parseWorkbookBuffer(deferredBuffer, externalFnValues)
       .then((nextParsedWorkbook) => {
         const bytes = new Uint8Array(deferredBuffer);
         const nextImageAssets = loadWorkbookImageAssets(
@@ -2663,14 +2730,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     disposeWorkerClient,
     getWorkerClient,
     loadWorkbookOnMainThread,
-    requestedReadOnly,
     setImageAssets,
     startChartDisplayHydration,
     hasIncompleteWorkerChartSnapshot,
     maxFileSizeBytes,
     shouldFallbackFromWorkerError,
     shouldForceReadOnlyForBuffer,
-    workerSupported
+    shouldUseWorkerForReadOnlyLoad
   ]);
 
   const maybeRecalculateWorkbook = React.useCallback((targetWorkbook: Workbook) => {
@@ -2692,14 +2758,28 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     return workbook.getSheet(activeSheet.workbookSheetIndex);
   }, [activeSheet, workbook]);
 
-  const activeTableMetadata = imageAssetsRef.current?.tableMetadataByWorkbookSheetIndex[activeSheet?.workbookSheetIndex ?? -1] ?? null;
+  const getFormControlWorksheet = React.useCallback((sheetIndex = activeSheetIndex) => {
+    const targetSheet = sheets[sheetIndex];
+    if (!workbook || !targetSheet) {
+      return null;
+    }
+    try {
+      return {
+        workbookSheetIndex: targetSheet.workbookSheetIndex,
+        worksheet: workbook.getSheet(targetSheet.workbookSheetIndex)
+      };
+    } catch {
+      return null;
+    }
+  }, [activeSheetIndex, sheets, workbook]);
+
   const tables = React.useMemo(
     () => (
       isWorkerBacked
         ? workerTablesByWorkbookSheetIndex[activeSheet?.workbookSheetIndex ?? -1] ?? []
-        : mapWorksheetTables(getActiveWorksheet(), activeTableMetadata)
+        : mapWorksheetTables(getActiveWorksheet(), activeSheet?.autoFilterRanges ?? [])
     ),
-    [activeSheet?.workbookSheetIndex, activeTableMetadata, getActiveWorksheet, isWorkerBacked, revision, workerTablesByWorkbookSheetIndex]
+    [activeSheet?.autoFilterRanges, activeSheet?.workbookSheetIndex, getActiveWorksheet, isWorkerBacked, revision, workerTablesByWorkbookSheetIndex]
   );
 
   const getCellSnapshotAsync = React.useCallback((workbookSheetIndex: number, row: number, col: number) => {
@@ -2795,13 +2875,57 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     [getChartById, selectedChartId]
   );
 
+  React.useEffect(() => {
+    if (!selectedChartId) {
+      if (selectedChartElement) {
+        setSelectedChartElement(null);
+      }
+      return;
+    }
+
+    if (!selectedChart) {
+      setSelectedChartId(null);
+      setSelectedChartElement(null);
+      return;
+    }
+
+    if (!selectedChartElement) {
+      setSelectedChartElement({ chartId: selectedChartId, kind: "chart" });
+      return;
+    }
+
+    if (selectedChartElement.chartId !== selectedChartId) {
+      setSelectedChartElement({ chartId: selectedChartId, kind: "chart" });
+      return;
+    }
+
+    if (selectedChartElement.kind !== "chart") {
+      const selectedSeries = selectedChart.series[selectedChartElement.seriesIndex];
+      if (!selectedSeries || selectedSeries.id !== selectedChartElement.seriesId) {
+        setSelectedChartElement({ chartId: selectedChartId, kind: "chart" });
+      }
+    }
+  }, [selectedChart, selectedChartElement, selectedChartId]);
+
   const selectChart = React.useCallback((id: string | null) => {
     setSelectedImageId(null);
     setSelectedChartId(id);
+    setSelectedChartElement(id ? { chartId: id, kind: "chart" } : null);
   }, []);
 
   const clearSelectedChart = React.useCallback(() => {
     setSelectedChartId(null);
+    setSelectedChartElement(null);
+  }, []);
+
+  const clearSelectedChartElement = React.useCallback(() => {
+    setSelectedChartElement(selectedChartId ? { chartId: selectedChartId, kind: "chart" } : null);
+  }, [selectedChartId]);
+
+  const selectChartElement = React.useCallback((selection: XlsxChartElementSelection | null) => {
+    setSelectedImageId(null);
+    setSelectedChartId(selection?.chartId ?? null);
+    setSelectedChartElement(selection);
   }, []);
 
   const getSheetImages = React.useCallback((sheetIndex = activeSheetIndex) => {
@@ -2825,6 +2949,39 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [activeSheetIndex, formControlsByWorkbookSheetIndex, mapPublicFormControl, sheets]);
 
   const formControls = React.useMemo(() => getSheetFormControls(activeSheetIndex), [activeSheetIndex, getSheetFormControls]);
+
+  const getFormControlItems = React.useCallback((controlIndex: number, sheetIndex = activeSheetIndex) => {
+    const target = getFormControlWorksheet(sheetIndex);
+    if (!workbook || !target) {
+      const targetSheet = sheets[sheetIndex];
+      if (!targetSheet) {
+        return [];
+      }
+      const control = (formControlsByWorkbookSheetIndex[targetSheet.workbookSheetIndex] ?? [])
+        .find((entry) => entry.controlIndex === controlIndex);
+      return control?.items?.slice() ?? [];
+    }
+    const control = target.worksheet.formControls[controlIndex];
+    const kind = control?.formControl.kind;
+    const inputRange = kind?.kind === "listBox" || kind?.kind === "dropdown"
+      ? kind.inputRange
+      : undefined;
+    if (!inputRange) {
+      return [];
+    }
+    const source = resolveWorkbookReference(workbook, target.workbookSheetIndex, inputRange);
+    if (!source) {
+      return [];
+    }
+
+    const items: string[] = [];
+    for (let row = source.range.start.row; row <= source.range.end.row; row += 1) {
+      for (let col = source.range.start.col; col <= source.range.end.col; col += 1) {
+        items.push(source.worksheet.getFormattedValueAt(row, col));
+      }
+    }
+    return items;
+  }, [activeSheetIndex, formControlsByWorkbookSheetIndex, getFormControlWorksheet, sheets, workbook]);
 
   const getSheetShapes = React.useCallback((sheetIndex = activeSheetIndex) => {
     const targetSheet = sheets[sheetIndex];
@@ -2861,6 +3018,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
   const selectImage = React.useCallback((id: string | null) => {
     setSelectedChartId(null);
+    setSelectedChartElement(null);
     setSelectedImageId(id);
   }, []);
 
@@ -3127,10 +3285,40 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     () => getCellDisplayValue(deferredMetadataCell),
     [deferredMetadataCell, getCellDisplayValue, revision, workerCellSnapshotRevision]
   );
-  const selectedFormula = React.useMemo(
+  const selectedCellFormula = React.useMemo(
     () => getCellFormula(deferredMetadataCell),
     [deferredMetadataCell, getCellFormula, revision, workerCellSnapshotRevision]
   );
+  const getChartSeriesFormula = React.useCallback((chartId: string, seriesIndex: number) => (
+    buildChartSeriesFormula(getChartById(chartId), seriesIndex)
+  ), [getChartById]);
+  const selectedChartFormula = React.useMemo(() => {
+    if (
+      !selectedChartElement
+      || selectedChartElement.kind === "chart"
+      || selectedChartElement.seriesIndex < 0
+    ) {
+      return null;
+    }
+
+    return getChartSeriesFormula(selectedChartElement.chartId, selectedChartElement.seriesIndex);
+  }, [getChartSeriesFormula, selectedChartElement]);
+  const selectedFormulaTarget = React.useMemo(() => {
+    if (selectedChartFormula && selectedChartElement && selectedChartElement.kind !== "chart") {
+      return {
+        chartId: selectedChartElement.chartId,
+        kind: "chartSeries" as const,
+        seriesId: selectedChartElement.seriesId,
+        seriesIndex: selectedChartElement.seriesIndex
+      };
+    }
+
+    return {
+      cell: deferredMetadataCell,
+      kind: "cell" as const
+    };
+  }, [deferredMetadataCell, selectedChartElement, selectedChartFormula]);
+  const selectedFormula = selectedChartFormula ?? selectedCellFormula;
   const isLoadDeferred = deferredLoadFileSize !== null;
   const canLoadDeferred = !isLoading && isLoadDeferred;
   const canUndo = !readOnly && undoStackRef.current.length > 0;
@@ -3163,6 +3351,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
     return {
       formula: worksheet.getFormulaAt(cell.row, cell.col) ?? null,
+      style: worksheet.getCellStyleAt(cell.row, cell.col),
       value: worksheet.getCellAt(cell.row, cell.col).toJs()
     };
   }, [getActiveWorksheet]);
@@ -3272,6 +3461,128 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setHistoryRevision((current) => current + 1);
   }, [createHistoryEntry]);
 
+  const addFormControl = React.useCallback((input: XlsxFormControlInput, sheetIndex = activeSheetIndex) => {
+    const target = getFormControlWorksheet(sheetIndex);
+    if (readOnly || !workbook || !target) {
+      return null;
+    }
+
+    recordHistoryBeforeMutation();
+    target.worksheet.addDrawing(xlsxFormControlInputToDukeDrawing(input));
+    const controlIndex = target.worksheet.formControlCount - 1;
+    const addedControl = target.worksheet.formControls[controlIndex];
+    const addedKind = addedControl?.formControl.kind;
+    if (addedControl && (addedKind?.kind === "checkbox" || addedKind?.kind === "optionButton")) {
+      target.worksheet.setFormControlCheckState(addedControl.drawingPath, addedKind.state);
+    } else if (addedKind?.kind === "groupBox") {
+      reconcileCheckedOptionButtons(target.worksheet);
+    } else if (addedKind && "cellLink" in addedKind && addedKind.cellLink) {
+      workbook.syncFormControls();
+    }
+    maybeRecalculateWorkbook(workbook);
+    refreshWorkbookState(workbook);
+    return controlIndex;
+  }, [activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+
+  const updateFormControl = React.useCallback((
+    controlIndex: number,
+    patch: XlsxFormControlPatch,
+    sheetIndex = activeSheetIndex
+  ) => {
+    const target = getFormControlWorksheet(sheetIndex);
+    const currentControl = target?.worksheet.formControls[controlIndex];
+    if (readOnly || !workbook || !target || !currentControl) {
+      return false;
+    }
+
+    recordHistoryBeforeMutation();
+    const currentInput = formControlInputFromDukeControl(currentControl);
+    if (currentInput.kind !== "formControl" || !currentControl.anchor) {
+      return false;
+    }
+    const nextAnchor = patch.anchor
+      ? xlsxAnchorToDukeDrawingAnchor(
+          patch.anchor,
+          patch.editAs ?? (currentControl.anchor.type === "twoCell" ? currentControl.anchor.editAs : undefined)
+        )
+      : patch.editAs !== undefined && currentControl.anchor.type === "twoCell"
+        ? { ...currentControl.anchor, editAs: patch.editAs }
+        : currentControl.anchor;
+    let nextKind = patch.kind
+      ? xlsxFormControlKindToDukeKind(patch.kind)
+      : dukeFormControlKindToInput(currentControl.formControl.kind);
+    if (currentControl.formControl.kind.kind === "unknown" && nextKind.kind === "unknown") {
+      nextKind = {
+        ...nextKind,
+        legacyObjectType: nextKind.legacyObjectType ?? currentControl.formControl.kind.legacyObjectType
+      };
+    }
+    const patchedRawObj = patch.kind?.kind === "editbox" || patch.kind?.kind === "unknown"
+      ? patch.kind.rawObj
+      : undefined;
+    const patchedRawProperties = patch.kind?.kind === "editbox" || patch.kind?.kind === "unknown"
+      ? patch.kind.rawProperties
+      : undefined;
+    const nextInput: DukeFormControlDrawingInput = {
+      altText: "altText" in patch ? patch.altText : currentControl.altText,
+      anchor: nextAnchor,
+      formControl: {
+        ...currentInput.formControl,
+        kind: nextKind,
+        macroName: "macroName" in patch ? patch.macroName : currentControl.formControl.macroName,
+        rawClientData: "rawClientData" in patch ? patch.rawClientData : currentControl.formControl.rawClientData,
+        rawObj: patchedRawObj ?? currentControl.formControl.rawObj,
+        rawProperties: patchedRawProperties ?? currentControl.formControl.rawProperties
+      },
+      hidden: "hidden" in patch ? patch.hidden : currentControl.hidden,
+      kind: "formControl",
+      locked: "locked" in patch ? patch.locked : currentControl.locked,
+      name: "name" in patch ? patch.name : currentControl.name,
+      printable: "printable" in patch ? patch.printable : currentControl.printable,
+      title: "title" in patch ? patch.title : currentControl.title
+    };
+
+    target.worksheet.setDrawing(currentControl.drawingPath, nextInput);
+    const updatedControl = target.worksheet.formControls[controlIndex];
+    const updatedKind = updatedControl?.formControl.kind;
+    const interactionChanged = updatedKind
+      ? formControlInteractionChanged(currentControl.formControl.kind, updatedKind)
+      : false;
+    const groupTopologyChanged = patch.anchor !== undefined || (
+      updatedKind !== undefined
+      && updatedKind.kind !== currentControl.formControl.kind.kind
+      && (updatedKind.kind === "groupBox" || currentControl.formControl.kind.kind === "groupBox")
+    );
+    if (interactionChanged && updatedControl && (updatedKind?.kind === "checkbox" || updatedKind?.kind === "optionButton")) {
+      target.worksheet.setFormControlCheckState(updatedControl.drawingPath, updatedKind.state);
+    } else if (groupTopologyChanged) {
+      reconcileCheckedOptionButtons(target.worksheet);
+    } else if (interactionChanged && updatedKind && "cellLink" in updatedKind && updatedKind.cellLink) {
+      workbook.syncFormControls();
+    }
+    maybeRecalculateWorkbook(workbook);
+    refreshWorkbookState(workbook);
+    return true;
+  }, [activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+
+  const removeFormControl = React.useCallback((controlIndex: number, sheetIndex = activeSheetIndex) => {
+    const target = getFormControlWorksheet(sheetIndex);
+    if (readOnly || !workbook || !target || !target.worksheet.formControls[controlIndex]) {
+      return false;
+    }
+
+    recordHistoryBeforeMutation();
+    const removedControl = target.worksheet.formControls[controlIndex]!;
+    const removedKind = removedControl.formControl.kind.kind;
+    target.worksheet.removeDrawing(removedControl.drawingPath);
+    if (removedKind === "groupBox" || removedKind === "optionButton") {
+      reconcileCheckedOptionButtons(target.worksheet);
+      maybeRecalculateWorkbook(workbook);
+    }
+    refreshWorkbookState(workbook);
+    return true;
+  }, [activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+
   const recordCellEditHistory = React.useCallback((
     cell: XlsxCellAddress,
     before: CellMutationState,
@@ -3350,6 +3661,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       for (let col = startCol; col <= endCol; col += 1) {
         cells.push({
           formula: worksheet.getFormulaAt(row, col) ?? null,
+          style: worksheet.getCellStyleAt(row, col),
           value: worksheet.getCellAt(row, col).toJs()
         });
       }
@@ -3477,8 +3789,70 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setShouldAutoCalculate(false);
   }, [refreshWorkbookState, workbook]);
 
+  const applyReadOnlyResizeOverride = React.useCallback((
+    axis: "column" | "row",
+    actualIndex: number,
+    sizePx: number
+  ) => {
+    if (!activeSheet) {
+      return;
+    }
+
+    const contentSizePx = resolveContentSheetAxisPixels(sizePx, activeSheet.showGridLines);
+    const targetWorkbookSheetIndex = activeSheet.workbookSheetIndex;
+    setSheets((currentSheets) => currentSheets.map((sheet) => {
+      if (sheet.workbookSheetIndex !== targetWorkbookSheetIndex) {
+        return sheet;
+      }
+
+      if (axis === "column") {
+        const nextColWidthOverridesPx = {
+          ...sheet.colWidthOverridesPx,
+          [actualIndex]: contentSizePx
+        };
+        const nextColWidths = [...sheet.colWidths];
+        const visibleColIndex = sheet.visibleCols.indexOf(actualIndex);
+        if (visibleColIndex >= 0) {
+          nextColWidths[visibleColIndex] = contentSizePx;
+        }
+
+        return {
+          ...sheet,
+          colWidthOverridesPx: nextColWidthOverridesPx,
+          colWidths: nextColWidths
+        };
+      }
+
+      const nextRowHeightOverridesPx = {
+        ...sheet.rowHeightOverridesPx,
+        [actualIndex]: contentSizePx
+      };
+      const nextRowHeights = [...sheet.rowHeights];
+      const visibleRowIndex = sheet.visibleRows.indexOf(actualIndex);
+      if (visibleRowIndex >= 0) {
+        nextRowHeights[visibleRowIndex] = contentSizePx;
+      }
+
+      return {
+        ...sheet,
+        rowHeightOverridesPx: nextRowHeightOverridesPx,
+        rowHeights: nextRowHeights
+      };
+    }));
+    setRevision((current) => current + 1);
+  }, [activeSheet]);
+
   const resizeColumn = React.useCallback((col: number, widthPx: number) => {
-    if ((readOnly && !canResizeReadOnly) || !workbook || !activeSheet) {
+    if ((readOnly && !canResizeReadOnly) || !activeSheet) {
+      return;
+    }
+
+    if (isWorkerBacked) {
+      applyReadOnlyResizeOverride("column", col, widthPx);
+      return;
+    }
+
+    if (!workbook) {
       return;
     }
 
@@ -3489,10 +3863,28 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       pxToSheetColumnWidth(resolveContentSheetAxisPixels(widthPx, activeSheet.showGridLines))
     );
     refreshWorkbookState(workbook);
-  }, [activeSheet, canResizeReadOnly, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+  }, [
+    activeSheet,
+    applyReadOnlyResizeOverride,
+    canResizeReadOnly,
+    isWorkerBacked,
+    readOnly,
+    recordHistoryBeforeMutation,
+    refreshWorkbookState,
+    workbook
+  ]);
 
   const resizeRow = React.useCallback((row: number, heightPx: number) => {
-    if ((readOnly && !canResizeReadOnly) || !workbook || !activeSheet) {
+    if ((readOnly && !canResizeReadOnly) || !activeSheet) {
+      return;
+    }
+
+    if (isWorkerBacked) {
+      applyReadOnlyResizeOverride("row", row, heightPx);
+      return;
+    }
+
+    if (!workbook) {
       return;
     }
 
@@ -3503,7 +3895,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       pxToSheetRowHeight(resolveContentSheetAxisPixels(heightPx, activeSheet.showGridLines))
     );
     refreshWorkbookState(workbook);
-  }, [activeSheet, canResizeReadOnly, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+  }, [
+    activeSheet,
+    applyReadOnlyResizeOverride,
+    canResizeReadOnly,
+    isWorkerBacked,
+    readOnly,
+    recordHistoryBeforeMutation,
+    refreshWorkbookState,
+    workbook
+  ]);
 
   const resolveAnchoredObjectRect = React.useCallback((
     anchor: XlsxImage["anchor"],
@@ -3552,14 +3953,30 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     };
   }, [getColumnWidthPx, getRowHeightPx]);
 
-  const setChartRect = React.useCallback((id: string, rect: XlsxImageRect) => {
+  const setChartRect = React.useCallback((id: string, rect: XlsxImageRect, layout?: XlsxDrawingLayout) => {
     const hydratedChartAssets = ensureChartAssetsHydrated(workbook, sheets);
+    console.info("[react-xlsx debug] setChartRect", {
+      hasActiveSheet: Boolean(activeSheet),
+      hasHydratedChartAssets: Boolean(hydratedChartAssets),
+      hasImageAssets: Boolean(imageAssetsRef.current),
+      hasWorkbook: Boolean(workbook),
+      id,
+      readOnly,
+      rect
+    });
     if (readOnly || !workbook || !activeSheet || !imageAssetsRef.current || !hydratedChartAssets) {
       return;
     }
 
     const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
     const currentChart = getChartById(id);
+    console.info("[react-xlsx debug] currentChart", {
+      activeWorkbookSheetIndex: activeSheet.workbookSheetIndex,
+      editable: currentChart?.editable,
+      found: Boolean(currentChart),
+      originCount: hydratedChartAssets.chartOriginsById.size,
+      workbookSheetIndex: currentChart?.workbookSheetIndex
+    });
     if (!currentChart || currentChart.editable === false || currentChart.workbookSheetIndex !== activeSheet.workbookSheetIndex) {
       return;
     }
@@ -3567,12 +3984,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     const nextAnchor = rectToImageAnchor(rect, currentChart.anchor, {
       contentOffsetLeft: GRID_ROW_HEADER_WIDTH,
       contentOffsetTop: GRID_HEADER_HEIGHT,
-      getColumnWidthPx: (col) => getColumnWidthPx(worksheet, col),
-      getRowHeightPx: (row) => getRowHeightPx(worksheet, row)
+      getColumnWidthPx: (col) => layout?.columnWidths[col] ?? getColumnWidthPx(worksheet, col),
+      getRowHeightPx: (row) => layout?.rowHeights[row] ?? getRowHeightPx(worksheet, row)
     });
 
     recordHistoryBeforeMutation();
-    updateWorkbookChartAnchor(imageAssetsRef.current, hydratedChartAssets, id, nextAnchor);
+    const didUpdateAnchor = updateWorkbookChartAnchor(imageAssetsRef.current, hydratedChartAssets, id, nextAnchor);
+    console.info("[react-xlsx debug] updateWorkbookChartAnchor", { didUpdateAnchor, nextAnchor });
 
     hydratedChartAssets.chartsByWorkbookSheetIndex = hydratedChartAssets.chartsByWorkbookSheetIndex.map((sheetCharts) => (
       sheetCharts.map((chart) => chart.id === id ? { ...chart, anchor: nextAnchor } : chart)
@@ -3594,7 +4012,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     workbook
   ]);
 
-  const setImageRect = React.useCallback((id: string, rect: XlsxImageRect) => {
+  const setImageRect = React.useCallback((id: string, rect: XlsxImageRect, layout?: XlsxDrawingLayout) => {
     if (readOnly || !workbook || !activeSheet || !imageAssetsRef.current) {
       return;
     }
@@ -3608,8 +4026,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     const nextAnchor = rectToImageAnchor(rect, currentImage.anchor, {
       contentOffsetLeft: GRID_ROW_HEADER_WIDTH,
       contentOffsetTop: GRID_HEADER_HEIGHT,
-      getColumnWidthPx: (col) => getColumnWidthPx(worksheet, col),
-      getRowHeightPx: (row) => getRowHeightPx(worksheet, row)
+      getColumnWidthPx: (col) => layout?.columnWidths[col] ?? getColumnWidthPx(worksheet, col),
+      getRowHeightPx: (row) => layout?.rowHeights[row] ?? getRowHeightPx(worksheet, row)
     });
 
     recordHistoryBeforeMutation();
@@ -3805,14 +4223,45 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setRevision((current) => current + 1);
   }, [ensureChartAssetsHydrated, getChartById, readOnly, recordHistoryBeforeMutation, sheets, workbook]);
 
+  const setChartSeriesFormula = React.useCallback((chartId: string, seriesIndex: number, formula: string) => {
+    if (readOnly) {
+      return false;
+    }
+
+    const chart = getChartById(chartId);
+    if (!chart || chart.editable === false) {
+      return false;
+    }
+
+    const nextChart = applyChartSeriesFormula(chart, seriesIndex, formula, workbook);
+    if (!nextChart) {
+      return false;
+    }
+
+    updateChart(chartId, { series: nextChart.series });
+    const selectedSeries = nextChart.series[seriesIndex];
+    if (selectedSeries) {
+      setSelectedChartElement((current) => (
+        current && current.chartId === chartId && current.kind !== "chart"
+          ? {
+              ...current,
+              seriesId: selectedSeries.id,
+              seriesIndex
+            }
+          : current
+      ));
+    }
+    return true;
+  }, [getChartById, readOnly, updateChart, workbook]);
+
   const selectCell = React.useCallback((cell: XlsxCellAddress, options?: { extend?: boolean; append?: boolean }) => {
     setSelectedChartId(null);
+    setSelectedChartElement(null);
     setSelectedImageId(null);
     setActiveCell(cell);
     if (options?.extend && selectionAnchorRef.current) {
       const extended = normalizeRange({ start: selectionAnchorRef.current, end: cell });
       setSelection(extended);
-      // Grow the active (last) region in place; keep any other regions of a multi-selection.
       setSelections((prev) => (prev.length > 1 ? [...prev.slice(0, -1), extended] : [extended]));
       return;
     }
@@ -3820,26 +4269,41 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     selectionAnchorRef.current = cell;
     const single = { start: cell, end: cell };
     setSelection(single);
-    // Ctrl/Cmd+click appends a disjoint region; a plain click replaces the whole selection.
     setSelections((prev) => {
       if (!options?.append) return [single];
-      // Dedup to match selectRange's append path: re-appending the same cell must not duplicate a
-      // region (which would inflate a downstream Count/Sum and produce duplicate highlight keys).
-      return prev.some((r) => rangesEqual(r, single)) ? prev : [...prev, single];
+      return [...prev.filter((range) => !rangesEqual(range, single)), single];
     });
   }, []);
+
+  const revealCellImplRef = React.useRef<((cell: XlsxCellAddress) => void) | null>(null);
+
+  const registerRevealCellImpl = React.useCallback(
+    (impl: ((cell: XlsxCellAddress) => void) | null) => {
+      revealCellImplRef.current = impl;
+    },
+    [],
+  );
+
+  const revealCell = React.useCallback(
+    (cell: XlsxCellAddress) => {
+      const impl = revealCellImplRef.current;
+      if (impl) {
+        impl(cell);
+      } else {
+        selectCell(cell);
+      }
+    },
+    [selectCell],
+  );
 
   const selectRange = React.useCallback(
     (range: XlsxCellRange, options?: { append?: boolean; toggle?: boolean }) => {
       const normalized = normalizeRange(range);
       setSelectedChartId(null);
+      setSelectedChartElement(null);
       setSelectedImageId(null);
 
       if (options?.toggle) {
-        // Ctrl/Cmd+click: toggle this region in/out of the selection (Excel behavior). Removing the
-        // region also moves the active `selection` to the new last region (or clears it) so the
-        // sync effect above doesn't immediately re-add it, and so the formula bar / overlay follow
-        // a region that is still selected.
         const prev = selectionsRef.current;
         const idx = prev.findIndex((r) => rangesEqual(r, normalized));
         if (idx >= 0) {
@@ -3847,10 +4311,6 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
           const active = next[next.length - 1] ?? null;
           selectionAnchorRef.current = active ? active.start : null;
           setActiveCell(active ? active.end : null);
-          // Wrap in a fresh object so `selection`'s identity changes even when the active region is
-          // unchanged (i.e. a NON-active region was removed). That makes the grid's overlay-
-          // repositioning effect fire and move the imperative overlay off the just-removed cell —
-          // without a new identity React sees no pixel change, skips, and the overlay ghosts there.
           setSelection(active ? normalizeRange(active) : null);
           setSelections(next);
           return;
@@ -3867,9 +4327,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       setSelection(normalized);
       setSelections((prev) => {
         if (!options?.append) return [normalized];
-        // Dedup a re-appended region (a Ctrl/Cmd+drag that lands on an existing rect) so it never
-        // inflates a downstream Count/Sum or produces duplicate highlight keys.
-        return prev.some((r) => rangesEqual(r, normalized)) ? prev : [...prev, normalized];
+        return [...prev.filter((range) => !rangesEqual(range, normalized)), normalized];
       });
     },
     [],
@@ -3880,6 +4338,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setActiveCell(null);
     setSelection(null);
     setSelectedChartId(null);
+    setSelectedChartElement(null);
     setSelectedImageId(null);
   }, []);
 
@@ -3905,8 +4364,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         }
 
         worksheet.setCell(cellAddressToA1({ row, col }), "");
+        const after = captureCellMutationState(cell);
+        if (!after) {
+          continue;
+        }
         mutations.push({
-          after: { formula: null, value: "" },
+          after,
           before,
           cell
         });
@@ -3941,9 +4404,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
     const nextValue = coerceUserEnteredValue(value);
     worksheet.setCell(cellAddressToA1(cell), nextValue);
+    const after = captureCellMutationState(cell);
+    if (!after) {
+      return;
+    }
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
-    recordCellEditHistory(cell, before, { formula: null, value: nextValue });
+    recordCellEditHistory(cell, before, after);
   }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
 
   const setCellFormula = React.useCallback((cell: XlsxCellAddress, formula: string) => {
@@ -3963,13 +4430,35 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     } else {
       worksheet.setFormula(cellAddressToA1(cell), formula);
     }
+    const after = captureCellMutationState(cell);
+    if (!after) {
+      return;
+    }
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
-    recordCellEditHistory(cell, before, {
-      formula: trimmedFormula || null,
-      value: trimmedFormula ? null : ""
-    });
+    recordCellEditHistory(cell, before, after);
   }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
+
+  const setCellStyle = React.useCallback((cell: XlsxCellAddress, style: XlsxCellStyleInput) => {
+    const worksheet = getActiveWorksheet();
+    if (readOnly || !worksheet || !workbook) {
+      return;
+    }
+
+    const before = captureCellMutationState(cell);
+    if (!before) {
+      return;
+    }
+
+    worksheet.setCellStyleAt(cell.row, cell.col, style);
+    const after = captureCellMutationState(cell);
+    if (!after) {
+      return;
+    }
+
+    refreshWorkbookState(workbook);
+    recordCellEditHistory(cell, before, after);
+  }, [captureCellMutationState, getActiveWorksheet, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
 
   const setSelectedCellValue = React.useCallback((value: string) => {
     if (!activeCell) {
@@ -3986,6 +4475,71 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
     setCellFormula(activeCell, formula);
   }, [activeCell, setCellFormula]);
+
+  const setSelectedFormula = React.useCallback((formula: string) => {
+    if (selectedFormulaTarget?.kind === "chartSeries") {
+      return setChartSeriesFormula(selectedFormulaTarget.chartId, selectedFormulaTarget.seriesIndex, formula);
+    }
+
+    if (!activeCell) {
+      return false;
+    }
+
+    setCellFormula(activeCell, formula);
+    return true;
+  }, [activeCell, selectedFormulaTarget, setCellFormula, setChartSeriesFormula]);
+
+  const setSelectedCellStyle = React.useCallback((style: XlsxCellStyleInput) => {
+    if (!activeCell) {
+      return;
+    }
+
+    setCellStyle(activeCell, style);
+  }, [activeCell, setCellStyle]);
+
+  const setRangeStyle = React.useCallback((range: XlsxCellRange, style: XlsxCellStyleInput) => {
+    const worksheet = getActiveWorksheet();
+    if (readOnly || !worksheet || !workbook) {
+      return;
+    }
+
+    const normalized = normalizeRange(range);
+    const beforeStates: Array<{ before: CellMutationState; cell: XlsxCellAddress }> = [];
+    for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
+      for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
+        const cell = { row, col };
+        const before = captureCellMutationState(cell);
+        if (!before) {
+          continue;
+        }
+        beforeStates.push({
+          before,
+          cell
+        });
+      }
+    }
+
+    if (beforeStates.length === 0) {
+      return;
+    }
+
+    worksheet.setRangeStyle(rangeToA1(normalized), style);
+    const mutations: RangeCellMutation[] = [];
+    for (const mutation of beforeStates) {
+      const after = captureCellMutationState(mutation.cell);
+      if (!after) {
+        continue;
+      }
+      mutations.push({
+        after,
+        before: mutation.before,
+        cell: mutation.cell
+      });
+    }
+
+    refreshWorkbookState(workbook);
+    recordRangeEditHistory(mutations, selection, activeCell);
+  }, [activeCell, captureCellMutationState, getActiveWorksheet, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
 
   const fillSelection = React.useCallback((targetRange: XlsxCellRange) => {
     const worksheet = getActiveWorksheet();
@@ -4018,21 +4572,25 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         const sourceRow = sourceRange.start.row + ((row - nextRange.start.row) % sourceHeight);
         const sourceCol = sourceRange.start.col + ((col - nextRange.start.col) % sourceWidth);
         const sourceFormula = worksheet.getFormulaAt(sourceRow, sourceCol);
+        const sourceStyle = cloneCellStyle(worksheet.getCellStyleAt(sourceRow, sourceCol));
 
         if (sourceFormula) {
           worksheet.setFormula(cellAddressToA1(targetCell), sourceFormula);
-          mutations.push({
-            after: { formula: sourceFormula, value: null },
-            before,
-            cell: targetCell
-          });
-          continue;
+        } else {
+          const sourceValue = normalizeCellValue(worksheet.getCellAt(sourceRow, sourceCol).toJs());
+          worksheet.setCell(cellAddressToA1(targetCell), sourceValue);
         }
 
-        const sourceValue = normalizeCellValue(worksheet.getCellAt(sourceRow, sourceCol).toJs());
-        worksheet.setCell(cellAddressToA1(targetCell), sourceValue);
+        if (sourceStyle && typeof sourceStyle === "object") {
+          worksheet.setCellStyleAt(targetCell.row, targetCell.col, sourceStyle);
+        }
+
+        const after = captureCellMutationState(targetCell);
+        if (!after) {
+          continue;
+        }
         mutations.push({
-          after: { formula: null, value: sourceValue },
+          after,
           before,
           cell: targetCell
         });
@@ -4085,8 +4643,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
     workbook.addSheet(candidate);
     sheetOriginsRef.current = [...sheetOriginsRef.current, null];
+    setFormControlsByWorkbookSheetIndex((current) => [...current, []]);
     setImagesByWorkbookSheetIndex((current) => [...current, []]);
     setShapesByWorkbookSheetIndex((current) => [...current, []]);
+    if (imageAssetsRef.current) {
+      imageAssetsRef.current.formControlsByWorkbookSheetIndex = [
+        ...imageAssetsRef.current.formControlsByWorkbookSheetIndex,
+        []
+      ];
+    }
     const nextSheets = buildSheetList(
       workbook,
       imageAssetsRef.current?.sheetStatesByWorkbookSheetIndex,
@@ -4120,9 +4685,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     recordHistoryBeforeMutation();
     workbook.removeSheet(activeSheet.workbookSheetIndex);
     sheetOriginsRef.current = sheetOriginsRef.current.filter((_, index) => index !== activeSheet.workbookSheetIndex);
+    setFormControlsByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
     setImagesByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
     setShapesByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
     if (imageAssetsRef.current) {
+      imageAssetsRef.current.formControlsByWorkbookSheetIndex = imageAssetsRef.current.formControlsByWorkbookSheetIndex.filter(
+        (_, index) => index !== activeSheet.workbookSheetIndex
+      );
       imageAssetsRef.current.sheetStatesByWorkbookSheetIndex = imageAssetsRef.current.sheetStatesByWorkbookSheetIndex.filter(
         (_, index) => index !== activeSheet.workbookSheetIndex
       );
@@ -4191,16 +4760,24 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         }
         if (rawValue.startsWith("=") && rawValue.length > 1) {
           worksheet.setFormula(cellAddressToA1(nextCell), rawValue);
+          const after = captureCellMutationState(nextCell);
+          if (!after) {
+            continue;
+          }
           mutations.push({
-            after: { formula: rawValue, value: null },
+            after,
             before,
             cell: nextCell
           });
         } else {
           const nextValue = coerceUserEnteredValue(rawValue);
           worksheet.setCell(cellAddressToA1(nextCell), nextValue);
+          const after = captureCellMutationState(nextCell);
+          if (!after) {
+            continue;
+          }
           mutations.push({
-            after: { formula: null, value: nextValue },
+            after,
             before,
             cell: nextCell
           });
@@ -4257,8 +4834,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       if (cell.formula) {
         worksheet.setFormula(cellAddressToA1(nextCell), cell.formula);
         if (before) {
+          const after = captureCellMutationState(nextCell);
+          if (!after) {
+            continue;
+          }
           mutations.push({
-            after: { formula: cell.formula, value: null },
+            after,
             before,
             cell: nextCell
           });
@@ -4266,8 +4847,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       } else {
         worksheet.setCell(cellAddressToA1(nextCell), cell.value);
         if (before) {
+          const after = captureCellMutationState(nextCell);
+          if (!after) {
+            continue;
+          }
           mutations.push({
-            after: { formula: null, value: cell.value },
+            after,
             before,
             cell: nextCell
           });
@@ -4441,6 +5026,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       activeSheetIndex,
       activeTab,
       activeTabIndex,
+      addFormControl,
       addSheet,
       canRedo,
       canDownload: Boolean(file ?? src),
@@ -4452,6 +5038,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       charts,
       chartsheets,
       clearSelectedChart,
+      clearSelectedChartElement,
       clearSelectedCells,
       clearSelectedImage,
       clearSelection,
@@ -4468,6 +5055,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       fillSelection,
       formControls,
       getChartById,
+      getChartSeriesFormula,
       getChartsheetById,
       getImageById,
       getSheetCharts,
@@ -4478,6 +5066,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       getClipboardData,
       getCellDisplayValue,
       getCellFormula,
+      getFormControlItems,
       getCellSnapshotAsync: isWorkerBacked ? getCellSnapshotAsync : undefined,
       getActiveWorksheet,
       getRowsBatchAsync: isWorkerBacked ? getRowsBatchAsync : undefined,
@@ -4495,6 +5084,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       pasteStructuredClipboardData,
       pasteText,
       removeActiveSheet,
+      removeFormControl,
       readOnly,
       recalculate,
       redo,
@@ -4505,19 +5095,30 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       resizeColumn,
       resizeRow,
       setCellFormula,
+      setCellStyle,
       setCellValue,
+      setRangeStyle,
+      setSelectedFormula,
       setZoomScale,
       setChartRect,
+      setChartSeriesFormula,
       setImageRect,
       selectedChart,
+      selectedChartElement,
+      selectedChartFormula,
       selectedChartId,
+      selectedCellFormula,
       selectedFormula,
+      selectedFormulaTarget,
       selectedImage,
       selectedImageId,
       selectedRangeAddress,
       selectedValue,
       selectCell,
+      revealCell,
+      registerRevealCellImpl,
       selectChart,
+      selectChartElement,
       selectImage,
       selectRange,
       selection,
@@ -4525,6 +5126,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       setActiveSheetIndex,
       setActiveTabIndex,
       setSelectedCellFormula,
+      setSelectedCellStyle,
       setSelectedCellValue,
       sheets,
       shapes,
@@ -4536,6 +5138,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       undo,
       unmergeSelection,
       updateChart,
+      updateFormControl,
       workbook,
       zoomIn,
       zoomOut,
@@ -4548,6 +5151,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       activeSheetIndex,
       activeTab,
       activeTabIndex,
+      addFormControl,
       addSheet,
       canLoadDeferred,
       canRedo,
@@ -4557,6 +5161,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       charts,
       chartsheets,
       clearSelectedChart,
+      clearSelectedChartElement,
       clearSelectedCells,
       clearSelectedImage,
       continueDeferredLoad,
@@ -4573,6 +5178,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       fillSelection,
       formControls,
       getChartById,
+      getChartSeriesFormula,
       getChartsheetById,
       getImageById,
       getSheetCharts,
@@ -4582,6 +5188,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       getClipboardData,
       getCellDisplayValue,
       getCellFormula,
+      getFormControlItems,
       getCellSnapshotAsync,
       getActiveWorksheet,
       historyRevision,
@@ -4599,6 +5206,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       pasteStructuredClipboardData,
       pasteText,
       removeActiveSheet,
+      removeFormControl,
       readOnly,
       recalculate,
       redo,
@@ -4608,19 +5216,30 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       resizeColumn,
       resizeRow,
       setCellFormula,
+      setCellStyle,
       setCellValue,
+      setRangeStyle,
+      setSelectedFormula,
       setZoomScale,
       setChartRect,
+      setChartSeriesFormula,
       setImageRect,
       selectedChart,
+      selectedChartElement,
+      selectedChartFormula,
       selectedChartId,
+      selectedCellFormula,
       selectedFormula,
+      selectedFormulaTarget,
       selectedImage,
       selectedImageId,
       selectedRangeAddress,
       selectedValue,
       selectCell,
+      revealCell,
+      registerRevealCellImpl,
       selectChart,
+      selectChartElement,
       selectImage,
       selectRange,
       selection,
@@ -4628,6 +5247,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       setActiveSheetIndex,
       setActiveTabIndex,
       setSelectedCellFormula,
+      setSelectedCellStyle,
       setSelectedCellValue,
       sheets,
       shapes,
@@ -4640,6 +5260,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       undo,
       unmergeSelection,
       updateChart,
+      updateFormControl,
       workbook,
       zoomIn,
       zoomOut,

@@ -1,4 +1,5 @@
-import type { XlsxChart, XlsxChartsheet, XlsxSheetData, XlsxTable, XlsxWorkbookTab } from "./types";
+import type { XlsxChart, XlsxChartsheet, XlsxFormControl, XlsxSheetData, XlsxTable, XlsxWorkbookTab } from "./types";
+import { getConfiguredWorkerWasmSource, type WorkerWasmSource } from "./wasm";
 
 type WorkerMessage =
   | {
@@ -8,6 +9,8 @@ type WorkerMessage =
         buffer: ArrayBuffer;
         showHiddenSheets?: boolean;
         skipXmlParsing?: boolean;
+        wasmSource?: WorkerWasmSource;
+        externalFnValues?: Record<string, string | number>;
       };
     }
   | {
@@ -17,6 +20,7 @@ type WorkerMessage =
         buffer: ArrayBuffer;
         showHiddenSheets?: boolean;
         skipXmlParsing?: boolean;
+        wasmSource?: WorkerWasmSource;
       };
     }
   | {
@@ -54,6 +58,7 @@ type WorkerSuccessMessage =
       result: {
         chartsByWorkbookSheetIndex: XlsxChart[][];
         chartsheets: XlsxChartsheet[];
+        formControlsByWorkbookSheetIndex: XlsxFormControl[][];
         sheets: XlsxSheetData[];
         tablesByWorkbookSheetIndex: XlsxTable[][];
         tabs: XlsxWorkbookTab[];
@@ -127,11 +132,17 @@ export class XlsxWorkerClient {
     this.pendingRequests.clear();
   }
 
-  loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHiddenSheets = false) {
+  loadWorkbook(
+    buffer: ArrayBuffer,
+    skipXmlParsing = false,
+    showHiddenSheets = false,
+    externalFnValues?: Record<string, string | number>,
+  ) {
     const workerBuffer = cloneArrayBufferForTransfer(buffer);
     return this.request<{
       chartsByWorkbookSheetIndex: XlsxChart[][];
       chartsheets: XlsxChartsheet[];
+      formControlsByWorkbookSheetIndex: XlsxFormControl[][];
       sheets: XlsxSheetData[];
       tablesByWorkbookSheetIndex: XlsxTable[][];
       tabs: XlsxWorkbookTab[];
@@ -140,7 +151,9 @@ export class XlsxWorkerClient {
       payload: {
         buffer: workerBuffer,
         showHiddenSheets,
-        skipXmlParsing
+        skipXmlParsing,
+        wasmSource: getConfiguredWorkerWasmSource(),
+        externalFnValues
       },
       type: "load"
     }, [workerBuffer]);
@@ -168,7 +181,8 @@ export class XlsxWorkerClient {
       payload: {
         buffer: workerBuffer,
         showHiddenSheets,
-        skipXmlParsing
+        skipXmlParsing,
+        wasmSource: getConfiguredWorkerWasmSource()
       },
       type: "parseCharts"
     }, [workerBuffer]);

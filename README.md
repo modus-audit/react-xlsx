@@ -12,11 +12,75 @@ Package: `@extend-ai/react-xlsx`
 pnpm add @extend-ai/react-xlsx
 ```
 
+## WebAssembly Asset
+
+Workbook parsing and calculation run through the `@dukelib/sheets-wasm` WebAssembly module. The module loads lazily, on the first workbook parse.
+
+Most apps can use the default loader. If your bundler or deployment needs to host the WASM binary somewhere explicit, configure it before the first parse:
+
+```ts
+import { setWasmSource } from "@extend-ai/react-xlsx";
+
+setWasmSource("https://cdn.example.com/duke_sheets_wasm_bg.wasm");
+// or pass a URL, Request, Response, ArrayBuffer/TypedArray, or compiled WebAssembly.Module
+```
+
+The Duke WASM binary is also exposed as a package subpath:
+
+```ts
+import wasmUrl from "@extend-ai/react-xlsx/duke_sheets_wasm_bg.wasm?url";
+import { setWasmSource } from "@extend-ai/react-xlsx";
+
+setWasmSource(wasmUrl);
+```
+
+### Next.js Turbopack
+
+Turbopack may try to treat `.wasm?url` imports as WebAssembly modules during static analysis. For Turbopack apps, use a plain public or CDN URL instead of importing the WASM file with `?url`.
+
+Copy the WASM file into your app's `public/` directory:
+
+```bash
+cp node_modules/@extend-ai/react-xlsx/dist/duke_sheets_wasm_bg.wasm public/duke_sheets_wasm_bg.wasm
+```
+
+Then configure the source from a shared client module before any workbook is parsed:
+
+```ts
+// app/xlsx-wasm.ts
+"use client";
+
+import { setWasmSource } from "@extend-ai/react-xlsx";
+
+setWasmSource("/duke_sheets_wasm_bg.wasm");
+```
+
+Import that setup module before rendering any XLSX viewer, provider, or controller:
+
+```tsx
+// app/workbook-preview.tsx
+"use client";
+
+import "./xlsx-wasm";
+import { XlsxViewer } from "@extend-ai/react-xlsx";
+
+export function WorkbookPreview({ file }: { file: ArrayBuffer }) {
+  return <XlsxViewer file={file} height={600} />;
+}
+```
+
+If several routes use the viewer, import the same setup module from a shared client boundary such as `app/providers.tsx`. Calling `setWasmSource()` more than once with the same source is fine before initialization, but the source must not change after the first parse because the WASM module is initialized once per JavaScript context.
+
+Configured string, URL, Request URL, bytes, and `WebAssembly.Module` sources are forwarded into the XLSX worker. `Response` sources are supported on the main thread; worker-backed parsing is skipped for that source type.
+
+You can also call `initWasm()` (optionally with a source) ahead of time to warm the module before the first workbook is opened.
+
 ## What It Supports
 
 - Regular worksheet rendering with frozen panes, tables, and selection state
 - Embedded charts on worksheets and dedicated chartsheet tabs
 - Embedded worksheet images with custom render hooks
+- Excel form controls with editable defaults and a `renderFormControl(...)` customization hook
 - Worksheet thumbnail painting via `useXlsxViewerThumbnails(...)`
 - Custom table header trigger rendering via `renderTableHeaderMenu(...)`
 - Inline controller usage or provider-driven composition with hooks
@@ -98,6 +162,8 @@ export function WorkbookWorkspace({ buffer }: { buffer: ArrayBuffer }) {
 | `className` | `string` | Applied to the root viewer shell. |
 | `height` | `React.CSSProperties["height"]` | Fixed or fluid height for the viewer container. |
 | `isDark` | `boolean` | Enables the built-in dark viewer palette. |
+| `headerBackgroundColor` | `string` | Background color for row-number, column-letter, and corner headers. |
+| `headerTextColor` | `string` | Text color for row-number and column-letter headers. |
 | `rounded` | `boolean` | Toggles the default rounded outer shell. Defaults to `true`. |
 | `showDefaultToolbar` | `boolean` | Shows or hides the built-in toolbar. Defaults to `true`. |
 | `enableGestureZoom` | `boolean` | Enables pinch-to-zoom and modifier-key (`Cmd`/`Ctrl`) scroll-to-zoom inside the viewer. Defaults to `true`. |
@@ -114,11 +180,13 @@ export function WorkbookWorkspace({ buffer }: { buffer: ArrayBuffer }) {
 | Prop | Type | Notes |
 | --- | --- | --- |
 | `emptyState` | `React.ReactNode` | Rendered when no workbook is loaded. |
+| `getCellStyle` | `(context: XlsxCellStyleContext) => React.CSSProperties \| null \| undefined` | Returns extra CSS overrides merged on top of each cell's resolved style. Escape hatch for custom per-cell styling (highlights, outlines, status tints) without forking workbook data. See [Custom Cell Styling](#custom-cell-styling). |
 | `loadingComponent` | `React.ReactElement` | Full loading replacement component. |
 | `loadingState` | `React.ReactNode` | Loading fallback content. |
 | `errorState` | `React.ReactNode \| (error: Error) => React.ReactNode` | Custom error UI. |
 | `fileTooLargeState` | `React.ReactNode \| (props: XlsxFileTooLargeRenderProps) => React.ReactNode` | Custom oversized-file UI. When provided and the limit is hit, this replaces the built-in viewer chrome. |
 | `renderChartLoading` | `(props: XlsxChartLoadingRenderProps) => React.ReactNode` | Replaces the default chart-loading placeholder. |
+| `renderFormControl` | `(props: XlsxFormControlRenderProps) => React.ReactNode` | Replaces built-in checkboxes, radios, selects, lists, buttons, sliders, spinners, labels, and group boxes. Supplies positioning plus safe Duke-backed setters. |
 | `renderImage` | `(props: XlsxImageRenderProps) => React.ReactNode` | Replaces how worksheet images render. |
 | `renderImageSelection` | `(props: XlsxImageSelectionRenderProps) => React.ReactNode` | Replaces the selected-image overlay and resize handles. |
 | `renderTableHeaderMenu` | `(props: XlsxTableHeaderMenuRenderProps) => React.ReactNode` | Replaces the built-in table-header trigger. Return your full trigger + menu UI, such as a Radix `DropdownMenu`. |
@@ -157,11 +225,162 @@ import { XlsxViewer } from "@extend-ai/react-xlsx";
 
 Apply `triggerProps` to the actual trigger button so clicks do not leak into grid selection.
 
+Form controls use the same render-prop pattern. Switch on `control.kind`, apply `style` to the custom root, and call `stopPropagation` from pointer/click handlers. The supplied setters retain linked-cell updates, undo/redo, export, and `onFormControlChange` behavior.
+
+Form-control mutation inputs use the same `XlsxImageAnchor` union as images and charts. Captions can be plain strings or rich text runs with font styling and alignment.
+
+In 0.15, `XlsxFormControlAnchor` is removed and read controls expose `caption` as rich text. Use `control.label` for flattened display text; Duke recomputes option-button grouping on write.
+
+```tsx
+<XlsxViewer
+  file={buffer}
+  renderFormControl={({
+    checked,
+    control,
+    disabled,
+    items,
+    label,
+    setSelected,
+    setState,
+    stopPropagation,
+    style
+  }) => {
+    if (control.kind === "checkbox" || control.kind === "radio") {
+      return (
+        <label onPointerDown={stopPropagation} style={style}>
+          <input
+            checked={checked}
+            disabled={disabled}
+            onChange={(event) => setState(event.currentTarget.checked ? "checked" : "unchecked")}
+            type={control.kind === "radio" ? "radio" : "checkbox"}
+          />
+          {label}
+        </label>
+      );
+    }
+
+    if (control.kind === "dropdown") {
+      return (
+        <select
+          disabled={disabled}
+          onChange={(event) => setSelected(Number(event.currentTarget.value))}
+          onPointerDown={stopPropagation}
+          style={style}
+          value={typeof control.selected === "number" ? control.selected : ""}
+        >
+          {items.map((item, index) => <option key={index} value={index}>{item}</option>)}
+        </select>
+      );
+    }
+
+    return <div style={style}>{label}</div>;
+  }}
+/>
+```
+
 Notes:
 
 - This render prop is intended for returning the full trigger and menu tree, not just menu items
 - In the default DOM renderer, your returned node replaces the built-in chevron trigger in the table header cell
 - `experimentalCanvas` still uses the built-in canvas affordance for table header menus
+
+## Custom Cell Styling
+
+### Persisted Cell Styling
+
+Use `setCellStyle`, `setSelectedCellStyle`, and `setRangeStyle` when a custom toolbar should write Excel formatting into the workbook. These APIs mutate workbook data, participate in undo/redo, refresh the viewer, and are included in `exportXlsx()`.
+
+```tsx
+import {
+  useXlsxViewer,
+  type XlsxCellStyleInput
+} from "@extend-ai/react-xlsx";
+
+const highlightStyle: XlsxCellStyleInput = {
+  font: { bold: true, color: { colorType: "rgb", hex: "1D4ED8" } },
+  fill: { fillType: "solid", color: { colorType: "rgb", hex: "DBEAFE" } },
+  alignment: { horizontal: "center", vertical: "center", wrapText: true }
+};
+
+function FormattingButton() {
+  const { selection, setRangeStyle, setSelectedCellStyle } = useXlsxViewer();
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (selection) {
+          setRangeStyle(selection, highlightStyle);
+          return;
+        }
+        setSelectedCellStyle(highlightStyle);
+      }}
+    >
+      Highlight
+    </button>
+  );
+}
+```
+
+`XlsxCellStyleInput` supports these persisted Excel style groups:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `font` | `XlsxCellFontStyleInput` | Font family, size, bold, italic, underline, strikethrough, color, superscript/subscript. |
+| `fill` | `XlsxCellFillStyleInput` | Solid, pattern, and gradient fills. |
+| `border` | `XlsxCellBorderStyleInput` | Per-edge borders, colors, styles, and diagonal borders. |
+| `alignment` | `XlsxCellAlignmentInput` | Horizontal/vertical alignment, wrap text, shrink to fit, indent, rotation, reading order. |
+| `numberFormat` | `XlsxCellNumberFormatInput` | General, builtin, or custom Excel number format strings. |
+| `protection` | `XlsxCellProtectionInput` | Locked/hidden flags used when sheet protection is enabled. |
+
+### Render-Only Cell Styling
+
+`getCellStyle` is an escape hatch for styling individual cells without forking the workbook data. The viewer calls it for every rendered cell and merges the returned partial style on top of the cell's resolved style. Return `undefined` (or `null`) to leave a cell untouched.
+
+```tsx
+import * as React from "react";
+import { XlsxViewer, type XlsxViewerProps } from "@extend-ai/react-xlsx";
+
+function Workbook({ buffer, highlighted }: { buffer: ArrayBuffer; highlighted: Set<string> }) {
+  const getCellStyle = React.useCallback<NonNullable<XlsxViewerProps["getCellStyle"]>>(
+    ({ cell, isTableHeader }) => {
+      if (isTableHeader) {
+        return undefined;
+      }
+      if (highlighted.has(`${cell.row}:${cell.col}`)) {
+        return { backgroundColor: "rgba(37, 99, 235, 0.12)", outline: "1px solid #2563eb" };
+      }
+      return undefined;
+    },
+    [highlighted]
+  );
+
+  return <XlsxViewer file={buffer} getCellStyle={getCellStyle} />;
+}
+```
+
+The `context` argument is an `XlsxCellStyleContext`:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `cell` | `XlsxCellAddress` | Address of the cell being styled. |
+| `workbookSheetIndex` | `number` | Workbook sheet index of the cell's sheet. |
+| `sheetName` | `string` | Display name of the cell's sheet. |
+| `resolvedStyle` | `React.CSSProperties` | The style the viewer computed (workbook formatting + built-ins). Read-only. |
+| `value` | `string` | The cell's resolved display value. |
+| `hasValidation` | `boolean` | Cell has a data validation rule. |
+| `hasHyperlink` | `boolean` | Cell has a hyperlink. |
+| `hasConditionalFormat` | `boolean` | Cell is affected by a color scale, data bar, or icon set. |
+| `hasChartHighlight` | `boolean` | Cell is in a selected chart's highlighted source range. |
+| `isMerged` | `boolean` | Cell is the anchor of a merged range. |
+| `isTableHeader` | `boolean` | Cell is a table header cell. |
+
+Notes:
+
+- Keep the callback stable (e.g. wrap it in `useCallback`) so cell styling is not recomputed on every render. When the callback identity changes, the viewer re-resolves and repaints cells.
+- The DOM renderer (`experimentalCanvas={false}`) applies every returned CSS property.
+- The canvas renderer (the default) honors the subset it can paint: `backgroundColor`, `backgroundImage` gradients, `color`, the four `border*` sides, `padding`, `textAlign`, `textDecoration`, `textOverflow`, and font properties. CSS-only effects such as `boxShadow`, `outline`, or `animation` apply in the DOM renderer.
+- `getCellStyle` is not applied to worksheet thumbnails painted via `useXlsxViewerThumbnails(...)`.
 
 ## `XlsxViewerProvider` Props
 
@@ -182,7 +401,7 @@ These hooks are exported from the package and work inside `XlsxViewer` or `XlsxV
 | `useXlsxViewer()` | `XlsxViewerController` | Full controller access. |
 | `useXlsxViewerSelection()` | `XlsxViewerSelection` | Active cell and range state. |
 | `useXlsxViewerZoom()` | `XlsxViewerZoom` | Zoom controls and limits. |
-| `useXlsxViewerEditing()` | `XlsxViewerEditing` | Editing, undo/redo, fill, merge, and paste actions. |
+| `useXlsxViewerEditing()` | `XlsxViewerEditing` | Editing, persisted style writes, undo/redo, fill, merge, and paste actions. |
 | `useXlsxViewerTables()` | `XlsxViewerTables` | Table metadata and sorting actions. |
 | `useXlsxViewerImages()` | `XlsxViewerImages` | Embedded image and chart positioning/manipulation. |
 | `useXlsxViewerCharts()` | `XlsxViewerCharts` | Chart and chartsheet access. |
@@ -306,11 +525,13 @@ The package also exports the main types you are likely to use for custom integra
 - `XlsxViewerImages`
 - `XlsxViewerCharts`
 - `XlsxViewerThumbnails`
+- `XlsxCellStyleInput`, `XlsxCellFontStyleInput`, `XlsxCellFillStyleInput`, `XlsxCellBorderStyleInput`
 - `XlsxChart`, `XlsxChartSeries`, `XlsxChartAxis`, `XlsxChartsheet`
 - `XlsxImage`, `XlsxImageRect`, `XlsxImageRenderProps`, `XlsxImageSelectionRenderProps`
+- `XlsxFormControl`, `XlsxFormControlInput`, `XlsxFormControlCaption`, `XlsxFormControlCaptionInput`, `XlsxFormControlCaptionRun`, `XlsxFormControlRenderProps`
 - `XlsxSheetThumbnail`, `XlsxSheetThumbnailResolution`
 - `XlsxTable`, `XlsxTableColumn`, `XlsxTableHeaderMenuRenderProps`
-- `XlsxWorkbookTab`, `XlsxCellAddress`, `XlsxCellRange`
+- `XlsxWorkbookTab`, `XlsxCellAddress`, `XlsxCellRange`, `XlsxCellStyleContext`
 
 ## Notes
 

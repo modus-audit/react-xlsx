@@ -1,6 +1,7 @@
 node_modules
 dist
 apps/playground/dist
+apps/playground/public/duke_sheets_wasm_bg.wasm
 packages/*/dist
 pnpm-debug.log*
 .DS_Store
