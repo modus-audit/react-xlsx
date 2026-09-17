@@ -89,12 +89,9 @@ export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions 
   }
 }
 
-export function tryRecalculate(
-  workbook: Workbook,
-  calcOptions?: unknown,
-): { calculated: boolean; error: unknown } {
+export function tryRecalculate(workbook: Workbook): { calculated: boolean; error: unknown } {
   try {
-    workbook.calculate(calcOptions);
+    workbook.calculate();
     return { calculated: true, error: null };
   } catch (err) {
     console.warn("[react-xlsx] workbook.calculate() trapped during recalculation", err);

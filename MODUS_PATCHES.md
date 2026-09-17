@@ -8,13 +8,21 @@ Preserved behavior:
 - `revealCell` selects and centers off-screen search results.
 - `selections`, append/toggle operations, and canvas Ctrl/Cmd drag support non-contiguous selections. Re-adding an existing range preserves the other regions.
 - Conditional formatting retains relative references, comparison/ABS/AND expressions, text and blank rules, and cached numeric fallback. These extend upstream's styled rules and retain its priority handling.
-- Worker row batches follow the actual scroll viewport and fetch frozen rows separately. Sparse batch coverage and cache invalidation keep distant cells visible without requesting every preceding row.
-- Worker sheet bounds retain leading blank axes and merged/content extents. Upstream now supplies hidden axes, dimensions, and absolute batch row indices, replacing the old Vite string patches.
+- Worker row batches reuse upstream's viewport calculation, also applying it to worker DOM rendering and excluding frozen rows from the scrolling batch. Frozen rows are fetched separately; sparse batch coverage and cache invalidation keep distant cells visible without requesting every preceding row.
+- Worker sheet bounds retain merged/content extents and the initial view of leading blank rows/columns. Upstream supplies hidden axes, dimensions for populated and empty sheets, and absolute batch row indices.
+
+Retired customizations:
+
+- Engine external-function parsing, callbacks, and unresolved cached-value handling now come from upstream. The viewer still needs the serializable CCH value bridge.
+- Classic conditional comparisons, text matching, style merging, and priority handling use upstream's implementation. The custom expression evaluator no longer carries unused classic-operator branches.
+- The old hidden-axis, dimension, and row-index string replacements are gone. Redundant blank-sheet sizing fallbacks have also been removed. The forced zero-based used-range minima remain: removing them causes upstream to scroll past leading blank rows and columns on open, as caught by the layout regression.
+- The custom viewport-bound calculation is replaced by upstream's implementation with the two worker adjustments above.
+- The unused custom calculation-options parameter on `tryRecalculate` is removed; initial CCH calculation still passes options through `safeCalculate`.
 
 The app configures `initWasm` with a bundler-resolved asset URL and explicitly chooses worker mode. Upstream otherwise routes all read-only workbooks into the worker, bypassing rich conditional formatting.
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.1` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.2` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.

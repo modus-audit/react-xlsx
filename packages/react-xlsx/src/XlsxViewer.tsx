@@ -5799,19 +5799,14 @@ function compareConditionalOperands(left: ConditionalOperand, right: Conditional
 
   switch (operator) {
     case "<":
-    case "lessThan":
       return delta < 0;
     case "<=":
-    case "lessThanOrEqual":
       return delta <= 0;
     case ">":
-    case "greaterThan":
       return delta > 0;
     case ">=":
-    case "greaterThanOrEqual":
       return delta >= 0;
     case "<>":
-    case "notEqual":
       return delta !== 0;
     default:
       return delta === 0;
@@ -8245,12 +8240,6 @@ function XlsxGrid({
 
       const precomputedCols = activeSheet?.visibleCols ?? [];
       const precomputedWidths = activeSheet?.colWidths ?? [];
-      if (precomputedCols.length === 0) {
-        for (let col = 0; col < displayColLimit; col += 1) {
-          widths[col] = fallbackWidth;
-        }
-        return widths;
-      }
       for (let index = 0; index < precomputedCols.length; index += 1) {
         const col = precomputedCols[index];
         if (col === undefined || col >= displayColLimit) {
@@ -8369,12 +8358,6 @@ function XlsxGrid({
 
       const precomputedRows = activeSheet?.visibleRows ?? [];
       const precomputedHeights = activeSheet?.rowHeights ?? [];
-      if (precomputedRows.length === 0) {
-        for (let row = 0; row < displayRowLimit; row += 1) {
-          heights[row] = fallbackHeight;
-        }
-        return heights;
-      }
       for (let index = 0; index < precomputedRows.length; index += 1) {
         const row = precomputedRows[index];
         if (row === undefined || row >= displayRowLimit) {
@@ -9796,22 +9779,35 @@ function XlsxGrid({
   const [asyncViewportRowBatch, setAsyncViewportRowBatch] = React.useState<WorksheetBatchWindow | null>(null);
   const [asyncFrozenRowBatch, setAsyncFrozenRowBatch] = React.useState<WorksheetBatchWindow | null>(null);
   const viewportRequest = React.useMemo(() => {
-    let firstVirtualRowIndex: number | undefined;
-    let lastVirtualRowIndex: number | undefined;
-    if (drawingViewport.height > 0 && visibleRows.length > 0) {
-      const viewportStart = Math.max(0, drawingViewport.top - displayHeaderHeight);
-      const viewportEnd = Math.max(viewportStart, drawingViewport.top + drawingViewport.height - displayHeaderHeight);
-      firstVirtualRowIndex = findIndexForOffsetPrefix(rowPrefixSums, viewportStart);
-      lastVirtualRowIndex = findIndexForOffsetPrefix(rowPrefixSums, viewportEnd);
-    } else {
-      firstVirtualRowIndex = domExpandedWindow.rowIndices[0];
-      lastVirtualRowIndex = domExpandedWindow.rowIndices[domExpandedWindow.rowIndices.length - 1];
-    }
-    const firstVisibleRow = firstVirtualRowIndex === void 0 ? void 0 : visibleRows[firstVirtualRowIndex];
-    const lastVisibleRow = lastVirtualRowIndex === void 0 ? void 0 : visibleRows[lastVirtualRowIndex];
-    if (firstVisibleRow === void 0 || lastVisibleRow === void 0 || lastVisibleRow < firstVisibleRow) {
+    const rowIndices = experimentalCanvas || isWorkerBacked
+      ? (() => {
+          if (visibleRows.length === 0 || drawingViewport.height <= 0) {
+            return [] as number[];
+          }
+
+          const indices = new Set<number>();
+          const viewportStart = Math.max(0, drawingViewport.top - displayHeaderHeight - CANVAS_VIEWPORT_OVERSCAN_PX);
+          const viewportEnd = Math.max(
+            viewportStart,
+            drawingViewport.top + drawingViewport.height - displayHeaderHeight + CANVAS_VIEWPORT_OVERSCAN_PX
+          );
+          const startIndex = findIndexForOffsetPrefix(rowPrefixSums, viewportStart);
+          const endIndex = findIndexForOffsetPrefix(rowPrefixSums, viewportEnd);
+          for (let index = Math.max(0, startIndex); index <= Math.max(startIndex, endIndex); index += 1) {
+            indices.add(index);
+          }
+
+          return Array.from(indices).sort((left, right) => left - right);
+        })()
+      : domExpandedWindow.rowIndices;
+    const firstVirtualRowIndex = rowIndices[0];
+    const lastVirtualRowIndex = rowIndices[rowIndices.length - 1];
+    const firstVisibleRow = firstVirtualRowIndex === undefined ? undefined : visibleRows[firstVirtualRowIndex];
+    const lastVisibleRow = lastVirtualRowIndex === undefined ? undefined : visibleRows[lastVirtualRowIndex];
+    if (firstVisibleRow === undefined || lastVisibleRow === undefined || lastVisibleRow < firstVisibleRow) {
       return null;
     }
+
     const overscan = 48;
     const startRow = Math.max(0, firstVisibleRow - overscan);
     const endRow = lastVisibleRow + overscan;
@@ -9819,7 +9815,16 @@ function XlsxGrid({
       endRow,
       startRow
     };
-  }, [displayHeaderHeight, domExpandedWindow.rowIndices, drawingViewport.height, drawingViewport.top, rowPrefixSums, visibleRows]);
+  }, [
+    displayHeaderHeight,
+    domExpandedWindow.rowIndices,
+    drawingViewport.height,
+    drawingViewport.top,
+    experimentalCanvas,
+    isWorkerBacked,
+    rowPrefixSums,
+    visibleRows
+  ]);
 
   const frozenRowsRequest = React.useMemo(() => {
     if (!isWorkerBacked || frozenRows.length === 0) {
