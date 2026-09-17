@@ -1,7 +1,7 @@
 # Modus React XLSX distribution
 
-Version 0.16.4-modus.1, based on upstream 0.16.4.
+Version 0.16.4-modus.2, based on upstream 0.16.4.
 
-Source: https://github.com/modus-audit/react-xlsx/commit/dac4547063bdfad8aaf8fb9c8ad09f0729d5f083
+Source: https://github.com/modus-audit/react-xlsx/commit/a9cfa0613f3532f8f57974a3bc3c477057aedc31
 
 The source repository's MODUS_PATCHES.md documents the patches, validation, and build commands. SOURCE.patch contains the complete code changes from upstream; the fork's existing workflows are retained.
