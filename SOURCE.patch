@@ -1,9 +1,9 @@
 diff --git a/MODUS_PATCHES.md b/MODUS_PATCHES.md
 new file mode 100644
-index 0000000..e81c6c0
+index 0000000..ca2f63b
 --- /dev/null
 +++ b/MODUS_PATCHES.md
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,29 @@
 +# Modus React XLSX viewer
 +
 +Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.1` WASM engine.
@@ -16,6 +16,7 @@ index 0000000..e81c6c0
 +- Conditional formatting retains relative references, comparison/ABS/AND expressions, text and blank rules, and cached numeric fallback. These extend upstream's styled rules and retain its priority handling.
 +- Worker row batches reuse upstream's viewport calculation, also applying it to worker DOM rendering and excluding frozen rows from the scrolling batch. Frozen rows are fetched separately; sparse batch coverage and cache invalidation keep distant cells visible without requesting every preceding row.
 +- Worker sheet bounds retain merged/content extents and the initial view of leading blank rows/columns. Upstream supplies hidden axes, dimensions for populated and empty sheets, and absolute batch row indices.
++- The atlas build plugin bundles US/world geography as JSON text parsed at runtime. This preserves ESM/CJS delivery without making downstream bundlers analyze hundreds of thousands of coordinate literals. The packaging regression checks data equality and syntax-tree size in both formats.
 +
 +Retired customizations:
 +
@@ -29,18 +30,112 @@ index 0000000..e81c6c0
 +
 +Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 +
-+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.2` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
++After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.3` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 +
 +The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
+diff --git a/packages/react-xlsx/build/atlas-json.test.ts b/packages/react-xlsx/build/atlas-json.test.ts
+new file mode 100644
+index 0000000..a11eaa6
+--- /dev/null
++++ b/packages/react-xlsx/build/atlas-json.test.ts
+@@ -0,0 +1,65 @@
++import assert from "node:assert/strict";
++import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
++import { createRequire } from "node:module";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { test } from "node:test";
++import { fileURLToPath, pathToFileURL } from "node:url";
++import { build, type Options } from "tsup";
++import ts from "typescript";
++import configuration from "../tsup.config.ts";
++
++test("atlas bundles preserve geography with a bounded JavaScript syntax tree in ESM and CJS", async () => {
++  const temporary = await mkdtemp(join(tmpdir(), "xlsx-atlas-"));
++  try {
++    const modules = ["us-atlas/counties-albers-10m.json", "world-atlas/countries-50m.json"];
++    const paths = modules.map((name) => fileURLToPath(import.meta.resolve(name)));
++    const expected = await Promise.all(paths.map(async (path) => JSON.parse(await readFile(path, "utf8"))));
++    const entry = join(temporary, "input.js");
++    await writeFile(entry, [
++      ...paths.map((path, index) => `import atlas${index} from ${JSON.stringify(path)};`),
++      "export default [atlas0, atlas1];"
++    ].join("\n"));
++
++    assert.ok(Array.isArray(configuration));
++    const buildOptions: Options = {
++      ...configuration[0],
++      config: false,
++      entry: { atlas: entry },
++      outDir: temporary,
++      outExtension: ({ format }) => ({ js: format === "esm" ? ".mjs" : ".cjs" }),
++      clean: false,
++      dts: false,
++      silent: true
++    };
++    await build(buildOptions);
++
++    const loadCommonJs = createRequire(import.meta.url);
++    for (const extension of ["mjs", "cjs"]) {
++      const output = join(temporary, `atlas.${extension}`);
++      const source = await readFile(output, "utf8");
++      const tree = ts.createSourceFile(output, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.JS);
++      let nodeCount = 0;
++      function countNodes(node: ts.Node) {
++        nodeCount += 1;
++        ts.forEachChild(node, countNodes);
++      }
++      countNodes(tree);
++      assert.ok(nodeCount < 1000, `${extension} bundle expands geographic data into ${nodeCount} syntax nodes`);
++      const module = extension === "mjs" ? await import(pathToFileURL(output).href) : loadCommonJs(output);
++      assert.deepEqual(module.default, expected);
++    }
++
++    await writeFile(entry, [
++      ...paths.map((path, index) => `import atlas${index} from ${JSON.stringify(path)};`),
++      "export default null;"
++    ].join("\n"));
++    await build(buildOptions);
++    for (const extension of ["mjs", "cjs"]) {
++      const source = await readFile(join(temporary, `atlas.${extension}`), "utf8");
++      assert.ok(source.length < 10000, `${extension} bundle retains unused atlas data`);
++    }
++  } finally {
++    await rm(temporary, { recursive: true, force: true });
++  }
++});
+diff --git a/packages/react-xlsx/build/atlas-json.ts b/packages/react-xlsx/build/atlas-json.ts
+new file mode 100644
+index 0000000..49eac7a
+--- /dev/null
++++ b/packages/react-xlsx/build/atlas-json.ts
+@@ -0,0 +1,17 @@
++import { readFile } from "node:fs/promises";
++import type { Options } from "tsup";
++
++export function atlasJsonPlugin(): NonNullable<Options["esbuildPlugins"]>[number] {
++  return {
++    name: "atlas-json",
++    setup(build) {
++      build.onLoad({ filter: /[\\/]node_modules[\\/](?:us-atlas|world-atlas)[\\/].*\.json$/ }, async ({ path }) => {
++        const json = JSON.stringify(JSON.parse(await readFile(path, "utf8")));
++        return {
++          contents: `export default /* @__PURE__ */ JSON.parse(${JSON.stringify(json)});`,
++          loader: "js"
++        };
++      });
++    }
++  };
++}
 diff --git a/packages/react-xlsx/package.json b/packages/react-xlsx/package.json
-index 6455584..dd8be1c 100644
+index 6455584..ba9dbd7 100644
 --- a/packages/react-xlsx/package.json
 +++ b/packages/react-xlsx/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@extend-ai/react-xlsx",
 -  "version": "0.16.4",
-+  "version": "0.16.4-modus.2",
++  "version": "0.16.4-modus.3",
    "description": "React components and hooks for viewing XLSX workbooks",
    "license": "MIT",
    "keywords": [
@@ -53,6 +148,15 @@ index 6455584..dd8be1c 100644
      "@tanstack/react-virtual": "^3.13.12",
      "d3-geo": "^3.1.1",
      "d3-hierarchy": "^3.1.2",
+@@ -63,7 +63,7 @@
+   },
+   "scripts": {
+     "build": "tsup --config tsup.config.ts && node ../../scripts/copy-duke-wasm.mjs",
+-    "test": "node --experimental-strip-types --test src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts",
++    "test": "node --experimental-strip-types --test src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts build/atlas-json.test.ts",
+     "typecheck": "tsc -p tsconfig.json --noEmit",
+     "clean": "rm -rf dist"
+   },
 diff --git a/packages/react-xlsx/src/XlsxViewer.tsx b/packages/react-xlsx/src/XlsxViewer.tsx
 index 20d313c..c99ec6b 100644
 --- a/packages/react-xlsx/src/XlsxViewer.tsx
@@ -1165,6 +1269,43 @@ index 8857fde..d35397f 100644
      }
      case "parseCharts": {
        if (message.payload.wasmSource !== undefined) {
+diff --git a/packages/react-xlsx/tsconfig.json b/packages/react-xlsx/tsconfig.json
+index d0b8519..ca35116 100644
+--- a/packages/react-xlsx/tsconfig.json
++++ b/packages/react-xlsx/tsconfig.json
+@@ -3,5 +3,5 @@
+   "compilerOptions": {
+     "jsx": "react-jsx"
+   },
+-  "include": ["src"]
++  "include": ["src", "build", "tsup.config.ts"]
+ }
+diff --git a/packages/react-xlsx/tsup.config.ts b/packages/react-xlsx/tsup.config.ts
+index ba00fed..73fefaa 100644
+--- a/packages/react-xlsx/tsup.config.ts
++++ b/packages/react-xlsx/tsup.config.ts
+@@ -1,4 +1,5 @@
+ import { defineConfig } from "tsup";
++import { atlasJsonPlugin } from "./build/atlas-json.ts";
+ 
+ const external = ["react", "react-dom"];
+ const noExternal = ["us-atlas", "world-atlas"];
+@@ -8,6 +9,7 @@ export default defineConfig([
+     clean: true,
+     dts: true,
+     entry: ["src/index.ts"],
++    esbuildPlugins: [atlasJsonPlugin()],
+     external,
+     format: ["esm", "cjs"],
+     noExternal,
+@@ -17,6 +19,7 @@ export default defineConfig([
+   {
+     clean: false,
+     entry: ["src/xlsx-worker.ts"],
++    esbuildPlugins: [atlasJsonPlugin()],
+     external,
+     format: ["esm"],
+     noExternal,
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
 index 079eafc..426d1b6 100644
 --- a/pnpm-lock.yaml
