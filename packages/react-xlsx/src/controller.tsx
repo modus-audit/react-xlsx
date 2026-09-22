@@ -1,3 +1,4 @@
+import { findDataBoundary, worksheetHasContent, type DataNavigationRequest } from "./data-navigation";
 import * as React from "react";
 import type {
   DrawingAnchor as DukeDrawingAnchor,
@@ -2793,6 +2794,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     return getWorkerClient().getCellSnapshot(workbookSheetIndex, row, col);
   }, [getWorkerClient, isWorkerBacked]);
 
+  const navigateDataBoundary = React.useCallback(async (request: DataNavigationRequest) => {
+    if (!activeSheet) return request.cell;
+    if (isWorkerBacked) return getWorkerClient().findDataBoundary(activeSheet.workbookSheetIndex, request);
+    const worksheet = getActiveWorksheet();
+    if (!worksheet) return request.cell;
+    return findDataBoundary(request, activeSheet, (row, col) =>
+      worksheetHasContent(worksheet, row, col)
+    );
+  }, [activeSheet, getActiveWorksheet, getWorkerClient, isWorkerBacked]);
+
   const getRowsBatchAsync = React.useCallback((workbookSheetIndex: number, startRow: number, rowCount: number) => {
     if (!isWorkerBacked) {
       return Promise.resolve(null);
@@ -5115,6 +5126,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       selectedRangeAddress,
       selectedValue,
       selectCell,
+      findDataBoundary: navigateDataBoundary,
       revealCell,
       registerRevealCellImpl,
       selectChart,
@@ -5236,6 +5248,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       selectedRangeAddress,
       selectedValue,
       selectCell,
+      navigateDataBoundary,
       revealCell,
       registerRevealCellImpl,
       selectChart,

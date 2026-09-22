@@ -1,3 +1,4 @@
+import { findDataBoundary, worksheetHasContent, type DataNavigationRequest } from "./data-navigation";
 import type { Workbook } from "@dukelib/sheets-wasm";
 import { strFromU8, unzipSync } from "fflate";
 import { loadWorkbookChartAssets } from "./charts";
@@ -92,6 +93,11 @@ type WorkerRequest =
     }
   | {
       id: number;
+      type: "findDataBoundary";
+      payload: DataNavigationRequest & { workbookSheetIndex: number };
+    }
+  | {
+      id: number;
       type: "getRowsBatch";
       payload: {
         workbookSheetIndex: number;
@@ -121,6 +127,7 @@ type WorkerSuccessResponse = {
         displayValue: string;
         formula: string;
       }
+    | { row: number; col: number }
     | unknown[]
     | null;
 };
@@ -941,6 +948,14 @@ async function handleMessage(message: WorkerRequest) {
         displayValue: getCellDisplayValue(worksheet, message.payload.row, message.payload.col, targetSheet),
         formula: worksheet.getFormulaAt(message.payload.row, message.payload.col) ?? ""
       };
+    }
+    case "findDataBoundary": {
+      const sheet = sheets.find((entry) => entry.workbookSheetIndex === message.payload.workbookSheetIndex);
+      if (!workbook || !sheet) throw new Error("Worksheet unavailable");
+      const worksheet = workbook.getSheet(sheet.workbookSheetIndex);
+      return findDataBoundary(message.payload, sheet, (row, col) =>
+        worksheetHasContent(worksheet, row, col)
+      );
     }
     case "getRowsBatch": {
       if (!workbook) {
