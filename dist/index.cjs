@@ -49,6 +49,47 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
+// src/data-navigation.ts
+function findDataBoundary(request, sheet, hasContent) {
+  const vertical = request.direction === "ArrowUp" || request.direction === "ArrowDown";
+  const step = request.direction === "ArrowUp" || request.direction === "ArrowLeft" ? -1 : 1;
+  const hidden = new Set((vertical ? sheet.hiddenRows : sheet.hiddenCols) ?? []);
+  const max = vertical ? request.maxRow : request.maxCol;
+  const usedMax = vertical ? sheet.maxUsedRow : sheet.maxUsedCol;
+  const start = vertical ? request.cell.row : request.cell.col;
+  const nextVisible = (position) => {
+    let next2 = position + step;
+    while (next2 >= 0 && next2 <= max && hidden.has(next2)) next2 += step;
+    return next2 >= 0 && next2 <= max ? next2 : null;
+  };
+  const occupied = (position) => position <= usedMax && hasContent(
+    vertical ? position : request.cell.row,
+    vertical ? request.cell.col : position
+  );
+  let destination = start;
+  let next = nextVisible(start);
+  if (next !== null) {
+    const contiguous = occupied(start) && occupied(next);
+    while (next !== null) {
+      const filled = occupied(next);
+      if (contiguous && !filled) break;
+      destination = next;
+      if (!contiguous && filled) break;
+      next = nextVisible(next);
+    }
+  }
+  return vertical ? { row: destination, col: request.cell.col } : { row: request.cell.row, col: destination };
+}
+function worksheetHasContent(worksheet, row, col) {
+  if (worksheet.getFormulaAt(row, col)) return true;
+  const value = worksheet.getCalculatedValueAt(row, col);
+  try {
+    return !value.is_empty;
+  } finally {
+    value.free();
+  }
+}
+
 // src/controller.tsx
 var React = __toESM(require("react"), 1);
 var import_fflate3 = require("fflate");
@@ -6866,6 +6907,13 @@ var XlsxWorkerClient = class {
       type: "parseCharts"
     }, [workerBuffer]);
   }
+  findDataBoundary(workbookSheetIndex, request) {
+    return this.request({
+      id: 0,
+      type: "findDataBoundary",
+      payload: { ...request, workbookSheetIndex }
+    });
+  }
   getRowsBatch(workbookSheetIndex, startRow, rowCount) {
     return this.request({
       id: 0,
@@ -9210,6 +9258,17 @@ function useXlsxViewerController(options) {
     }
     return getWorkerClient().getCellSnapshot(workbookSheetIndex, row, col);
   }, [getWorkerClient, isWorkerBacked]);
+  const navigateDataBoundary = React.useCallback(async (request) => {
+    if (!activeSheet) return request.cell;
+    if (isWorkerBacked) return getWorkerClient().findDataBoundary(activeSheet.workbookSheetIndex, request);
+    const worksheet = getActiveWorksheet();
+    if (!worksheet) return request.cell;
+    return findDataBoundary(
+      request,
+      activeSheet,
+      (row, col) => worksheetHasContent(worksheet, row, col)
+    );
+  }, [activeSheet, getActiveWorksheet, getWorkerClient, isWorkerBacked]);
   const getRowsBatchAsync = React.useCallback((workbookSheetIndex, startRow, rowCount) => {
     if (!isWorkerBacked) {
       return Promise.resolve(null);
@@ -11148,6 +11207,7 @@ function useXlsxViewerController(options) {
       selectedRangeAddress,
       selectedValue,
       selectCell,
+      findDataBoundary: navigateDataBoundary,
       revealCell,
       registerRevealCellImpl,
       selectChart,
@@ -11269,6 +11329,7 @@ function useXlsxViewerController(options) {
       selectedRangeAddress,
       selectedValue,
       selectCell,
+      navigateDataBoundary,
       revealCell,
       registerRevealCellImpl,
       selectChart,
@@ -24293,6 +24354,7 @@ function XlsxGrid({
   errorState,
   fileTooLargeState,
   getCellStyle,
+  showFormulas = false,
   loadingComponent,
   loadingState,
   onFormControlAction,
@@ -24393,6 +24455,37 @@ function XlsxGrid({
   const wrapperRef = React4.useRef(null);
   const tableRef = React4.useRef(null);
   const gridKeyboardActiveRef = React4.useRef(false);
+  const dataNavigationQueueRef = React4.useRef(Promise.resolve());
+  const dataNavigationGenerationRef = React4.useRef(0);
+  const navigationControllerRef = React4.useRef(controller);
+  navigationControllerRef.current = controller;
+  const moveSelectionRef = React4.useRef(moveSelection);
+  moveSelectionRef.current = moveSelection;
+  const navigationCursorRef = React4.useRef(null);
+  const navigationSelectionsRef = React4.useRef(/* @__PURE__ */ new Set());
+  React4.useLayoutEffect(() => {
+    if (activeCell && navigationSelectionsRef.current.delete(`${activeCell.row}:${activeCell.col}`)) {
+      if (activeCell.row === navigationCursorRef.current?.row && activeCell.col === navigationCursorRef.current?.col) {
+        navigationSelectionsRef.current.clear();
+      }
+      return;
+    }
+    dataNavigationGenerationRef.current += 1;
+    navigationCursorRef.current = null;
+    navigationSelectionsRef.current.clear();
+  }, [activeCell]);
+  React4.useEffect(() => {
+    const cancel = () => {
+      dataNavigationGenerationRef.current += 1;
+      navigationCursorRef.current = null;
+    };
+    cancel();
+    document.addEventListener("pointerdown", cancel, true);
+    return () => {
+      cancel();
+      document.removeEventListener("pointerdown", cancel, true);
+    };
+  }, [activeSheetIndex, revision]);
   const gridKeyboardHandlerRef = React4.useRef(null);
   const axisSelectionRef = React4.useRef(null);
   const scrollBodyCanvasRef = React4.useRef(null);
@@ -26528,6 +26621,7 @@ function XlsxGrid({
       displayColLimit,
       displayRowLimit,
       getCellStyle,
+      showFormulas,
       palette,
       revision,
       selectedChartElement,
@@ -26542,6 +26636,7 @@ function XlsxGrid({
       displayColLimit,
       displayRowLimit,
       getCellStyle,
+      showFormulas,
       palette,
       revision,
       selectedChartElement,
@@ -26581,6 +26676,21 @@ function XlsxGrid({
         }, zoomFactor),
         value: ""
       };
+      const override = getCellStyle?.({
+        cell: { row, col },
+        hasChartHighlight: false,
+        hasConditionalFormat: false,
+        hasHyperlink: false,
+        hasValidation: false,
+        isMerged: false,
+        isTableHeader: false,
+        resolvedStyle: { ...emptyData.style },
+        sheetName: activeSheet?.name ?? "",
+        value: "",
+        workbookSheetIndex: activeSheet?.workbookSheetIndex ?? -1
+      });
+      if (override) emptyData.style = { ...emptyData.style, ...override };
+      emptyData.canvas = buildCanvasCellStyleCache(emptyData.style);
       cellRenderCacheRef.current.set(cacheKey, emptyData);
       return emptyData;
     }
@@ -26712,6 +26822,17 @@ function XlsxGrid({
       validation: resolveCellDataValidation(row, col, activeSheet),
       value: sparkline ? "" : checkboxState !== null ? "" : readDisplayValue()
     };
+    const formula = batchedCell?.formula ?? worksheet?.getFormulaAt(row, col);
+    if (showFormulas && formula) {
+      nextData.value = `=${formula.replace(/^=/, "")}`;
+      nextData.style = { ...nextData.style, textAlign: "left", whiteSpace: "nowrap" };
+      nextData.conditionalDataBar = null;
+      nextData.conditionalIcon = null;
+      nextData.sparkline = null;
+      nextData.checkboxState = null;
+      nextData.shrinkToFit = false;
+      nextData.textRotationDeg = 0;
+    }
     if (getCellStyle) {
       const styleOverrides = getCellStyle({
         cell: { row, col },
@@ -26822,6 +26943,7 @@ function XlsxGrid({
   }, [
     activeSheet,
     activeSheetChartHighlights,
+    showFormulas,
     cellRenderCacheInvalidationKey,
     colIndexByActual,
     colPrefixSums,
@@ -31341,6 +31463,8 @@ function XlsxGrid({
     ensureCellVisible(clampedRowIndex, clampedColIndex);
   }
   function revealCell(cell) {
+    dataNavigationGenerationRef.current += 1;
+    navigationCursorRef.current = null;
     selectCell(cell);
     try {
       const rowIndex = rowIndexByActual.get(cell.row);
@@ -31413,8 +31537,33 @@ function XlsxGrid({
     }
     return { colIndex, rowIndex };
   }
+  function navigateData(direction, extend) {
+    const generation = dataNavigationGenerationRef.current;
+    dataNavigationQueueRef.current = dataNavigationQueueRef.current.then(async () => {
+      if (generation !== dataNavigationGenerationRef.current) return;
+      const current = navigationControllerRef.current;
+      const cell = navigationCursorRef.current ?? current.activeCell ?? resolveCurrentCell();
+      if (!cell) return;
+      const destination = await current.findDataBoundary({
+        cell,
+        direction,
+        maxRow: visibleRows[visibleRows.length - 1] ?? cell.row,
+        maxCol: visibleCols[visibleCols.length - 1] ?? cell.col
+      });
+      if (generation !== dataNavigationGenerationRef.current) return;
+      const rowIndex = rowIndexByActual.get(destination.row);
+      const colIndex = colIndexByActual.get(destination.col);
+      if (rowIndex === void 0 || colIndex === void 0) return;
+      navigationCursorRef.current = destination;
+      navigationSelectionsRef.current.add(`${destination.row}:${destination.col}`);
+      moveSelectionRef.current(rowIndex, colIndex, extend);
+    }).catch((error2) => {
+      navigationCursorRef.current = null;
+      console.error("[react-xlsx] Data navigation failed", error2);
+    });
+  }
   function handleGridKeyDown(event) {
-    if (editingCell) {
+    if (editingCell || event.defaultPrevented || ("isComposing" in event ? event.isComposing : event.nativeEvent.isComposing)) {
       return;
     }
     if (!readOnly && (event.metaKey || event.ctrlKey) && !event.altKey) {
@@ -31442,6 +31591,14 @@ function XlsxGrid({
     const currentRowIndex = rowIndexByActual.get(currentCell.row) ?? 0;
     const currentColIndex = colIndexByActual.get(currentCell.col) ?? 0;
     const isCommandNavigation = event.ctrlKey || event.metaKey;
+    if (isCommandNavigation && event.altKey) return;
+    if (isCommandNavigation && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+      event.preventDefault();
+      navigateData(event.key, event.shiftKey);
+      return;
+    }
+    dataNavigationGenerationRef.current += 1;
+    navigationCursorRef.current = null;
     if (!readOnly && isPrintableKey(event)) {
       event.preventDefault();
       startEditing(currentCell, event.key);
@@ -31458,7 +31615,7 @@ function XlsxGrid({
           }
         }
         moveSelection(
-          isCommandNavigation ? rowIndexByActual.get(resolveLastUsedVisibleIndex(visibleRows, activeSheet?.maxUsedRow ?? -1)) ?? visibleRows.length - 1 : currentRowIndex + 1,
+          currentRowIndex + 1,
           currentColIndex,
           event.shiftKey
         );
@@ -31473,7 +31630,7 @@ function XlsxGrid({
           }
         }
         moveSelection(
-          isCommandNavigation ? rowIndexByActual.get(resolveFirstUsedVisibleIndex(visibleRows, activeSheet?.minUsedRow ?? -1)) ?? 0 : currentRowIndex - 1,
+          currentRowIndex - 1,
           currentColIndex,
           event.shiftKey
         );
@@ -31489,7 +31646,7 @@ function XlsxGrid({
         }
         moveSelection(
           currentRowIndex,
-          isCommandNavigation ? colIndexByActual.get(resolveFirstUsedVisibleIndex(visibleCols, activeSheet?.minUsedCol ?? -1)) ?? 0 : currentColIndex - 1,
+          currentColIndex - 1,
           event.shiftKey
         );
         break;
@@ -31504,7 +31661,7 @@ function XlsxGrid({
         }
         moveSelection(
           currentRowIndex,
-          isCommandNavigation ? colIndexByActual.get(resolveLastUsedVisibleIndex(visibleCols, activeSheet?.maxUsedCol ?? -1)) ?? visibleCols.length - 1 : currentColIndex + 1,
+          currentColIndex + 1,
           event.shiftKey
         );
         break;
@@ -31588,7 +31745,7 @@ function XlsxGrid({
   const scrollerViewportProps = {
     ref: scrollRef,
     "aria-colcount": Math.max(activeSheet?.colCount ?? 0, displayColLimit),
-    "aria-keyshortcuts": "ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Control+Home Control+End",
+    "aria-keyshortcuts": "ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Control+Home Control+End Control+ArrowUp Control+ArrowDown Control+ArrowLeft Control+ArrowRight Meta+ArrowUp Meta+ArrowDown Meta+ArrowLeft Meta+ArrowRight",
     "aria-label": activeSheet ? `${activeSheet.name} worksheet grid` : "Workbook grid",
     "aria-readonly": readOnly,
     "aria-rowcount": Math.max(activeSheet?.rowCount ?? 0, displayRowLimit),
@@ -32276,6 +32433,7 @@ function XlsxViewerInner({
   experimentalCanvas = true,
   fileTooLargeState,
   getCellStyle,
+  showFormulas,
   headerBackgroundColor,
   headerTextColor,
   height,
@@ -32345,6 +32503,7 @@ function XlsxViewerInner({
             experimentalCanvas,
             fileTooLargeState,
             getCellStyle,
+            showFormulas,
             loadingComponent,
             loadingState,
             onFormControlAction,

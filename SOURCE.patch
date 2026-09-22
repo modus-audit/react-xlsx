@@ -1,9 +1,9 @@
 diff --git a/MODUS_PATCHES.md b/MODUS_PATCHES.md
 new file mode 100644
-index 0000000..ca2f63b
+index 0000000..71bc01c
 --- /dev/null
 +++ b/MODUS_PATCHES.md
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,37 @@
 +# Modus React XLSX viewer
 +
 +Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.1` WASM engine.
@@ -30,9 +30,17 @@ index 0000000..ca2f63b
 +
 +Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 +
-+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.3` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
++After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.4` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 +
 +The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
++
++## Read-only review shortcuts
++
++Ctrl/Cmd+Arrow resolves the next data-block boundary, with Shift preserving the selection anchor. Hidden axes are skipped; zero values and formulas returning empty text still count as occupied. Worker workbooks resolve the destination in one worker request. Requests are ordered and cancelled when selection, sheet, or document changes. Navigation stays within the viewer's finite worksheet extent, including its blank padding.
++
++The `showFormulas` rendering prop displays formula text in both DOM and canvas cells without changing calculated values, clipboard values, exports, or aggregates. `getCellStyle` now also applies to blank worker cells, allowing precedents that point at blank cells to be highlighted.
++
++The consuming app owns focus-scoped Find, shortcut bindings for formula view and precedents, and literal A1-reference highlighting. No engine API or workbook mutation is required. Named, table, dynamic, external, and 3D references are explicitly reported as incomplete by the app.
 diff --git a/packages/react-xlsx/build/atlas-json.test.ts b/packages/react-xlsx/build/atlas-json.test.ts
 new file mode 100644
 index 0000000..a11eaa6
@@ -128,14 +136,14 @@ index 0000000..49eac7a
 +  };
 +}
 diff --git a/packages/react-xlsx/package.json b/packages/react-xlsx/package.json
-index 6455584..ba9dbd7 100644
+index 6455584..be9a01b 100644
 --- a/packages/react-xlsx/package.json
 +++ b/packages/react-xlsx/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@extend-ai/react-xlsx",
 -  "version": "0.16.4",
-+  "version": "0.16.4-modus.3",
++  "version": "0.16.4-modus.4",
    "description": "React components and hooks for viewing XLSX workbooks",
    "license": "MIT",
    "keywords": [
@@ -153,15 +161,20 @@ index 6455584..ba9dbd7 100644
    "scripts": {
      "build": "tsup --config tsup.config.ts && node ../../scripts/copy-duke-wasm.mjs",
 -    "test": "node --experimental-strip-types --test src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts",
-+    "test": "node --experimental-strip-types --test src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts build/atlas-json.test.ts",
++    "test": "node --experimental-strip-types --test src/data-navigation.test.ts src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts build/atlas-json.test.ts",
      "typecheck": "tsc -p tsconfig.json --noEmit",
      "clean": "rm -rf dist"
    },
 diff --git a/packages/react-xlsx/src/XlsxViewer.tsx b/packages/react-xlsx/src/XlsxViewer.tsx
-index 20d313c..c99ec6b 100644
+index 20d313c..fb7a890 100644
 --- a/packages/react-xlsx/src/XlsxViewer.tsx
 +++ b/packages/react-xlsx/src/XlsxViewer.tsx
-@@ -118,6 +118,7 @@ const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = [];
+@@ -1,3 +1,4 @@
++import type { DataDirection } from "./data-navigation";
+ import * as React from "react";
+ import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
+ import {
+@@ -118,6 +119,7 @@ const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = [];
  
  type SelectionDragState = {
    anchor: XlsxCellAddress;
@@ -169,7 +182,7 @@ index 20d313c..c99ec6b 100644
    axis: "cell" | "column" | "row";
    contentScaleX: number;
    contentScaleY: number;
-@@ -1146,6 +1147,7 @@ type BatchedCellData = {
+@@ -1146,6 +1148,7 @@ type BatchedCellData = {
  };
  
  type WorksheetBatchWindow = {
@@ -177,7 +190,7 @@ index 20d313c..c99ec6b 100644
    cells: Map<string, BatchedCellData>;
    endRow: number;
    startRow: number;
-@@ -3770,7 +3772,7 @@ function getCellDisplayValue(worksheet: Worksheet, row: number, col: number, act
+@@ -3770,7 +3773,7 @@ function getCellDisplayValue(worksheet: Worksheet, row: number, col: number, act
    return cellValue.toString();
  }
  
@@ -186,7 +199,7 @@ index 20d313c..c99ec6b 100644
    const cellValue = worksheet.getCalculatedValueAt(row, col);
    if (cellValue.is_number) {
      return cellValue.asNumber() ?? null;
-@@ -3779,7 +3781,10 @@ function getCellNumericValue(worksheet: Worksheet, row: number, col: number) {
+@@ -3779,7 +3782,10 @@ function getCellNumericValue(worksheet: Worksheet, row: number, col: number) {
      return cellValue.asBoolean() ? 1 : 0;
    }
    if (cellValue.is_empty || cellValue.is_error) {
@@ -198,7 +211,7 @@ index 20d313c..c99ec6b 100644
    }
  
    const parsedValue = Number(cellValue.asText() ?? cellValue.toString());
-@@ -4277,6 +4282,37 @@ function buildWorksheetBatchWindow(
+@@ -4277,6 +4283,37 @@ function buildWorksheetBatchWindow(
    };
  }
  
@@ -236,7 +249,7 @@ index 20d313c..c99ec6b 100644
  function getTableAtCell(tables: XlsxTable[], row: number, col: number) {
    return tables.find(
      (table) =>
-@@ -5699,17 +5735,117 @@ function normalizeConditionalTextOperand(value: string | number | null | undefin
+@@ -5699,17 +5736,117 @@ function normalizeConditionalTextOperand(value: string | number | null | undefin
    return String(value).trim().toLowerCase();
  }
  
@@ -356,7 +369,7 @@ index 20d313c..c99ec6b 100644
  
    if (normalizedRuleType === "cellis") {
      return resolveConditionalCellIsMatch(rule.operator ?? "equal", left, right, numericValue, textValue);
-@@ -5720,6 +5856,17 @@ function resolveConditionalStyledRuleMatch(
+@@ -5720,6 +5857,17 @@ function resolveConditionalStyledRuleMatch(
      || normalizeConditionalTextOperand(left);
  
    switch (normalizedRuleType) {
@@ -374,7 +387,7 @@ index 20d313c..c99ec6b 100644
      case "beginwith":
      case "beginswith":
        return normalizedOperand.length > 0 && normalizedCellText.startsWith(normalizedOperand);
-@@ -5789,7 +5936,7 @@ function resolveConditionalCellStyleForCell(
+@@ -5789,7 +5937,7 @@ function resolveConditionalCellStyleForCell(
      if (textValue === undefined) {
        textValue = readTextValue();
      }
@@ -383,7 +396,24 @@ index 20d313c..c99ec6b 100644
        continue;
      }
  
-@@ -7190,6 +7337,7 @@ function XlsxGrid({
+@@ -7111,6 +7259,7 @@ function XlsxGrid({
+   errorState,
+   fileTooLargeState,
+   getCellStyle,
++  showFormulas = false,
+   loadingComponent,
+   loadingState,
+   onFormControlAction,
+@@ -7130,7 +7279,7 @@ function XlsxGrid({
+   showImages = true
+ }: Pick<
+   XlsxViewerProps,
+-  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "getCellStyle" | "loadingComponent" | "loadingState" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
++  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "getCellStyle" | "showFormulas" | "loadingComponent" | "loadingState" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
+ > & {
+   controller: XlsxViewerController;
+   palette: ViewerPalette;
+@@ -7190,6 +7339,7 @@ function XlsxGrid({
      selectImage,
      selectRange,
      selection,
@@ -391,7 +421,7 @@ index 20d313c..c99ec6b 100644
      setActiveSheetIndex,
      setChartRect,
      setImageRect,
-@@ -7213,6 +7361,12 @@ function XlsxGrid({
+@@ -7213,10 +7363,50 @@ function XlsxGrid({
      ))
    ), [formControls, getFormControlItems]);
    const canResizeHeaders = !readOnly || allowResizeInReadOnly;
@@ -404,7 +434,45 @@ index 20d313c..c99ec6b 100644
    const scrollRef = React.useRef<HTMLDivElement>(null);
    const wrapperRef = React.useRef<HTMLDivElement>(null);
    const tableRef = React.useRef<HTMLTableElement>(null);
-@@ -9623,14 +9777,15 @@ function XlsxGrid({
+   const gridKeyboardActiveRef = React.useRef(false);
++  const dataNavigationQueueRef = React.useRef(Promise.resolve());
++  const dataNavigationGenerationRef = React.useRef(0);
++  const navigationControllerRef = React.useRef(controller);
++  navigationControllerRef.current = controller;
++  const moveSelectionRef = React.useRef(moveSelection);
++  moveSelectionRef.current = moveSelection;
++  const navigationCursorRef = React.useRef<XlsxCellAddress | null>(null);
++  const navigationSelectionsRef = React.useRef(new Set<string>());
++
++  React.useLayoutEffect(() => {
++    if (activeCell && navigationSelectionsRef.current.delete(`${activeCell.row}:${activeCell.col}`)) {
++      if (activeCell.row === navigationCursorRef.current?.row && activeCell.col === navigationCursorRef.current?.col) {
++        navigationSelectionsRef.current.clear();
++      }
++      return;
++    }
++    dataNavigationGenerationRef.current += 1;
++    navigationCursorRef.current = null;
++    navigationSelectionsRef.current.clear();
++  }, [activeCell]);
++
++  React.useEffect(() => {
++    const cancel = () => {
++      dataNavigationGenerationRef.current += 1;
++      navigationCursorRef.current = null;
++    };
++    cancel();
++    document.addEventListener("pointerdown", cancel, true);
++    return () => {
++      cancel();
++      document.removeEventListener("pointerdown", cancel, true);
++    };
++  }, [activeSheetIndex, revision]);
++
+   const gridKeyboardHandlerRef = React.useRef<((event: KeyboardEvent) => void) | null>(null);
+   const axisSelectionRef = React.useRef<
+     | { axis: "column"; endCol: number; startCol: number }
+@@ -9623,14 +9813,15 @@ function XlsxGrid({
    const [, startBatchTransition] = React.useTransition();
    const [, startSelectionTransition] = React.useTransition();
    const [asyncViewportRowBatch, setAsyncViewportRowBatch] = React.useState<WorksheetBatchWindow | null>(null);
@@ -422,7 +490,7 @@ index 20d313c..c99ec6b 100644
            const viewportStart = Math.max(0, drawingViewport.top - displayHeaderHeight - CANVAS_VIEWPORT_OVERSCAN_PX);
            const viewportEnd = Math.max(
              viewportStart,
-@@ -9666,11 +9821,29 @@ function XlsxGrid({
+@@ -9666,11 +9857,29 @@ function XlsxGrid({
      drawingViewport.height,
      drawingViewport.top,
      experimentalCanvas,
@@ -453,7 +521,7 @@ index 20d313c..c99ec6b 100644
    const syncViewportRowBatch = React.useMemo<WorksheetBatchWindow | null>(() => {
      if (!shouldVirtualizeRows || !worksheet || getRowsBatchAsync || !viewportRequest) {
        return null;
-@@ -9745,10 +9918,52 @@ function XlsxGrid({
+@@ -9745,10 +9954,52 @@ function XlsxGrid({
      };
    }, [activeSheet, asyncViewportRowBatch, getRowsBatchAsync, shouldVirtualizeRows, startBatchTransition, viewportRequest]);
  
@@ -507,7 +575,23 @@ index 20d313c..c99ec6b 100644
    }, [activeSheetIndex, revision]);
  
    const sparklinesByCell = React.useMemo(() => {
-@@ -9815,7 +10030,10 @@ function XlsxGrid({
+@@ -9777,6 +10028,7 @@ function XlsxGrid({
+         displayColLimit,
+         displayRowLimit,
+         getCellStyle,
++        showFormulas,
+         palette,
+         revision,
+         selectedChartElement,
+@@ -9791,6 +10043,7 @@ function XlsxGrid({
+       displayColLimit,
+       displayRowLimit,
+       getCellStyle,
++      showFormulas,
+       palette,
+       revision,
+       selectedChartElement,
+@@ -9815,7 +10068,10 @@ function XlsxGrid({
        return cached;
      }
  
@@ -519,7 +603,22 @@ index 20d313c..c99ec6b 100644
      const batchedCell = batchCoversRow ? viewportRowBatch?.cells.get(cacheKey) : undefined;
      const worksheetMergedSecondary = worksheet?.isMergedSecondary(row, col) ?? false;
  
-@@ -9914,7 +10132,7 @@ function XlsxGrid({
+@@ -9833,6 +10089,14 @@ function XlsxGrid({
+         }, zoomFactor),
+         value: ""
+       };
++      const override = getCellStyle?.({
++        cell: { row, col }, hasChartHighlight: false, hasConditionalFormat: false,
++        hasHyperlink: false, hasValidation: false, isMerged: false, isTableHeader: false,
++        resolvedStyle: { ...emptyData.style }, sheetName: activeSheet?.name ?? "",
++        value: "", workbookSheetIndex: activeSheet?.workbookSheetIndex ?? -1
++      });
++      if (override) emptyData.style = { ...emptyData.style, ...override };
++      emptyData.canvas = buildCanvasCellStyleCache(emptyData.style);
+       cellRenderCacheRef.current.set(cacheKey, emptyData);
+       return emptyData;
+     }
+@@ -9914,7 +10178,7 @@ function XlsxGrid({
        row,
        col,
        activeSheet,
@@ -528,7 +627,34 @@ index 20d313c..c99ec6b 100644
        readDisplayValue,
        worksheet,
        viewportRowBatch?.cells
-@@ -10161,12 +10379,8 @@ function XlsxGrid({
+@@ -10005,6 +10269,18 @@ function XlsxGrid({
+           : readDisplayValue()
+     };
+ 
++    const formula = batchedCell?.formula ?? worksheet?.getFormulaAt(row, col);
++    if (showFormulas && formula) {
++      nextData.value = `=${formula.replace(/^=/, "")}`;
++      nextData.style = { ...nextData.style, textAlign: "left", whiteSpace: "nowrap" };
++      nextData.conditionalDataBar = null;
++      nextData.conditionalIcon = null;
++      nextData.sparkline = null;
++      nextData.checkboxState = null;
++      nextData.shrinkToFit = false;
++      nextData.textRotationDeg = 0;
++    }
++
+     if (getCellStyle) {
+       const styleOverrides = getCellStyle({
+         cell: { row, col },
+@@ -10142,6 +10418,7 @@ function XlsxGrid({
+   }, [
+     activeSheet,
+     activeSheetChartHighlights,
++    showFormulas,
+     cellRenderCacheInvalidationKey,
+     colIndexByActual,
+     colPrefixSums,
+@@ -10161,12 +10438,8 @@ function XlsxGrid({
      conditionalFormatMetricsCacheRef.current.clear();
    }, [activeSheet?.conditionalFormatRules, activeSheet?.workbookSheetIndex, revision]);
  
@@ -543,7 +669,7 @@ index 20d313c..c99ec6b 100644
      const startRowIndex = rowIndexByActual.get(normalized.start.row);
      const endRowIndex = rowIndexByActual.get(normalized.end.row);
      const startColIndex = colIndexByActual.get(normalized.start.col);
-@@ -10187,8 +10401,26 @@ function XlsxGrid({
+@@ -10187,8 +10460,26 @@ function XlsxGrid({
        top: displayHeaderHeight + sumPrefixRange(rowPrefixSums, 0, startRowIndex - 1),
        width: sumPrefixRange(colPrefixSums, startColIndex, endColIndex)
      };
@@ -571,7 +697,7 @@ index 20d313c..c99ec6b 100644
    const { fill: selectionFill, header: selectionHeaderSurface, stroke: selectionStroke } = React.useMemo(() => resolveSelectionColors({
      palette,
      selectionColor,
-@@ -11215,9 +11447,15 @@ function XlsxGrid({
+@@ -11215,9 +11506,15 @@ function XlsxGrid({
    function finishPendingSelectionDrag() {
      const pendingState = pendingSelectionDragRef.current;
      clearPendingSelectionDrag();
@@ -579,17 +705,17 @@ index 20d313c..c99ec6b 100644
 -      commitSelectionRange(pendingState.previewRange);
 +    if (!pendingState || pendingState.committedOnPointerDown) {
 +      return;
-+    }
+     }
 +    if (pendingState.append) {
 +      selectRange(pendingState.previewRange, { toggle: true });
 +      selectionPreviewRangeRef.current = null;
 +      return;
-     }
++    }
 +    commitSelectionRange(pendingState.previewRange);
    }
  
    function promotePendingSelectionDrag(clientX: number, clientY: number) {
-@@ -11383,7 +11621,13 @@ function XlsxGrid({
+@@ -11383,7 +11680,13 @@ function XlsxGrid({
          } else {
            axisSelectionRef.current = null;
          }
@@ -604,7 +730,7 @@ index 20d313c..c99ec6b 100644
        } else if (!nextRange) {
          selectionPreviewRangeRef.current = null;
        }
-@@ -11525,6 +11769,10 @@ function XlsxGrid({
+@@ -11525,6 +11828,10 @@ function XlsxGrid({
        event.currentTarget.colSpan > 1 || event.currentTarget.rowSpan > 1
          ? resolvePointerCellFromGeometry(event.clientX, event.clientY) ?? cell
          : cell;
@@ -615,7 +741,7 @@ index 20d313c..c99ec6b 100644
      const currentSelection = selectionRef.current;
      const anchor = event.shiftKey && currentSelection ? currentSelection.start : targetCell;
      const initialRange = normalizeRange({ start: anchor, end: targetCell });
-@@ -11575,7 +11823,8 @@ function XlsxGrid({
+@@ -11575,7 +11882,8 @@ function XlsxGrid({
      resolveCellPointerOriginFromClient,
      resolveMountedCellOverlayRect,
      resolveOverlayRect,
@@ -625,7 +751,7 @@ index 20d313c..c99ec6b 100644
    ]);
  
    const handleRowPointerDown = React.useCallback((
-@@ -11951,6 +12200,35 @@ function XlsxGrid({
+@@ -11951,6 +12259,35 @@ function XlsxGrid({
      event.preventDefault();
      focusGrid();
      axisSelectionRef.current = null;
@@ -661,7 +787,7 @@ index 20d313c..c99ec6b 100644
      const currentSelection = selectionRef.current;
      const anchor = event.shiftKey && currentSelection ? currentSelection.start : cell;
      const initialRange = normalizeRange({ start: anchor, end: cell });
-@@ -15075,12 +15353,14 @@ function XlsxGrid({
+@@ -15075,12 +15412,14 @@ function XlsxGrid({
      committedOnPointerDown: boolean,
      initialRange: XlsxCellRange,
      startClientX: number,
@@ -677,7 +803,7 @@ index 20d313c..c99ec6b 100644
        axis,
        contentScaleX: pointerOrigin.contentScaleX,
        contentScaleY: pointerOrigin.contentScaleY,
-@@ -15418,6 +15698,46 @@ function XlsxGrid({
+@@ -15418,6 +15757,46 @@ function XlsxGrid({
      syncDrawingViewport(scroller, { immediate: true });
    }
  
@@ -724,11 +850,13 @@ index 20d313c..c99ec6b 100644
    function moveSelection(nextRowIndex: number, nextColIndex: number, extend: boolean) {
      const clampedRowIndex = Math.max(0, Math.min(nextRowIndex, visibleRows.length - 1));
      const clampedColIndex = Math.max(0, Math.min(nextColIndex, visibleCols.length - 1));
-@@ -15436,6 +15756,24 @@ function XlsxGrid({
+@@ -15436,6 +15815,26 @@ function XlsxGrid({
      ensureCellVisible(clampedRowIndex, clampedColIndex);
    }
  
 +  function revealCell(cell: XlsxCellAddress) {
++    dataNavigationGenerationRef.current += 1;
++    navigationCursorRef.current = null;
 +    selectCell(cell);
 +    try {
 +      const rowIndex = rowIndexByActual.get(cell.row);
@@ -749,7 +877,110 @@ index 20d313c..c99ec6b 100644
    function resolvePageRowIndex(currentRowIndex: number, direction: 1 | -1) {
      const scroller = scrollRef.current;
      const viewportHeight = Math.max(
-@@ -16233,6 +16571,25 @@ function XlsxGrid({
+@@ -15514,8 +15913,33 @@ function XlsxGrid({
+     return { colIndex, rowIndex };
+   }
+ 
++  function navigateData(direction: DataDirection, extend: boolean) {
++    const generation = dataNavigationGenerationRef.current;
++    dataNavigationQueueRef.current = dataNavigationQueueRef.current.then(async () => {
++      if (generation !== dataNavigationGenerationRef.current) return;
++      const current = navigationControllerRef.current;
++      const cell = navigationCursorRef.current ?? current.activeCell ?? resolveCurrentCell();
++      if (!cell) return;
++      const destination = await current.findDataBoundary({
++        cell, direction,
++        maxRow: visibleRows[visibleRows.length - 1] ?? cell.row,
++        maxCol: visibleCols[visibleCols.length - 1] ?? cell.col
++      });
++      if (generation !== dataNavigationGenerationRef.current) return;
++      const rowIndex = rowIndexByActual.get(destination.row);
++      const colIndex = colIndexByActual.get(destination.col);
++      if (rowIndex === undefined || colIndex === undefined) return;
++      navigationCursorRef.current = destination;
++      navigationSelectionsRef.current.add(`${destination.row}:${destination.col}`);
++      moveSelectionRef.current(rowIndex, colIndex, extend);
++    }).catch((error: unknown) => {
++      navigationCursorRef.current = null;
++      console.error("[react-xlsx] Data navigation failed", error);
++    });
++  }
++
+   function handleGridKeyDown(event: React.KeyboardEvent<HTMLDivElement> | KeyboardEvent) {
+-    if (editingCell) {
++    if (editingCell || event.defaultPrevented || ("isComposing" in event ? event.isComposing : event.nativeEvent.isComposing)) {
+       return;
+     }
+ 
+@@ -15548,6 +15972,14 @@ function XlsxGrid({
+     const currentRowIndex = rowIndexByActual.get(currentCell.row) ?? 0;
+     const currentColIndex = colIndexByActual.get(currentCell.col) ?? 0;
+     const isCommandNavigation = event.ctrlKey || event.metaKey;
++    if (isCommandNavigation && event.altKey) return;
++    if (isCommandNavigation && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
++      event.preventDefault();
++      navigateData(event.key as DataDirection, event.shiftKey);
++      return;
++    }
++    dataNavigationGenerationRef.current += 1;
++    navigationCursorRef.current = null;
+ 
+     if (!readOnly && isPrintableKey(event)) {
+       event.preventDefault();
+@@ -15566,9 +15998,7 @@ function XlsxGrid({
+           }
+         }
+         moveSelection(
+-          isCommandNavigation
+-            ? (rowIndexByActual.get(resolveLastUsedVisibleIndex(visibleRows, activeSheet?.maxUsedRow ?? -1)) ?? visibleRows.length - 1)
+-            : currentRowIndex + 1,
++          currentRowIndex + 1,
+           currentColIndex,
+           event.shiftKey
+         );
+@@ -15583,9 +16013,7 @@ function XlsxGrid({
+           }
+         }
+         moveSelection(
+-          isCommandNavigation
+-            ? (rowIndexByActual.get(resolveFirstUsedVisibleIndex(visibleRows, activeSheet?.minUsedRow ?? -1)) ?? 0)
+-            : currentRowIndex - 1,
++          currentRowIndex - 1,
+           currentColIndex,
+           event.shiftKey
+         );
+@@ -15601,9 +16029,7 @@ function XlsxGrid({
+         }
+         moveSelection(
+           currentRowIndex,
+-          isCommandNavigation
+-            ? (colIndexByActual.get(resolveFirstUsedVisibleIndex(visibleCols, activeSheet?.minUsedCol ?? -1)) ?? 0)
+-            : currentColIndex - 1,
++          currentColIndex - 1,
+           event.shiftKey
+         );
+         break;
+@@ -15618,9 +16044,7 @@ function XlsxGrid({
+         }
+         moveSelection(
+           currentRowIndex,
+-          isCommandNavigation
+-            ? (colIndexByActual.get(resolveLastUsedVisibleIndex(visibleCols, activeSheet?.maxUsedCol ?? -1)) ?? visibleCols.length - 1)
+-            : currentColIndex + 1,
++          currentColIndex + 1,
+           event.shiftKey
+         );
+         break;
+@@ -15710,7 +16134,7 @@ function XlsxGrid({
+   const scrollerViewportProps: XlsxScrollerRenderProps["viewportProps"] = {
+     ref: scrollRef,
+     "aria-colcount": Math.max(activeSheet?.colCount ?? 0, displayColLimit),
+-    "aria-keyshortcuts": "ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Control+Home Control+End",
++    "aria-keyshortcuts": "ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Control+Home Control+End Control+ArrowUp Control+ArrowDown Control+ArrowLeft Control+ArrowRight Meta+ArrowUp Meta+ArrowDown Meta+ArrowLeft Meta+ArrowRight",
+     "aria-label": activeSheet ? `${activeSheet.name} worksheet grid` : "Workbook grid",
+     "aria-readonly": readOnly,
+     "aria-rowcount": Math.max(activeSheet?.rowCount ?? 0, displayRowLimit),
+@@ -16233,6 +16657,25 @@ function XlsxGrid({
                  zIndex: 24
                }}
              >
@@ -775,7 +1006,23 @@ index 20d313c..c99ec6b 100644
                <div
                  ref={selectionOverlayRef}
                  style={{
-@@ -16539,7 +16896,8 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
+@@ -16386,6 +16829,7 @@ function XlsxViewerInner({
+   experimentalCanvas = true,
+   fileTooLargeState,
+   getCellStyle,
++  showFormulas,
+   headerBackgroundColor,
+   headerTextColor,
+   height,
+@@ -16464,6 +16908,7 @@ function XlsxViewerInner({
+                 experimentalCanvas={experimentalCanvas}
+                 fileTooLargeState={fileTooLargeState}
+                 getCellStyle={getCellStyle}
++                showFormulas={showFormulas}
+                 loadingComponent={loadingComponent}
+                 loadingState={loadingState}
+                 onFormControlAction={onFormControlAction}
+@@ -16539,7 +16984,8 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
      selectedRangeAddress,
      selectCell,
      selectRange,
@@ -785,7 +1032,7 @@ index 20d313c..c99ec6b 100644
    } = useXlsxViewer();
  
    return React.useMemo(
-@@ -16550,9 +16908,10 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
+@@ -16550,9 +16996,10 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
        selectedRangeAddress,
        selectCell,
        selectRange,
@@ -799,10 +1046,15 @@ index 20d313c..c99ec6b 100644
  }
  
 diff --git a/packages/react-xlsx/src/controller.tsx b/packages/react-xlsx/src/controller.tsx
-index 23933bc..596ed66 100644
+index 23933bc..11622f6 100644
 --- a/packages/react-xlsx/src/controller.tsx
 +++ b/packages/react-xlsx/src/controller.tsx
-@@ -46,6 +46,7 @@ import {
+@@ -1,3 +1,4 @@
++import { findDataBoundary, worksheetHasContent, type DataNavigationRequest } from "./data-navigation";
+ import * as React from "react";
+ import type {
+   DrawingAnchor as DukeDrawingAnchor,
+@@ -46,6 +47,7 @@ import {
    type WorkbookImageAssets,
    type WorkbookImageSheetOrigin
  } from "./images";
@@ -810,7 +1062,7 @@ index 23933bc..596ed66 100644
  import { safeCalculate, tryRecalculate } from "./safe-calculate";
  import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
  import { XlsxWorkerClient } from "./worker-client";
-@@ -1085,6 +1086,17 @@ function normalizeRange(range: XlsxCellRange): XlsxCellRange {
+@@ -1085,6 +1087,17 @@ function normalizeRange(range: XlsxCellRange): XlsxCellRange {
    };
  }
  
@@ -828,7 +1080,7 @@ index 23933bc..596ed66 100644
  function rangeToA1(range: XlsxCellRange): string {
    const normalized = normalizeRange(range);
    const start = cellAddressToA1(normalized.start);
-@@ -1439,7 +1451,10 @@ async function resolveWorkbookBuffer(
+@@ -1439,7 +1452,10 @@ async function resolveWorkbookBuffer(
    return buffer;
  }
  
@@ -840,7 +1092,7 @@ index 23933bc..596ed66 100644
    shouldAutoCalculate: boolean;
    workbook: Workbook;
  }> {
-@@ -1457,7 +1472,8 @@ async function parseWorkbookBuffer(buffer: ArrayBuffer): Promise<{
+@@ -1457,7 +1473,8 @@ async function parseWorkbookBuffer(buffer: ArrayBuffer): Promise<{
    }
  
    const result = safeCalculate(initialWorkbook, {
@@ -850,7 +1102,7 @@ index 23933bc..596ed66 100644
    });
  
    return {
-@@ -1871,6 +1887,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -1871,6 +1888,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    const {
      allowResizeInReadOnly = false,
      deferLoadingAboveBytes = DEFAULT_DEFER_LOADING_ABOVE_BYTES,
@@ -858,7 +1110,7 @@ index 23933bc..596ed66 100644
      file,
      fileName,
      maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES,
-@@ -1898,6 +1915,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -1898,6 +1916,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    const [zoomScaleOverridesByTabId, setZoomScaleOverridesByTabId] = React.useState<Record<string, number>>({});
    const [activeCell, setActiveCell] = React.useState<XlsxCellAddress | null>(null);
    const [selection, setSelection] = React.useState<XlsxCellRange | null>(null);
@@ -873,7 +1125,7 @@ index 23933bc..596ed66 100644
    const [selectedChartId, setSelectedChartId] = React.useState<string | null>(null);
    const [selectedChartElement, setSelectedChartElement] = React.useState<XlsxChartElementSelection | null>(null);
    const [selectedImageId, setSelectedImageId] = React.useState<string | null>(null);
-@@ -2170,7 +2195,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2170,7 +2196,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    }, [getWorkerClient, hasIncompleteWorkerChartSnapshot, setChartAssets, showHiddenSheets, skipXmlParsing, workerSupported]);
  
    const loadWorkbookOnMainThread = React.useCallback(async (buffer: ArrayBuffer) => {
@@ -882,7 +1134,7 @@ index 23933bc..596ed66 100644
      const bytes = new Uint8Array(buffer);
      const nextImageAssets = loadWorkbookImageAssets(
        bytes,
-@@ -2181,7 +2206,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2181,7 +2207,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        imageAssets: nextImageAssets,
        parsedWorkbook: nextParsedWorkbook
      };
@@ -891,7 +1143,7 @@ index 23933bc..596ed66 100644
  
    const refreshWorkbookState = React.useCallback((targetWorkbook: Workbook) => {
      const currentFormControls = imageAssetsRef.current?.formControlsByWorkbookSheetIndex ?? [];
-@@ -2320,7 +2345,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2320,7 +2346,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
          if (shouldUseWorkerForLoad) {
            try {
@@ -900,7 +1152,7 @@ index 23933bc..596ed66 100644
              if (!isCurrent || abortController.signal.aborted) {
                return;
              }
-@@ -2580,7 +2605,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2580,7 +2606,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(new Uint8Array(deferredBuffer), skipXmlParsing);
  
      if (shouldUseWorkerForLoad) {
@@ -909,7 +1161,7 @@ index 23933bc..596ed66 100644
          .then((snapshot) => {
            if (!effectiveSkipXmlParsing && hasIncompleteWorkerChartSnapshot(snapshot)) {
              throw new Error("Worker chart payload incomplete");
-@@ -2656,7 +2681,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2656,7 +2682,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        return;
      }
  
@@ -918,7 +1170,24 @@ index 23933bc..596ed66 100644
        .then((nextParsedWorkbook) => {
          const bytes = new Uint8Array(deferredBuffer);
          const nextImageAssets = loadWorkbookImageAssets(
-@@ -4229,29 +4254,84 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2768,6 +2794,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     return getWorkerClient().getCellSnapshot(workbookSheetIndex, row, col);
+   }, [getWorkerClient, isWorkerBacked]);
+ 
++  const navigateDataBoundary = React.useCallback(async (request: DataNavigationRequest) => {
++    if (!activeSheet) return request.cell;
++    if (isWorkerBacked) return getWorkerClient().findDataBoundary(activeSheet.workbookSheetIndex, request);
++    const worksheet = getActiveWorksheet();
++    if (!worksheet) return request.cell;
++    return findDataBoundary(request, activeSheet, (row, col) =>
++      worksheetHasContent(worksheet, row, col)
++    );
++  }, [activeSheet, getActiveWorksheet, getWorkerClient, isWorkerBacked]);
++
+   const getRowsBatchAsync = React.useCallback((workbookSheetIndex: number, startRow: number, rowCount: number) => {
+     if (!isWorkerBacked) {
+       return Promise.resolve(null);
+@@ -4229,29 +4265,84 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      return true;
    }, [getChartById, readOnly, updateChart, workbook]);
  
@@ -1015,10 +1284,11 @@ index 23933bc..596ed66 100644
  
    const clearSelection = React.useCallback(() => {
      selectionAnchorRef.current = null;
-@@ -5035,11 +5115,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5035,11 +5126,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        selectedRangeAddress,
        selectedValue,
        selectCell,
++      findDataBoundary: navigateDataBoundary,
 +      revealCell,
 +      registerRevealCellImpl,
        selectChart,
@@ -1030,10 +1300,11 @@ index 23933bc..596ed66 100644
        setActiveSheetIndex,
        setActiveTabIndex,
        setSelectedCellFormula,
-@@ -5153,11 +5236,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5153,11 +5248,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        selectedRangeAddress,
        selectedValue,
        selectCell,
++      navigateDataBoundary,
 +      revealCell,
 +      registerRevealCellImpl,
        selectChart,
@@ -1045,6 +1316,102 @@ index 23933bc..596ed66 100644
        setActiveSheetIndex,
        setActiveTabIndex,
        setSelectedCellFormula,
+diff --git a/packages/react-xlsx/src/data-navigation.test.ts b/packages/react-xlsx/src/data-navigation.test.ts
+new file mode 100644
+index 0000000..91667d2
+--- /dev/null
++++ b/packages/react-xlsx/src/data-navigation.test.ts
+@@ -0,0 +1,29 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { findDataBoundary } from "./data-navigation.ts";
++
++const sheet = { maxUsedRow: 20, maxUsedCol: 20 };
++const cells = new Set([1, 2, 3, 7, 8, 12]);
++for (const vertical of [true, false]) {
++  const cell = (position: number) => vertical ? { row: position, col: 0 } : { row: 0, col: position };
++  const forward = vertical ? "ArrowDown" : "ArrowRight";
++  const backward = vertical ? "ArrowUp" : "ArrowLeft";
++  const run = (start: number, reverse = false, hidden: number[] = []) => findDataBoundary({ cell: cell(start), direction: reverse ? backward : forward, maxRow: 20, maxCol: 20 }, { ...sheet, [vertical ? "hiddenRows" : "hiddenCols"]: hidden }, (row, col) => cells.has(vertical ? row : col));
++  test(`data regions and blank gaps on ${vertical ? "rows" : "columns"}`, () => {
++    assert.deepEqual(run(1), cell(3));
++    assert.deepEqual(run(3), cell(7));
++    assert.deepEqual(run(5), cell(7));
++    assert.deepEqual(run(7), cell(8));
++    assert.deepEqual(run(8), cell(12));
++    assert.deepEqual(run(12), cell(20));
++    assert.deepEqual(run(20), cell(20));
++    assert.deepEqual(run(8, true), cell(7));
++    assert.deepEqual(run(7, true), cell(3));
++    assert.deepEqual(run(1, true), cell(0));
++    assert.deepEqual(run(0, true), cell(0));
++  });
++  test(`skips hidden ${vertical ? "rows" : "columns"}`, () => {
++    assert.deepEqual(run(3, false, [7]), cell(8));
++    assert.deepEqual(run(1, false, [2]), cell(3));
++  });
++}
+diff --git a/packages/react-xlsx/src/data-navigation.ts b/packages/react-xlsx/src/data-navigation.ts
+new file mode 100644
+index 0000000..7896efb
+--- /dev/null
++++ b/packages/react-xlsx/src/data-navigation.ts
+@@ -0,0 +1,55 @@
++import type { Worksheet } from "@dukelib/sheets-wasm";
++import type { XlsxCellAddress, XlsxSheetData } from "./types";
++
++export type DataDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
++export interface DataNavigationRequest {
++  cell: XlsxCellAddress;
++  direction: DataDirection;
++  maxRow: number;
++  maxCol: number;
++}
++
++export function findDataBoundary(
++  request: DataNavigationRequest,
++  sheet: Pick<XlsxSheetData, "hiddenRows" | "hiddenCols" | "maxUsedRow" | "maxUsedCol">,
++  hasContent: (row: number, col: number) => boolean
++): XlsxCellAddress {
++  const vertical = request.direction === "ArrowUp" || request.direction === "ArrowDown";
++  const step = request.direction === "ArrowUp" || request.direction === "ArrowLeft" ? -1 : 1;
++  const hidden = new Set((vertical ? sheet.hiddenRows : sheet.hiddenCols) ?? []);
++  const max = vertical ? request.maxRow : request.maxCol;
++  const usedMax = vertical ? sheet.maxUsedRow : sheet.maxUsedCol;
++  const start = vertical ? request.cell.row : request.cell.col;
++  const nextVisible = (position: number) => {
++    let next = position + step;
++    while (next >= 0 && next <= max && hidden.has(next)) next += step;
++    return next >= 0 && next <= max ? next : null;
++  };
++  const occupied = (position: number) => position <= usedMax && hasContent(
++    vertical ? position : request.cell.row,
++    vertical ? request.cell.col : position
++  );
++  let destination = start;
++  let next = nextVisible(start);
++  if (next !== null) {
++    const contiguous = occupied(start) && occupied(next);
++    while (next !== null) {
++      const filled = occupied(next);
++      if (contiguous && !filled) break;
++      destination = next;
++      if (!contiguous && filled) break;
++      next = nextVisible(next);
++    }
++  }
++  return vertical ? { row: destination, col: request.cell.col } : { row: request.cell.row, col: destination };
++}
++
++export function worksheetHasContent(worksheet: Worksheet, row: number, col: number): boolean {
++  if (worksheet.getFormulaAt(row, col)) return true;
++  const value = worksheet.getCalculatedValueAt(row, col);
++  try {
++    return !value.is_empty;
++  } finally {
++    value.free();
++  }
++}
 diff --git a/packages/react-xlsx/src/external-fn.ts b/packages/react-xlsx/src/external-fn.ts
 new file mode 100644
 index 0000000..5cc2fb9
@@ -1107,10 +1474,15 @@ index 76df88d..7a0dbad 100644
    } catch (err) {
      console.warn("[react-xlsx] workbook.calculate() trapped; falling back to cached formula values", err);
 diff --git a/packages/react-xlsx/src/types.ts b/packages/react-xlsx/src/types.ts
-index 16b5350..d7287ad 100644
+index 16b5350..ed74c1b 100644
 --- a/packages/react-xlsx/src/types.ts
 +++ b/packages/react-xlsx/src/types.ts
-@@ -963,6 +963,11 @@ export interface UseXlsxViewerControllerOptions {
+@@ -1,3 +1,4 @@
++import type { DataNavigationRequest } from "./data-navigation";
+ import type * as React from "react";
+ import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
+ 
+@@ -963,6 +964,11 @@ export interface UseXlsxViewerControllerOptions {
     * @default false
     */
    allowResizeInReadOnly?: boolean;
@@ -1122,12 +1494,14 @@ index 16b5350..d7287ad 100644
    /**
     * Defers loading until `continueDeferredLoad()` is called when the file is larger than this byte threshold.
     * Set to `0` to parse immediately.
-@@ -1176,11 +1181,17 @@ export interface XlsxViewerController {
+@@ -1176,11 +1182,19 @@ export interface XlsxViewerController {
     */
    setRangeStyle: (range: XlsxCellRange, style: XlsxCellStyleInput) => void;
    setZoomScale: (zoomScale: number) => void;
 -  selectCell: (cell: XlsxCellAddress, options?: { extend?: boolean }) => void;
 +  selectCell: (cell: XlsxCellAddress, options?: { extend?: boolean; append?: boolean }) => void;
++  /** Resolve a data-block boundary without changing selection; worker sheets stay off-thread. */
++  findDataBoundary: (request: DataNavigationRequest) => Promise<XlsxCellAddress>;
 +  /** Select a cell and center it in the viewport when it is off-screen. */
 +  revealCell: (cell: XlsxCellAddress) => void;
 +  /** @internal Grid wiring: XlsxGrid registers revealCell's scroll + overlay impl here. */
@@ -1142,7 +1516,7 @@ index 16b5350..d7287ad 100644
    setActiveSheetIndex: (index: number) => void;
    setActiveTabIndex: (index: number) => void;
    selectedChart: XlsxChart | null;
-@@ -1233,9 +1244,11 @@ export interface XlsxViewerSelection {
+@@ -1233,9 +1247,11 @@ export interface XlsxViewerSelection {
    activeCellAddress: string | null;
    clearSelection: () => void;
    selectedRangeAddress: string | null;
@@ -1156,11 +1530,25 @@ index 16b5350..d7287ad 100644
  }
  
  export interface XlsxViewerZoom {
+@@ -1578,6 +1594,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
+    * ```
+    */
+   getCellStyle?: (context: XlsxCellStyleContext) => React.CSSProperties | null | undefined;
++  /** Display formula text while retaining calculated values for workbook operations. */
++  showFormulas?: boolean;
+   /** Background color used for row-number, column-letter, and corner headers. */
+   headerBackgroundColor?: string;
+   /** Text color used for row-number and column-letter headers. */
 diff --git a/packages/react-xlsx/src/worker-client.ts b/packages/react-xlsx/src/worker-client.ts
-index 0a6a9c7..b04f0d9 100644
+index 0a6a9c7..48bfcdf 100644
 --- a/packages/react-xlsx/src/worker-client.ts
 +++ b/packages/react-xlsx/src/worker-client.ts
-@@ -10,6 +10,7 @@ type WorkerMessage =
+@@ -1,3 +1,4 @@
++import type { DataNavigationRequest } from "./data-navigation";
+ import type { XlsxChart, XlsxChartsheet, XlsxFormControl, XlsxSheetData, XlsxTable, XlsxWorkbookTab } from "./types";
+ import { getConfiguredWorkerWasmSource, type WorkerWasmSource } from "./wasm";
+ 
+@@ -10,6 +11,7 @@ type WorkerMessage =
          showHiddenSheets?: boolean;
          skipXmlParsing?: boolean;
          wasmSource?: WorkerWasmSource;
@@ -1168,7 +1556,27 @@ index 0a6a9c7..b04f0d9 100644
        };
      }
    | {
-@@ -131,7 +132,12 @@ export class XlsxWorkerClient {
+@@ -31,6 +33,11 @@ type WorkerMessage =
+         col: number;
+       };
+     }
++  | {
++      id: number;
++      type: "findDataBoundary";
++      payload: DataNavigationRequest & { workbookSheetIndex: number };
++    }
+   | {
+       id: number;
+       type: "getRowsBatch";
+@@ -42,6 +49,7 @@ type WorkerMessage =
+     };
+ 
+ type WorkerSuccessMessage =
++  | { id: number; success: true; result: { row: number; col: number } }
+   | {
+       id: number;
+       success: true;
+@@ -131,7 +139,12 @@ export class XlsxWorkerClient {
      this.pendingRequests.clear();
    }
  
@@ -1182,7 +1590,7 @@ index 0a6a9c7..b04f0d9 100644
      const workerBuffer = cloneArrayBufferForTransfer(buffer);
      return this.request<{
        chartsByWorkbookSheetIndex: XlsxChart[][];
-@@ -146,7 +152,8 @@ export class XlsxWorkerClient {
+@@ -146,7 +159,8 @@ export class XlsxWorkerClient {
          buffer: workerBuffer,
          showHiddenSheets,
          skipXmlParsing,
@@ -1192,11 +1600,29 @@ index 0a6a9c7..b04f0d9 100644
        },
        type: "load"
      }, [workerBuffer]);
+@@ -181,6 +195,12 @@ export class XlsxWorkerClient {
+     }, [workerBuffer]);
+   }
+ 
++  findDataBoundary(workbookSheetIndex: number, request: DataNavigationRequest) {
++    return this.request<{ row: number; col: number }>({
++      id: 0, type: "findDataBoundary", payload: { ...request, workbookSheetIndex }
++    });
++  }
++
+   getRowsBatch(workbookSheetIndex: number, startRow: number, rowCount: number) {
+     return this.request<unknown[] | null>({
+       id: 0,
 diff --git a/packages/react-xlsx/src/xlsx-worker.ts b/packages/react-xlsx/src/xlsx-worker.ts
-index 8857fde..d35397f 100644
+index 8857fde..2818e2a 100644
 --- a/packages/react-xlsx/src/xlsx-worker.ts
 +++ b/packages/react-xlsx/src/xlsx-worker.ts
-@@ -10,6 +10,7 @@ import {
+@@ -1,3 +1,4 @@
++import { findDataBoundary, worksheetHasContent, type DataNavigationRequest } from "./data-navigation";
+ import type { Workbook } from "@dukelib/sheets-wasm";
+ import { strFromU8, unzipSync } from "fflate";
+ import { loadWorkbookChartAssets } from "./charts";
+@@ -10,6 +11,7 @@ import {
    resolveWorksheetDefaultRowHeightPixels,
    resolveWorksheetMergeMetadata
  } from "./images";
@@ -1204,7 +1630,7 @@ index 8857fde..d35397f 100644
  import type { WorkbookStructureAssets } from "./images";
  import { safeCalculate } from "./safe-calculate";
  import { getSheetsWasmModule, setWasmSource, type WorkerWasmSource } from "./wasm";
-@@ -67,6 +68,7 @@ type WorkerRequest =
+@@ -67,6 +69,7 @@ type WorkerRequest =
          showHiddenSheets?: boolean;
          skipXmlParsing?: boolean;
          wasmSource?: WorkerWasmSource;
@@ -1212,7 +1638,27 @@ index 8857fde..d35397f 100644
        };
      }
    | {
-@@ -560,7 +562,11 @@ function buildSheetList(
+@@ -88,6 +91,11 @@ type WorkerRequest =
+         col: number;
+       };
+     }
++  | {
++      id: number;
++      type: "findDataBoundary";
++      payload: DataNavigationRequest & { workbookSheetIndex: number };
++    }
+   | {
+       id: number;
+       type: "getRowsBatch";
+@@ -119,6 +127,7 @@ type WorkerSuccessResponse = {
+         displayValue: string;
+         formula: string;
+       }
++    | { row: number; col: number }
+     | unknown[]
+     | null;
+ };
+@@ -560,7 +569,11 @@ function buildSheetList(
        continue;
      }
  
@@ -1225,7 +1671,7 @@ index 8857fde..d35397f 100644
      const visibleRows: number[] = [];
      const hiddenRows: number[] = [];
      for (let row = 0; row <= maxRow; row += 1) {
-@@ -782,7 +788,12 @@ function cellAddressToA1(cell: XlsxCellAddress) {
+@@ -782,7 +795,12 @@ function cellAddressToA1(cell: XlsxCellAddress) {
    return `${label}${cell.row + 1}`;
  }
  
@@ -1239,7 +1685,7 @@ index 8857fde..d35397f 100644
    const wasmModule = await getSheetsWasmModule();
    const bytes = new Uint8Array(buffer);
    const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
-@@ -792,9 +803,14 @@ async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHid
+@@ -792,9 +810,14 @@ async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHid
      totalFormulas += activeWorkbook.getSheet(index).formulaCount;
    }
  
@@ -1255,7 +1701,7 @@ index 8857fde..d35397f 100644
      });
      activeWorkbook = result.workbook;
    }
-@@ -898,7 +914,12 @@ async function handleMessage(message: WorkerRequest) {
+@@ -898,7 +921,12 @@ async function handleMessage(message: WorkerRequest) {
        if (message.payload.wasmSource !== undefined) {
          setWasmSource(message.payload.wasmSource);
        }
@@ -1269,6 +1715,21 @@ index 8857fde..d35397f 100644
      }
      case "parseCharts": {
        if (message.payload.wasmSource !== undefined) {
+@@ -921,6 +949,14 @@ async function handleMessage(message: WorkerRequest) {
+         formula: worksheet.getFormulaAt(message.payload.row, message.payload.col) ?? ""
+       };
+     }
++    case "findDataBoundary": {
++      const sheet = sheets.find((entry) => entry.workbookSheetIndex === message.payload.workbookSheetIndex);
++      if (!workbook || !sheet) throw new Error("Worksheet unavailable");
++      const worksheet = workbook.getSheet(sheet.workbookSheetIndex);
++      return findDataBoundary(message.payload, sheet, (row, col) =>
++        worksheetHasContent(worksheet, row, col)
++      );
++    }
+     case "getRowsBatch": {
+       if (!workbook) {
+         return null;
 diff --git a/packages/react-xlsx/tsconfig.json b/packages/react-xlsx/tsconfig.json
 index d0b8519..ca35116 100644
 --- a/packages/react-xlsx/tsconfig.json

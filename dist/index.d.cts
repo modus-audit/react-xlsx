@@ -3,6 +3,14 @@ import * as _dukelib_sheets_wasm from '@dukelib/sheets-wasm';
 import { Workbook, Worksheet } from '@dukelib/sheets-wasm';
 import * as react_jsx_runtime from 'react/jsx-runtime';
 
+type DataDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
+interface DataNavigationRequest {
+    cell: XlsxCellAddress;
+    direction: DataDirection;
+    maxRow: number;
+    maxCol: number;
+}
+
 interface XlsxThemePalette {
     colorsByIndex: Record<number, string>;
     majorLatinFont?: string;
@@ -1153,6 +1161,8 @@ interface XlsxViewerController {
         extend?: boolean;
         append?: boolean;
     }) => void;
+    /** Resolve a data-block boundary without changing selection; worker sheets stay off-thread. */
+    findDataBoundary: (request: DataNavigationRequest) => Promise<XlsxCellAddress>;
     /** Select a cell and center it in the viewport when it is off-screen. */
     revealCell: (cell: XlsxCellAddress) => void;
     /** @internal Grid wiring: XlsxGrid registers revealCell's scroll + overlay impl here. */
@@ -1540,6 +1550,8 @@ interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
      * ```
      */
     getCellStyle?: (context: XlsxCellStyleContext) => React.CSSProperties | null | undefined;
+    /** Display formula text while retaining calculated values for workbook operations. */
+    showFormulas?: boolean;
     /** Background color used for row-number, column-letter, and corner headers. */
     headerBackgroundColor?: string;
     /** Text color used for row-number and column-letter headers. */

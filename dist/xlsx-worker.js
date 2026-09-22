@@ -1,3 +1,44 @@
+// src/data-navigation.ts
+function findDataBoundary(request, sheet, hasContent) {
+  const vertical = request.direction === "ArrowUp" || request.direction === "ArrowDown";
+  const step = request.direction === "ArrowUp" || request.direction === "ArrowLeft" ? -1 : 1;
+  const hidden = new Set((vertical ? sheet.hiddenRows : sheet.hiddenCols) ?? []);
+  const max = vertical ? request.maxRow : request.maxCol;
+  const usedMax = vertical ? sheet.maxUsedRow : sheet.maxUsedCol;
+  const start = vertical ? request.cell.row : request.cell.col;
+  const nextVisible = (position) => {
+    let next2 = position + step;
+    while (next2 >= 0 && next2 <= max && hidden.has(next2)) next2 += step;
+    return next2 >= 0 && next2 <= max ? next2 : null;
+  };
+  const occupied = (position) => position <= usedMax && hasContent(
+    vertical ? position : request.cell.row,
+    vertical ? request.cell.col : position
+  );
+  let destination = start;
+  let next = nextVisible(start);
+  if (next !== null) {
+    const contiguous = occupied(start) && occupied(next);
+    while (next !== null) {
+      const filled = occupied(next);
+      if (contiguous && !filled) break;
+      destination = next;
+      if (!contiguous && filled) break;
+      next = nextVisible(next);
+    }
+  }
+  return vertical ? { row: destination, col: request.cell.col } : { row: request.cell.row, col: destination };
+}
+function worksheetHasContent(worksheet, row, col) {
+  if (worksheet.getFormulaAt(row, col)) return true;
+  const value = worksheet.getCalculatedValueAt(row, col);
+  try {
+    return !value.is_empty;
+  } finally {
+    value.free();
+  }
+}
+
 // src/xlsx-worker.ts
 import { strFromU8 as strFromU83, unzipSync as unzipSync2 } from "fflate";
 
@@ -5422,6 +5463,16 @@ async function handleMessage(message) {
         displayValue: getCellDisplayValue(worksheet, message.payload.row, message.payload.col, targetSheet),
         formula: worksheet.getFormulaAt(message.payload.row, message.payload.col) ?? ""
       };
+    }
+    case "findDataBoundary": {
+      const sheet = sheets.find((entry) => entry.workbookSheetIndex === message.payload.workbookSheetIndex);
+      if (!workbook || !sheet) throw new Error("Worksheet unavailable");
+      const worksheet = workbook.getSheet(sheet.workbookSheetIndex);
+      return findDataBoundary(
+        message.payload,
+        sheet,
+        (row, col) => worksheetHasContent(worksheet, row, col)
+      );
     }
     case "getRowsBatch": {
       if (!workbook) {
