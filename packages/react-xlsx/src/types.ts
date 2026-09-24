@@ -1,4 +1,5 @@
 import type { DataNavigationRequest } from "./data-navigation";
+import type { ExternalFnValues } from "./external-fn";
 import type * as React from "react";
 import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
 
@@ -1115,7 +1116,11 @@ export interface XlsxViewerController {
   /** Removes a Duke-supported control by its worksheet-local index. */
   removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
   readOnly: boolean;
-  recalculate: () => void;
+  /** Recalculates formulas, optionally resolving external add-in calls. */
+  recalculate: {
+    (): void;
+    (externalFnValues: ExternalFnValues): void;
+  };
   revision: number;
   resetZoom: () => void;
   resizeChartBy: (
