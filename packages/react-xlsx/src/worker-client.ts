@@ -1,4 +1,6 @@
-import type { XlsxChart, XlsxChartsheet, XlsxSheetData, XlsxTable, XlsxWorkbookTab } from "./types";
+import type { DataNavigationRequest } from "./data-navigation";
+import type { XlsxChart, XlsxChartsheet, XlsxFormControl, XlsxSheetData, XlsxTable, XlsxWorkbookTab } from "./types";
+import { getConfiguredWorkerWasmSource, type WorkerWasmSource } from "./wasm";
 
 type WorkerMessage =
   | {
@@ -8,6 +10,8 @@ type WorkerMessage =
         buffer: ArrayBuffer;
         showHiddenSheets?: boolean;
         skipXmlParsing?: boolean;
+        wasmSource?: WorkerWasmSource;
+        externalFnValues?: Record<string, string | number>;
       };
     }
   | {
@@ -17,6 +21,7 @@ type WorkerMessage =
         buffer: ArrayBuffer;
         showHiddenSheets?: boolean;
         skipXmlParsing?: boolean;
+        wasmSource?: WorkerWasmSource;
       };
     }
   | {
@@ -30,6 +35,11 @@ type WorkerMessage =
     }
   | {
       id: number;
+      type: "findDataBoundary";
+      payload: DataNavigationRequest & { workbookSheetIndex: number };
+    }
+  | {
+      id: number;
       type: "getRowsBatch";
       payload: {
         workbookSheetIndex: number;
@@ -39,6 +49,7 @@ type WorkerMessage =
     };
 
 type WorkerSuccessMessage =
+  | { id: number; success: true; result: { row: number; col: number } }
   | {
       id: number;
       success: true;
@@ -54,6 +65,7 @@ type WorkerSuccessMessage =
       result: {
         chartsByWorkbookSheetIndex: XlsxChart[][];
         chartsheets: XlsxChartsheet[];
+        formControlsByWorkbookSheetIndex: XlsxFormControl[][];
         sheets: XlsxSheetData[];
         tablesByWorkbookSheetIndex: XlsxTable[][];
         tabs: XlsxWorkbookTab[];
@@ -127,11 +139,17 @@ export class XlsxWorkerClient {
     this.pendingRequests.clear();
   }
 
-  loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHiddenSheets = false) {
+  loadWorkbook(
+    buffer: ArrayBuffer,
+    skipXmlParsing = false,
+    showHiddenSheets = false,
+    externalFnValues?: Record<string, string | number>,
+  ) {
     const workerBuffer = cloneArrayBufferForTransfer(buffer);
     return this.request<{
       chartsByWorkbookSheetIndex: XlsxChart[][];
       chartsheets: XlsxChartsheet[];
+      formControlsByWorkbookSheetIndex: XlsxFormControl[][];
       sheets: XlsxSheetData[];
       tablesByWorkbookSheetIndex: XlsxTable[][];
       tabs: XlsxWorkbookTab[];
@@ -140,7 +158,9 @@ export class XlsxWorkerClient {
       payload: {
         buffer: workerBuffer,
         showHiddenSheets,
-        skipXmlParsing
+        skipXmlParsing,
+        wasmSource: getConfiguredWorkerWasmSource(),
+        externalFnValues
       },
       type: "load"
     }, [workerBuffer]);
@@ -168,10 +188,17 @@ export class XlsxWorkerClient {
       payload: {
         buffer: workerBuffer,
         showHiddenSheets,
-        skipXmlParsing
+        skipXmlParsing,
+        wasmSource: getConfiguredWorkerWasmSource()
       },
       type: "parseCharts"
     }, [workerBuffer]);
+  }
+
+  findDataBoundary(workbookSheetIndex: number, request: DataNavigationRequest) {
+    return this.request<{ row: number; col: number }>({
+      id: 0, type: "findDataBoundary", payload: { ...request, workbookSheetIndex }
+    });
   }
 
   getRowsBatch(workbookSheetIndex: number, startRow: number, rowCount: number) {

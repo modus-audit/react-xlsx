@@ -63,6 +63,7 @@ export type SafeCalculateResult = {
 
 export type SafeCalculateOptions = {
   reparse?: () => Workbook;
+  calcOptions?: unknown;
 };
 
 // Pre-scans for formulas referencing missing sheets (which cause the Rust
@@ -73,7 +74,7 @@ export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions 
     return { workbook, calculated: false, skipReason: "unresolved-sheet-refs" };
   }
   try {
-    workbook.calculate();
+    workbook.calculate(options.calcOptions);
     return { workbook, calculated: true, skipReason: null };
   } catch (err) {
     console.warn("[react-xlsx] workbook.calculate() trapped; falling back to cached formula values", err);
