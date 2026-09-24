@@ -1,6 +1,6 @@
 diff --git a/MODUS_PATCHES.md b/MODUS_PATCHES.md
 new file mode 100644
-index 0000000..71bc01c
+index 0000000..baefacd
 --- /dev/null
 +++ b/MODUS_PATCHES.md
 @@ -0,0 +1,37 @@
@@ -11,6 +11,7 @@ index 0000000..71bc01c
 +Preserved behavior:
 +
 +- Serializable external add-in values reach the engine in normal, worker, and deferred loads. Formula text remains intact; unresolved calls retain cached values.
++- `recalculate` accepts updated external add-in values without reloading the workbook.
 +- `revealCell` selects and centers off-screen search results.
 +- `selections`, append/toggle operations, and canvas Ctrl/Cmd drag support non-contiguous selections. Re-adding an existing range preserves the other regions.
 +- Conditional formatting retains relative references, comparison/ABS/AND expressions, text and blank rules, and cached numeric fallback. These extend upstream's styled rules and retain its priority handling.
@@ -24,13 +25,12 @@ index 0000000..71bc01c
 +- Classic conditional comparisons, text matching, style merging, and priority handling use upstream's implementation. The custom expression evaluator no longer carries unused classic-operator branches.
 +- The old hidden-axis, dimension, and row-index string replacements are gone. Redundant blank-sheet sizing fallbacks have also been removed. The forced zero-based used-range minima remain: removing them causes upstream to scroll past leading blank rows and columns on open, as caught by the layout regression.
 +- The custom viewport-bound calculation is replaced by upstream's implementation with the two worker adjustments above.
-+- The unused custom calculation-options parameter on `tryRecalculate` is removed; initial CCH calculation still passes options through `safeCalculate`.
 +
 +The app configures `initWasm` with a bundler-resolved asset URL and explicitly chooses worker mode. Upstream otherwise routes all read-only workbooks into the worker, bypassing rich conditional formatting.
 +
 +Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 +
-+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.4` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
++After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.5` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 +
 +The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 +
@@ -136,14 +136,14 @@ index 0000000..49eac7a
 +  };
 +}
 diff --git a/packages/react-xlsx/package.json b/packages/react-xlsx/package.json
-index 6455584..be9a01b 100644
+index 6455584..f20865e 100644
 --- a/packages/react-xlsx/package.json
 +++ b/packages/react-xlsx/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@extend-ai/react-xlsx",
 -  "version": "0.16.4",
-+  "version": "0.16.4-modus.4",
++  "version": "0.16.4-modus.5",
    "description": "React components and hooks for viewing XLSX workbooks",
    "license": "MIT",
    "keywords": [
@@ -161,7 +161,7 @@ index 6455584..be9a01b 100644
    "scripts": {
      "build": "tsup --config tsup.config.ts && node ../../scripts/copy-duke-wasm.mjs",
 -    "test": "node --experimental-strip-types --test src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts",
-+    "test": "node --experimental-strip-types --test src/data-navigation.test.ts src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts build/atlas-json.test.ts",
++    "test": "node --experimental-strip-types --test src/data-navigation.test.ts src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/safe-calculate.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts build/atlas-json.test.ts",
      "typecheck": "tsc -p tsconfig.json --noEmit",
      "clean": "rm -rf dist"
    },
@@ -1046,7 +1046,7 @@ index 20d313c..fb7a890 100644
  }
  
 diff --git a/packages/react-xlsx/src/controller.tsx b/packages/react-xlsx/src/controller.tsx
-index 23933bc..11622f6 100644
+index 23933bc..9906812 100644
 --- a/packages/react-xlsx/src/controller.tsx
 +++ b/packages/react-xlsx/src/controller.tsx
 @@ -1,3 +1,4 @@
@@ -1187,7 +1187,23 @@ index 23933bc..11622f6 100644
    const getRowsBatchAsync = React.useCallback((workbookSheetIndex: number, startRow: number, rowCount: number) => {
      if (!isWorkerBacked) {
        return Promise.resolve(null);
-@@ -4229,29 +4265,84 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3748,12 +3784,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     downloadText(workbook.saveCsvString(), `${fileStem(displayFileName)}-${activeSheetName}.csv`, CSV_MIME_TYPE);
+   }, [activeSheet?.name, displayFileName, workbook]);
+ 
+-  const recalculate = React.useCallback(() => {
++  const recalculate = React.useCallback((externalFnValues?: ExternalFnValues) => {
+     if (!workbook) {
+       return;
+     }
+ 
+-    const result = tryRecalculate(workbook);
++    const calcOptions = externalFnValues ? { externalFnFn: makeExternalFn(externalFnValues) } : undefined;
++    const result = tryRecalculate(workbook, calcOptions);
+     if (result.calculated) {
+       refreshWorkbookState(workbook);
+       return;
+@@ -4229,29 +4266,84 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      return true;
    }, [getChartById, readOnly, updateChart, workbook]);
  
@@ -1284,7 +1300,7 @@ index 23933bc..11622f6 100644
  
    const clearSelection = React.useCallback(() => {
      selectionAnchorRef.current = null;
-@@ -5035,11 +5126,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5035,11 +5127,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        selectedRangeAddress,
        selectedValue,
        selectCell,
@@ -1300,7 +1316,7 @@ index 23933bc..11622f6 100644
        setActiveSheetIndex,
        setActiveTabIndex,
        setSelectedCellFormula,
-@@ -5153,11 +5248,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5153,11 +5249,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        selectedRangeAddress,
        selectedValue,
        selectCell,
@@ -1452,8 +1468,35 @@ index f1d5da5..67b72d0 100644
  export {
    DefaultXlsxToolbar,
    useXlsxViewerCharts,
+diff --git a/packages/react-xlsx/src/safe-calculate.test.ts b/packages/react-xlsx/src/safe-calculate.test.ts
+new file mode 100644
+index 0000000..ec6f616
+--- /dev/null
++++ b/packages/react-xlsx/src/safe-calculate.test.ts
+@@ -0,0 +1,21 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import type { Workbook } from "@dukelib/sheets-wasm";
++import { externalCallKey, makeExternalFn } from "./external-fn.ts";
++import { tryRecalculate } from "./safe-calculate.ts";
++
++test("recalculation passes external add-in values to the engine", () => {
++  const key = externalCallKey("TBLink", ["Ledger"]);
++  const workbook = {
++    calculate(options?: { externalFnFn?: (name: string, args: string[]) => string | number | null }) {
++      assert.equal(options?.externalFnFn?.("TBLink", ["Ledger"]), 123.45);
++      assert.equal(options?.externalFnFn?.("TBLink", ["Missing"]), null);
++    },
++  } as unknown as Workbook;
++
++  const calcOptions = { externalFnFn: makeExternalFn({ [key]: 123.45 }) };
++  assert.deepEqual(tryRecalculate(workbook, calcOptions), {
++    calculated: true,
++    error: null,
++  });
++});
 diff --git a/packages/react-xlsx/src/safe-calculate.ts b/packages/react-xlsx/src/safe-calculate.ts
-index 76df88d..7a0dbad 100644
+index 76df88d..6d8c6d1 100644
 --- a/packages/react-xlsx/src/safe-calculate.ts
 +++ b/packages/react-xlsx/src/safe-calculate.ts
 @@ -63,6 +63,7 @@ export type SafeCalculateResult = {
@@ -1473,16 +1516,32 @@ index 76df88d..7a0dbad 100644
      return { workbook, calculated: true, skipReason: null };
    } catch (err) {
      console.warn("[react-xlsx] workbook.calculate() trapped; falling back to cached formula values", err);
+@@ -88,9 +89,12 @@ export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions
+   }
+ }
+ 
+-export function tryRecalculate(workbook: Workbook): { calculated: boolean; error: unknown } {
++export function tryRecalculate(
++  workbook: Workbook,
++  calcOptions?: unknown,
++): { calculated: boolean; error: unknown } {
+   try {
+-    workbook.calculate();
++    workbook.calculate(calcOptions);
+     return { calculated: true, error: null };
+   } catch (err) {
+     console.warn("[react-xlsx] workbook.calculate() trapped during recalculation", err);
 diff --git a/packages/react-xlsx/src/types.ts b/packages/react-xlsx/src/types.ts
-index 16b5350..ed74c1b 100644
+index 16b5350..9ca33b2 100644
 --- a/packages/react-xlsx/src/types.ts
 +++ b/packages/react-xlsx/src/types.ts
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
 +import type { DataNavigationRequest } from "./data-navigation";
++import type { ExternalFnValues } from "./external-fn";
  import type * as React from "react";
  import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
  
-@@ -963,6 +964,11 @@ export interface UseXlsxViewerControllerOptions {
+@@ -963,6 +965,11 @@ export interface UseXlsxViewerControllerOptions {
     * @default false
     */
    allowResizeInReadOnly?: boolean;
@@ -1494,7 +1553,20 @@ index 16b5350..ed74c1b 100644
    /**
     * Defers loading until `continueDeferredLoad()` is called when the file is larger than this byte threshold.
     * Set to `0` to parse immediately.
-@@ -1176,11 +1182,19 @@ export interface XlsxViewerController {
+@@ -1109,7 +1116,11 @@ export interface XlsxViewerController {
+   /** Removes a Duke-supported control by its worksheet-local index. */
+   removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
+   readOnly: boolean;
+-  recalculate: () => void;
++  /** Recalculates formulas, optionally resolving external add-in calls. */
++  recalculate: {
++    (): void;
++    (externalFnValues: ExternalFnValues): void;
++  };
+   revision: number;
+   resetZoom: () => void;
+   resizeChartBy: (
+@@ -1176,11 +1187,19 @@ export interface XlsxViewerController {
     */
    setRangeStyle: (range: XlsxCellRange, style: XlsxCellStyleInput) => void;
    setZoomScale: (zoomScale: number) => void;
@@ -1516,7 +1588,7 @@ index 16b5350..ed74c1b 100644
    setActiveSheetIndex: (index: number) => void;
    setActiveTabIndex: (index: number) => void;
    selectedChart: XlsxChart | null;
-@@ -1233,9 +1247,11 @@ export interface XlsxViewerSelection {
+@@ -1233,9 +1252,11 @@ export interface XlsxViewerSelection {
    activeCellAddress: string | null;
    clearSelection: () => void;
    selectedRangeAddress: string | null;
@@ -1530,7 +1602,7 @@ index 16b5350..ed74c1b 100644
  }
  
  export interface XlsxViewerZoom {
-@@ -1578,6 +1594,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
+@@ -1578,6 +1599,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
     * ```
     */
    getCellStyle?: (context: XlsxCellStyleContext) => React.CSSProperties | null | undefined;

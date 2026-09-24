@@ -11,6 +11,13 @@ interface DataNavigationRequest {
     maxCol: number;
 }
 
+/** Serializable external-call values cross the worker boundary; missing entries preserve cached workbook values. */
+/** Canonical key for one external call. `args` are the engine's stringified argument values
+ *  (CCH args are strings/numbers), matching how the host parsed them from the formula text. */
+declare function externalCallKey(name: string, args: readonly string[]): string;
+/** Serializable map handed to the controller: `externalCallKey(name, args)` -> resolved value. */
+type ExternalFnValues = Record<string, string | number>;
+
 interface XlsxThemePalette {
     colorsByIndex: Record<number, string>;
     majorLatinFont?: string;
@@ -1100,7 +1107,11 @@ interface XlsxViewerController {
     /** Removes a Duke-supported control by its worksheet-local index. */
     removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
     readOnly: boolean;
-    recalculate: () => void;
+    /** Recalculates formulas, optionally resolving external add-in calls. */
+    recalculate: {
+        (): void;
+        (externalFnValues: ExternalFnValues): void;
+    };
     revision: number;
     resetZoom: () => void;
     resizeChartBy: (id: string, handle: XlsxImageResizeHandlePosition, deltaX: number, deltaY: number) => void;
@@ -1678,13 +1689,6 @@ declare function useXlsxViewerController(options: UseXlsxViewerControllerOptions
 type XlsxWasmSource = string | URL | Request | Response | BufferSource | WebAssembly.Module;
 declare function setWasmSource(source: XlsxWasmSource): void;
 declare function initWasm(source?: XlsxWasmSource): Promise<typeof _dukelib_sheets_wasm>;
-
-/** Serializable external-call values cross the worker boundary; missing entries preserve cached workbook values. */
-/** Canonical key for one external call. `args` are the engine's stringified argument values
- *  (CCH args are strings/numbers), matching how the host parsed them from the formula text. */
-declare function externalCallKey(name: string, args: readonly string[]): string;
-/** Serializable map handed to the controller: `externalCallKey(name, args)` -> resolved value. */
-type ExternalFnValues = Record<string, string | number>;
 
 declare function XlsxViewerProvider({ children, controller, isDark, ...options }: XlsxViewerProviderProps): react_jsx_runtime.JSX.Element;
 declare function useXlsxViewer(): XlsxViewerController;

@@ -6716,9 +6716,9 @@ function safeCalculate(workbook, options = {}) {
     return { workbook, calculated: false, skipReason: "calculate-trapped" };
   }
 }
-function tryRecalculate(workbook) {
+function tryRecalculate(workbook, calcOptions) {
   try {
-    workbook.calculate();
+    workbook.calculate(calcOptions);
     return { calculated: true, error: null };
   } catch (err) {
     console.warn("[react-xlsx] workbook.calculate() trapped during recalculation", err);
@@ -10013,11 +10013,12 @@ function useXlsxViewerController(options) {
     const activeSheetName = activeSheet?.name ?? "sheet";
     downloadText(workbook.saveCsvString(), `${fileStem(displayFileName)}-${activeSheetName}.csv`, CSV_MIME_TYPE);
   }, [activeSheet?.name, displayFileName, workbook]);
-  const recalculate = React.useCallback(() => {
+  const recalculate = React.useCallback((externalFnValues2) => {
     if (!workbook) {
       return;
     }
-    const result = tryRecalculate(workbook);
+    const calcOptions = externalFnValues2 ? { externalFnFn: makeExternalFn(externalFnValues2) } : void 0;
+    const result = tryRecalculate(workbook, calcOptions);
     if (result.calculated) {
       refreshWorkbookState(workbook);
       return;
