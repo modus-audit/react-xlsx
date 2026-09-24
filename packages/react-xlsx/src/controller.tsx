@@ -3784,12 +3784,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     downloadText(workbook.saveCsvString(), `${fileStem(displayFileName)}-${activeSheetName}.csv`, CSV_MIME_TYPE);
   }, [activeSheet?.name, displayFileName, workbook]);
 
-  const recalculate = React.useCallback(() => {
+  const recalculate = React.useCallback((externalFnValues?: ExternalFnValues) => {
     if (!workbook) {
       return;
     }
 
-    const result = tryRecalculate(workbook);
+    const calcOptions = externalFnValues ? { externalFnFn: makeExternalFn(externalFnValues) } : undefined;
+    const result = tryRecalculate(workbook, calcOptions);
     if (result.calculated) {
       refreshWorkbookState(workbook);
       return;
