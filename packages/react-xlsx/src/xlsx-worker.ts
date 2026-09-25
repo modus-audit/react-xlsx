@@ -11,9 +11,14 @@ import {
   resolveWorksheetDefaultRowHeightPixels,
   resolveWorksheetMergeMetadata
 } from "./images";
-import { type ExternalFnValues, makeExternalFn } from "./external-fn";
+import { externalCalcOptions, type ExternalFnValues } from "./external-fn";
 import type { WorkbookStructureAssets } from "./images";
-import { safeCalculate } from "./safe-calculate";
+import {
+  AUTO_CALCULATE_FORMULA_THRESHOLD,
+  countWorkbookFormulas,
+  safeCalculate,
+  type SafeCalculateSkipReason
+} from "./safe-calculate";
 import { getSheetsWasmModule, setWasmSource, type WorkerWasmSource } from "./wasm";
 import type {
   XlsxChart,
@@ -34,7 +39,6 @@ import type {
 const DEFAULT_ROW_HEIGHT = 24;
 const DEFAULT_COL_WIDTH = 80;
 const DEFAULT_ZOOM_SCALE = 100;
-const FORMULA_COUNT_THRESHOLD = 1000;
 const FAST_STRUCTURE_PARSE_THRESHOLD_BYTES = 5 * 1024 * 1024;
 const MIN_ROW_HEIGHT_PX = 16;
 
@@ -84,6 +88,11 @@ type WorkerRequest =
     }
   | {
       id: number;
+      type: "recalculate";
+      payload: { externalFnValues?: ExternalFnValues };
+    }
+  | {
+      id: number;
       type: "getCellSnapshot";
       payload: {
         workbookSheetIndex: number;
@@ -127,6 +136,7 @@ type WorkerSuccessResponse = {
         displayValue: string;
         formula: string;
       }
+    | { calculated: boolean; skipReason: SafeCalculateSkipReason | null }
     | { row: number; col: number }
     | unknown[]
     | null;
@@ -141,6 +151,7 @@ type WorkerErrorResponse = {
 type WorkerResponse = WorkerSuccessResponse | WorkerErrorResponse;
 
 let workbook: Workbook | null = null;
+let workbookSourceBytes: Uint8Array | null = null;
 let chartsByWorkbookSheetIndex: XlsxChart[][] = [];
 let chartsheets: XlsxChartsheet[] = [];
 let formControlsByWorkbookSheetIndex: XlsxFormControl[][] = [];
@@ -805,26 +816,19 @@ async function loadWorkbook(
   const bytes = new Uint8Array(buffer);
   const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
   let activeWorkbook = wasmModule.Workbook.fromBytes(bytes);
-  let totalFormulas = 0;
-  for (let index = 0; index < activeWorkbook.sheetCount; index += 1) {
-    totalFormulas += activeWorkbook.getSheet(index).formulaCount;
-  }
+  const totalFormulas = countWorkbookFormulas(activeWorkbook);
 
-  const calcOptions = externalFnValues
-    ? { externalFnFn: makeExternalFn(externalFnValues) }
-    : undefined;
-
-  if (totalFormulas <= FORMULA_COUNT_THRESHOLD) {
+  if (totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD) {
     const result = safeCalculate(activeWorkbook, {
       reparse: () => wasmModule.Workbook.fromBytes(bytes),
-      calcOptions
+      calcOptions: externalCalcOptions(externalFnValues)
     });
     activeWorkbook = result.workbook;
   }
 
   const nextWorkbook = activeWorkbook;
   const shouldUseFastStructureParse =
-    bytes.byteLength >= FAST_STRUCTURE_PARSE_THRESHOLD_BYTES && totalFormulas <= FORMULA_COUNT_THRESHOLD;
+    bytes.byteLength >= FAST_STRUCTURE_PARSE_THRESHOLD_BYTES && totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD;
   const structureAssets = effectiveSkipXmlParsing || shouldUseFastStructureParse || !canParseXmlInWorker()
     ? null
     : parseWorkbookStructureAssets(bytes, {
@@ -841,6 +845,7 @@ async function loadWorkbook(
   );
   const sheetLayoutStates = structureAssets ? undefined : parseWorkerSheetLayoutAssets(bytes, nextWorkbook.sheetCount);
   workbook = nextWorkbook;
+  workbookSourceBytes = bytes;
   sheets = buildSheetList(nextWorkbook, structureAssets, sheetLayoutStates, showHiddenSheets);
   tablesByWorkbookSheetIndex = Array.from({ length: nextWorkbook.sheetCount }, (_, workbookSheetIndex) =>
     mapWorksheetTables(
@@ -882,11 +887,8 @@ async function parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHidd
   const bytes = new Uint8Array(buffer);
   const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
   let activeWorkbook = wasmModule.Workbook.fromBytes(bytes);
-  let totalFormulas = 0;
-  for (let index = 0; index < activeWorkbook.sheetCount; index += 1) {
-    totalFormulas += activeWorkbook.getSheet(index).formulaCount;
-  }
-  if (totalFormulas <= FORMULA_COUNT_THRESHOLD) {
+  const totalFormulas = countWorkbookFormulas(activeWorkbook);
+  if (totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD) {
     const result = safeCalculate(activeWorkbook, {
       reparse: () => wasmModule.Workbook.fromBytes(bytes)
     });
@@ -911,6 +913,21 @@ async function parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHidd
   };
 }
 
+async function recalculateWorkbook(externalFnValues?: ExternalFnValues) {
+  if (!workbook) {
+    return { calculated: false, skipReason: null };
+  }
+
+  const wasmModule = await getSheetsWasmModule();
+  const sourceBytes = workbookSourceBytes;
+  const result = safeCalculate(workbook, {
+    calcOptions: externalCalcOptions(externalFnValues),
+    reparse: sourceBytes ? () => wasmModule.Workbook.fromBytes(sourceBytes) : undefined
+  });
+  workbook = result.workbook;
+  return { calculated: result.calculated, skipReason: result.skipReason };
+}
+
 function respond(message: WorkerResponse) {
   self.postMessage(message);
 }
@@ -933,6 +950,9 @@ async function handleMessage(message: WorkerRequest) {
         setWasmSource(message.payload.wasmSource);
       }
       return parseCharts(message.payload.buffer, message.payload.skipXmlParsing, message.payload.showHiddenSheets);
+    }
+    case "recalculate": {
+      return recalculateWorkbook(message.payload.externalFnValues);
     }
     case "getCellSnapshot": {
       if (!workbook) {

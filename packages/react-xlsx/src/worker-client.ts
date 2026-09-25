@@ -1,4 +1,6 @@
 import type { DataNavigationRequest } from "./data-navigation";
+import type { ExternalFnValues } from "./external-fn";
+import type { SafeCalculateSkipReason } from "./safe-calculate";
 import type { XlsxChart, XlsxChartsheet, XlsxFormControl, XlsxSheetData, XlsxTable, XlsxWorkbookTab } from "./types";
 import { getConfiguredWorkerWasmSource, type WorkerWasmSource } from "./wasm";
 
@@ -11,8 +13,13 @@ type WorkerMessage =
         showHiddenSheets?: boolean;
         skipXmlParsing?: boolean;
         wasmSource?: WorkerWasmSource;
-        externalFnValues?: Record<string, string | number>;
+        externalFnValues?: ExternalFnValues;
       };
+    }
+  | {
+      id: number;
+      type: "recalculate";
+      payload: { externalFnValues?: ExternalFnValues };
     }
   | {
       id: number;
@@ -50,6 +57,7 @@ type WorkerMessage =
 
 type WorkerSuccessMessage =
   | { id: number; success: true; result: { row: number; col: number } }
+  | { id: number; success: true; result: { calculated: boolean; skipReason: SafeCalculateSkipReason | null } }
   | {
       id: number;
       success: true;
@@ -164,6 +172,14 @@ export class XlsxWorkerClient {
       },
       type: "load"
     }, [workerBuffer]);
+  }
+
+  recalculate(externalFnValues?: ExternalFnValues) {
+    return this.request<{ calculated: boolean; skipReason: SafeCalculateSkipReason | null }>({
+      id: 0,
+      payload: { externalFnValues },
+      type: "recalculate"
+    });
   }
 
   getCellSnapshot(workbookSheetIndex: number, row: number, col: number) {

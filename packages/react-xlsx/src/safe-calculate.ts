@@ -1,4 +1,11 @@
 import type { Workbook } from "@dukelib/sheets-wasm";
+import type { ExternalCalcOptions } from "./external-fn.ts";
+
+/** Automatic load-time calculation stays conservative to keep large workbooks responsive. */
+export const AUTO_CALCULATE_FORMULA_THRESHOLD = 1_000;
+
+/** The current engine traps at this formula count. Never enter `calculate()` at or above it. */
+export const CALCULATE_FORMULA_HARD_LIMIT = 5_000;
 
 const SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
 
@@ -53,7 +60,7 @@ function hasUnresolvedSheetReferences(workbook: Workbook): boolean {
   return false;
 }
 
-export type SafeCalculateSkipReason = "unresolved-sheet-refs" | "calculate-trapped";
+export type SafeCalculateSkipReason = "formula-limit" | "unresolved-sheet-refs" | "calculate-trapped";
 
 export type SafeCalculateResult = {
   workbook: Workbook;
@@ -63,13 +70,26 @@ export type SafeCalculateResult = {
 
 export type SafeCalculateOptions = {
   reparse?: () => Workbook;
-  calcOptions?: unknown;
+  calcOptions?: ExternalCalcOptions;
 };
+
+export function countWorkbookFormulas(workbook: Workbook): number {
+  let total = 0;
+  for (let index = 0; index < workbook.sheetCount; index += 1) {
+    total += workbook.getSheet(index).formulaCount;
+  }
+  return total;
+}
 
 // Pre-scans for formulas referencing missing sheets (which cause the Rust
 // engine to panic into a wasm `unreachable` trap that poisons the Workbook
 // instance). On trap, `reparse` is used to return a fresh usable instance.
 export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions = {}): SafeCalculateResult {
+  // This guard must run before `calculate()`: catching the WASM trap is too late because the
+  // workbook instance is poisoned and later reads fail as well.
+  if (countWorkbookFormulas(workbook) >= CALCULATE_FORMULA_HARD_LIMIT) {
+    return { workbook, calculated: false, skipReason: "formula-limit" };
+  }
   if (hasUnresolvedSheetReferences(workbook)) {
     return { workbook, calculated: false, skipReason: "unresolved-sheet-refs" };
   }
@@ -86,18 +106,5 @@ export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions 
       }
     }
     return { workbook, calculated: false, skipReason: "calculate-trapped" };
-  }
-}
-
-export function tryRecalculate(
-  workbook: Workbook,
-  calcOptions?: unknown,
-): { calculated: boolean; error: unknown } {
-  try {
-    workbook.calculate(calcOptions);
-    return { calculated: true, error: null };
-  } catch (err) {
-    console.warn("[react-xlsx] workbook.calculate() trapped during recalculation", err);
-    return { calculated: false, error: err };
   }
 }
