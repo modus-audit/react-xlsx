@@ -6647,8 +6647,13 @@ function makeExternalFn(values) {
     return value === void 0 ? null : value;
   };
 }
+function externalCalcOptions(values) {
+  return values ? { externalFnFn: makeExternalFn(values) } : void 0;
+}
 
 // src/safe-calculate.ts
+var AUTO_CALCULATE_FORMULA_THRESHOLD = 1e3;
+var CALCULATE_FORMULA_HARD_LIMIT = 5e3;
 var SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
 function collectReferencedSheetNames(workbook) {
   const referenced = /* @__PURE__ */ new Set();
@@ -6697,7 +6702,17 @@ function hasUnresolvedSheetReferences(workbook) {
   }
   return false;
 }
+function countWorkbookFormulas(workbook) {
+  let total = 0;
+  for (let index = 0; index < workbook.sheetCount; index += 1) {
+    total += workbook.getSheet(index).formulaCount;
+  }
+  return total;
+}
 function safeCalculate(workbook, options = {}) {
+  if (countWorkbookFormulas(workbook) >= CALCULATE_FORMULA_HARD_LIMIT) {
+    return { workbook, calculated: false, skipReason: "formula-limit" };
+  }
   if (hasUnresolvedSheetReferences(workbook)) {
     return { workbook, calculated: false, skipReason: "unresolved-sheet-refs" };
   }
@@ -6714,15 +6729,6 @@ function safeCalculate(workbook, options = {}) {
       }
     }
     return { workbook, calculated: false, skipReason: "calculate-trapped" };
-  }
-}
-function tryRecalculate(workbook, calcOptions) {
-  try {
-    workbook.calculate(calcOptions);
-    return { calculated: true, error: null };
-  } catch (err) {
-    console.warn("[react-xlsx] workbook.calculate() trapped during recalculation", err);
-    return { calculated: false, error: err };
   }
 }
 
@@ -6834,6 +6840,13 @@ var XlsxWorkerClient = class {
       },
       type: "load"
     }, [workerBuffer]);
+  }
+  recalculate(externalFnValues) {
+    return this.request({
+      id: 0,
+      payload: { externalFnValues },
+      type: "recalculate"
+    });
   }
   getCellSnapshot(workbookSheetIndex, row, col) {
     return this.request({
@@ -7104,7 +7117,6 @@ function normalizeWorkbookArrayBuffer(buffer) {
 }
 
 // src/controller.tsx
-var FORMULA_COUNT_THRESHOLD = 1e3;
 var DEFAULT_ROW_HEIGHT = 24;
 var DEFAULT_COL_WIDTH = 80;
 var XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -8075,17 +8087,13 @@ async function resolveWorkbookBuffer({ file, src }, signal) {
 async function parseWorkbookBuffer(buffer, externalFnValues) {
   const wasmModule = await getSheetsWasmModule();
   const initialWorkbook = wasmModule.Workbook.fromBytes(new Uint8Array(buffer));
-  let totalFormulas = 0;
-  for (let index = 0; index < initialWorkbook.sheetCount; index += 1) {
-    totalFormulas += initialWorkbook.getSheet(index).formulaCount;
-  }
-  const shouldAutoCalculate = totalFormulas <= FORMULA_COUNT_THRESHOLD;
+  const shouldAutoCalculate = countWorkbookFormulas(initialWorkbook) <= AUTO_CALCULATE_FORMULA_THRESHOLD;
   if (!shouldAutoCalculate) {
     return { shouldAutoCalculate, workbook: initialWorkbook };
   }
   const result = safeCalculate(initialWorkbook, {
     reparse: () => wasmModule.Workbook.fromBytes(new Uint8Array(buffer)),
-    calcOptions: externalFnValues ? { externalFnFn: makeExternalFn(externalFnValues) } : void 0
+    calcOptions: externalCalcOptions(externalFnValues)
   });
   return {
     shouldAutoCalculate: result.calculated,
@@ -9168,7 +9176,7 @@ function useXlsxViewerController(options) {
     if (!shouldAutoCalculate) {
       return;
     }
-    const result = tryRecalculate(targetWorkbook);
+    const result = safeCalculate(targetWorkbook);
     if (!result.calculated) {
       setShouldAutoCalculate(false);
     }
@@ -10014,17 +10022,32 @@ function useXlsxViewerController(options) {
     downloadText(workbook.saveCsvString(), `${fileStem(displayFileName)}-${activeSheetName}.csv`, CSV_MIME_TYPE);
   }, [activeSheet?.name, displayFileName, workbook]);
   const recalculate = React.useCallback((externalFnValues2) => {
+    if (isWorkerBacked) {
+      const workerClient = getWorkerClient();
+      void workerClient.recalculate(externalFnValues2).then((result2) => {
+        if (!result2.calculated || workerClientRef.current !== workerClient) {
+          return;
+        }
+        workerCellSnapshotCacheRef.current.clear();
+        setWorkerCellSnapshotRevision((current) => current + 1);
+        setRevision((current) => current + 1);
+      }).catch((recalculateError) => {
+        if (!isAbortError(recalculateError)) {
+          console.warn("[react-xlsx] worker recalculation failed", recalculateError);
+        }
+      });
+      return;
+    }
     if (!workbook) {
       return;
     }
-    const calcOptions = externalFnValues2 ? { externalFnFn: makeExternalFn(externalFnValues2) } : void 0;
-    const result = tryRecalculate(workbook, calcOptions);
+    const result = safeCalculate(workbook, { calcOptions: externalCalcOptions(externalFnValues2) });
     if (result.calculated) {
       refreshWorkbookState(workbook);
       return;
     }
     setShouldAutoCalculate(false);
-  }, [refreshWorkbookState, workbook]);
+  }, [getWorkerClient, isWorkerBacked, refreshWorkbookState, workbook]);
   const applyReadOnlyResizeOverride = React.useCallback((axis, actualIndex, sizePx) => {
     if (!activeSheet) {
       return;

@@ -1108,10 +1108,7 @@ interface XlsxViewerController {
     removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
     readOnly: boolean;
     /** Recalculates formulas, optionally resolving external add-in calls. */
-    recalculate: {
-        (): void;
-        (externalFnValues: ExternalFnValues): void;
-    };
+    recalculate: (externalFnValues?: ExternalFnValues) => void;
     revision: number;
     resetZoom: () => void;
     resizeChartBy: (id: string, handle: XlsxImageResizeHandlePosition, deltaX: number, deltaY: number) => void;

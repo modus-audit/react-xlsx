@@ -1,9 +1,9 @@
 diff --git a/MODUS_PATCHES.md b/MODUS_PATCHES.md
 new file mode 100644
-index 0000000..baefacd
+index 0000000..877d072
 --- /dev/null
 +++ b/MODUS_PATCHES.md
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,38 @@
 +# Modus React XLSX viewer
 +
 +Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.1` WASM engine.
@@ -11,7 +11,8 @@ index 0000000..baefacd
 +Preserved behavior:
 +
 +- Serializable external add-in values reach the engine in normal, worker, and deferred loads. Formula text remains intact; unresolved calls retain cached values.
-+- `recalculate` accepts updated external add-in values without reloading the workbook.
++- `recalculate` accepts updated external add-in values without reloading the workbook, including
++  worker-backed read-only workbooks. Calculation skips the engine's known 5,000-formula trap.
 +- `revealCell` selects and centers off-screen search results.
 +- `selections`, append/toggle operations, and canvas Ctrl/Cmd drag support non-contiguous selections. Re-adding an existing range preserves the other regions.
 +- Conditional formatting retains relative references, comparison/ABS/AND expressions, text and blank rules, and cached numeric fallback. These extend upstream's styled rules and retain its priority handling.
@@ -30,7 +31,7 @@ index 0000000..baefacd
 +
 +Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 +
-+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.5` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
++After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.6` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 +
 +The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 +
@@ -41,6 +42,28 @@ index 0000000..baefacd
 +The `showFormulas` rendering prop displays formula text in both DOM and canvas cells without changing calculated values, clipboard values, exports, or aggregates. `getCellStyle` now also applies to blank worker cells, allowing precedents that point at blank cells to be highlighted.
 +
 +The consuming app owns focus-scoped Find, shortcut bindings for formula view and precedents, and literal A1-reference highlighting. No engine API or workbook mutation is required. Named, table, dynamic, external, and 3D references are explicitly reported as incomplete by the app.
+diff --git a/apps/playground/src/App.tsx b/apps/playground/src/App.tsx
+index 924aba4..25f14a5 100644
+--- a/apps/playground/src/App.tsx
++++ b/apps/playground/src/App.tsx
+@@ -848,7 +848,7 @@ function WorkbookToolbar({
+           {activeRibbonTab === "Formulas" ? (
+             <>
+               <RibbonGroup label="Calculation">
+-                <Button disabled={!canExport} onClick={recalculate} size="sm" variant="outline">
++                <Button disabled={!canExport} onClick={() => recalculate()} size="sm" variant="outline">
+                   <PlaygroundIcon name="refresh" />
+                   Recalc
+                 </Button>
+@@ -881,7 +881,7 @@ function WorkbookToolbar({
+                 </div>
+               </RibbonGroup>
+               <RibbonGroup label="Refresh">
+-                <Button disabled={!canExport} onClick={recalculate} size="sm" variant="outline">
++                <Button disabled={!canExport} onClick={() => recalculate()} size="sm" variant="outline">
+                   <PlaygroundIcon name="refresh" />
+                   Recalc
+                 </Button>
 diff --git a/packages/react-xlsx/build/atlas-json.test.ts b/packages/react-xlsx/build/atlas-json.test.ts
 new file mode 100644
 index 0000000..a11eaa6
@@ -136,14 +159,14 @@ index 0000000..49eac7a
 +  };
 +}
 diff --git a/packages/react-xlsx/package.json b/packages/react-xlsx/package.json
-index 6455584..f20865e 100644
+index 6455584..9ffa5cc 100644
 --- a/packages/react-xlsx/package.json
 +++ b/packages/react-xlsx/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@extend-ai/react-xlsx",
 -  "version": "0.16.4",
-+  "version": "0.16.4-modus.5",
++  "version": "0.16.4-modus.6",
    "description": "React components and hooks for viewing XLSX workbooks",
    "license": "MIT",
    "keywords": [
@@ -1046,7 +1069,7 @@ index 20d313c..fb7a890 100644
  }
  
 diff --git a/packages/react-xlsx/src/controller.tsx b/packages/react-xlsx/src/controller.tsx
-index 23933bc..9906812 100644
+index 23933bc..b57882e 100644
 --- a/packages/react-xlsx/src/controller.tsx
 +++ b/packages/react-xlsx/src/controller.tsx
 @@ -1,3 +1,4 @@
@@ -1054,15 +1077,25 @@ index 23933bc..9906812 100644
  import * as React from "react";
  import type {
    DrawingAnchor as DukeDrawingAnchor,
-@@ -46,6 +47,7 @@ import {
+@@ -46,7 +47,8 @@ import {
    type WorkbookImageAssets,
    type WorkbookImageSheetOrigin
  } from "./images";
-+import { type ExternalFnValues, makeExternalFn } from "./external-fn";
- import { safeCalculate, tryRecalculate } from "./safe-calculate";
+-import { safeCalculate, tryRecalculate } from "./safe-calculate";
++import { externalCalcOptions, type ExternalFnValues } from "./external-fn";
++import { AUTO_CALCULATE_FORMULA_THRESHOLD, countWorkbookFormulas, safeCalculate } from "./safe-calculate";
  import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
  import { XlsxWorkerClient } from "./worker-client";
-@@ -1085,6 +1087,17 @@ function normalizeRange(range: XlsxCellRange): XlsxCellRange {
+ import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
+@@ -85,7 +87,6 @@ import type {
+   XlsxWorkbookTab
+ } from "./types";
+ 
+-const FORMULA_COUNT_THRESHOLD = 1000;
+ const DEFAULT_ROW_HEIGHT = 24;
+ const DEFAULT_COL_WIDTH = 80;
+ const XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+@@ -1085,6 +1086,17 @@ function normalizeRange(range: XlsxCellRange): XlsxCellRange {
    };
  }
  
@@ -1080,7 +1113,7 @@ index 23933bc..9906812 100644
  function rangeToA1(range: XlsxCellRange): string {
    const normalized = normalizeRange(range);
    const start = cellAddressToA1(normalized.start);
-@@ -1439,7 +1452,10 @@ async function resolveWorkbookBuffer(
+@@ -1439,25 +1451,23 @@ async function resolveWorkbookBuffer(
    return buffer;
  }
  
@@ -1092,17 +1125,28 @@ index 23933bc..9906812 100644
    shouldAutoCalculate: boolean;
    workbook: Workbook;
  }> {
-@@ -1457,7 +1473,8 @@ async function parseWorkbookBuffer(buffer: ArrayBuffer): Promise<{
+   const wasmModule = await getSheetsWasmModule();
+   const initialWorkbook = wasmModule.Workbook.fromBytes(new Uint8Array(buffer));
+-  let totalFormulas = 0;
+-
+-  for (let index = 0; index < initialWorkbook.sheetCount; index += 1) {
+-    totalFormulas += initialWorkbook.getSheet(index).formulaCount;
+-  }
+-
+-  const shouldAutoCalculate = totalFormulas <= FORMULA_COUNT_THRESHOLD;
++  const shouldAutoCalculate = countWorkbookFormulas(initialWorkbook) <= AUTO_CALCULATE_FORMULA_THRESHOLD;
+   if (!shouldAutoCalculate) {
+     return { shouldAutoCalculate, workbook: initialWorkbook };
    }
  
    const result = safeCalculate(initialWorkbook, {
 -    reparse: () => wasmModule.Workbook.fromBytes(new Uint8Array(buffer))
 +    reparse: () => wasmModule.Workbook.fromBytes(new Uint8Array(buffer)),
-+    calcOptions: externalFnValues ? { externalFnFn: makeExternalFn(externalFnValues) } : undefined
++    calcOptions: externalCalcOptions(externalFnValues)
    });
  
    return {
-@@ -1871,6 +1888,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -1871,6 +1881,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    const {
      allowResizeInReadOnly = false,
      deferLoadingAboveBytes = DEFAULT_DEFER_LOADING_ABOVE_BYTES,
@@ -1110,7 +1154,7 @@ index 23933bc..9906812 100644
      file,
      fileName,
      maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES,
-@@ -1898,6 +1916,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -1898,6 +1909,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    const [zoomScaleOverridesByTabId, setZoomScaleOverridesByTabId] = React.useState<Record<string, number>>({});
    const [activeCell, setActiveCell] = React.useState<XlsxCellAddress | null>(null);
    const [selection, setSelection] = React.useState<XlsxCellRange | null>(null);
@@ -1125,7 +1169,7 @@ index 23933bc..9906812 100644
    const [selectedChartId, setSelectedChartId] = React.useState<string | null>(null);
    const [selectedChartElement, setSelectedChartElement] = React.useState<XlsxChartElementSelection | null>(null);
    const [selectedImageId, setSelectedImageId] = React.useState<string | null>(null);
-@@ -2170,7 +2196,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2170,7 +2189,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    }, [getWorkerClient, hasIncompleteWorkerChartSnapshot, setChartAssets, showHiddenSheets, skipXmlParsing, workerSupported]);
  
    const loadWorkbookOnMainThread = React.useCallback(async (buffer: ArrayBuffer) => {
@@ -1134,7 +1178,7 @@ index 23933bc..9906812 100644
      const bytes = new Uint8Array(buffer);
      const nextImageAssets = loadWorkbookImageAssets(
        bytes,
-@@ -2181,7 +2207,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2181,7 +2200,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        imageAssets: nextImageAssets,
        parsedWorkbook: nextParsedWorkbook
      };
@@ -1143,7 +1187,7 @@ index 23933bc..9906812 100644
  
    const refreshWorkbookState = React.useCallback((targetWorkbook: Workbook) => {
      const currentFormControls = imageAssetsRef.current?.formControlsByWorkbookSheetIndex ?? [];
-@@ -2320,7 +2346,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2320,7 +2339,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
          if (shouldUseWorkerForLoad) {
            try {
@@ -1152,7 +1196,7 @@ index 23933bc..9906812 100644
              if (!isCurrent || abortController.signal.aborted) {
                return;
              }
-@@ -2580,7 +2606,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2580,7 +2599,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(new Uint8Array(deferredBuffer), skipXmlParsing);
  
      if (shouldUseWorkerForLoad) {
@@ -1161,7 +1205,7 @@ index 23933bc..9906812 100644
          .then((snapshot) => {
            if (!effectiveSkipXmlParsing && hasIncompleteWorkerChartSnapshot(snapshot)) {
              throw new Error("Worker chart payload incomplete");
-@@ -2656,7 +2682,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2656,7 +2675,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        return;
      }
  
@@ -1170,7 +1214,16 @@ index 23933bc..9906812 100644
        .then((nextParsedWorkbook) => {
          const bytes = new Uint8Array(deferredBuffer);
          const nextImageAssets = loadWorkbookImageAssets(
-@@ -2768,6 +2794,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2719,7 +2738,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+       return;
+     }
+ 
+-    const result = tryRecalculate(targetWorkbook);
++    const result = safeCalculate(targetWorkbook);
+     if (!result.calculated) {
+       setShouldAutoCalculate(false);
+     }
+@@ -2768,6 +2787,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      return getWorkerClient().getCellSnapshot(workbookSheetIndex, row, col);
    }, [getWorkerClient, isWorkerBacked]);
  
@@ -1187,23 +1240,51 @@ index 23933bc..9906812 100644
    const getRowsBatchAsync = React.useCallback((workbookSheetIndex: number, startRow: number, rowCount: number) => {
      if (!isWorkerBacked) {
        return Promise.resolve(null);
-@@ -3748,12 +3784,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3748,21 +3777,38 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      downloadText(workbook.saveCsvString(), `${fileStem(displayFileName)}-${activeSheetName}.csv`, CSV_MIME_TYPE);
    }, [activeSheet?.name, displayFileName, workbook]);
  
 -  const recalculate = React.useCallback(() => {
 +  const recalculate = React.useCallback((externalFnValues?: ExternalFnValues) => {
++    if (isWorkerBacked) {
++      const workerClient = getWorkerClient();
++      void workerClient.recalculate(externalFnValues)
++        .then((result) => {
++          if (!result.calculated || workerClientRef.current !== workerClient) {
++            return;
++          }
++          workerCellSnapshotCacheRef.current.clear();
++          setWorkerCellSnapshotRevision((current) => current + 1);
++          setRevision((current) => current + 1);
++        })
++        .catch((recalculateError: unknown) => {
++          if (!isAbortError(recalculateError)) {
++            console.warn("[react-xlsx] worker recalculation failed", recalculateError);
++          }
++        });
++      return;
++    }
++
      if (!workbook) {
        return;
      }
  
 -    const result = tryRecalculate(workbook);
-+    const calcOptions = externalFnValues ? { externalFnFn: makeExternalFn(externalFnValues) } : undefined;
-+    const result = tryRecalculate(workbook, calcOptions);
++    const result = safeCalculate(workbook, { calcOptions: externalCalcOptions(externalFnValues) });
      if (result.calculated) {
        refreshWorkbookState(workbook);
        return;
-@@ -4229,29 +4266,84 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     }
+ 
+-    // Trap poisons the Workbook pointer; skip refreshWorkbookState so we
+-    // don't crash reading cells from it.
+     setShouldAutoCalculate(false);
+-  }, [refreshWorkbookState, workbook]);
++  }, [getWorkerClient, isWorkerBacked, refreshWorkbookState, workbook]);
+ 
+   const applyReadOnlyResizeOverride = React.useCallback((
+     axis: "column" | "row",
+@@ -4229,29 +4275,84 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      return true;
    }, [getChartById, readOnly, updateChart, workbook]);
  
@@ -1300,7 +1381,7 @@ index 23933bc..9906812 100644
  
    const clearSelection = React.useCallback(() => {
      selectionAnchorRef.current = null;
-@@ -5035,11 +5127,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5035,11 +5136,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        selectedRangeAddress,
        selectedValue,
        selectCell,
@@ -1316,7 +1397,7 @@ index 23933bc..9906812 100644
        setActiveSheetIndex,
        setActiveTabIndex,
        setSelectedCellFormula,
-@@ -5153,11 +5249,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5153,11 +5258,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        selectedRangeAddress,
        selectedValue,
        selectCell,
@@ -1430,10 +1511,10 @@ index 0000000..7896efb
 +}
 diff --git a/packages/react-xlsx/src/external-fn.ts b/packages/react-xlsx/src/external-fn.ts
 new file mode 100644
-index 0000000..5cc2fb9
+index 0000000..17c353f
 --- /dev/null
 +++ b/packages/react-xlsx/src/external-fn.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,32 @@
 +/** Serializable external-call values cross the worker boundary; missing entries preserve cached workbook values. */
 +
 +const KEY_SEP = String.fromCharCode(1);
@@ -1447,6 +1528,10 @@ index 0000000..5cc2fb9
 +/** Serializable map handed to the controller: `externalCallKey(name, args)` -> resolved value. */
 +export type ExternalFnValues = Record<string, string | number>;
 +
++export type ExternalCalcOptions = {
++  externalFnFn: (name: string, args: string[]) => string | number | null;
++};
++
 +/** Rebuild the engine callback from the serializable map (inside the worker). Returns `null` for
 + *  unmapped calls so the engine preserves the cell's cached value. */
 +export function makeExternalFn(
@@ -1456,6 +1541,11 @@ index 0000000..5cc2fb9
 +    const value = values[externalCallKey(name, args)];
 +    return value === undefined ? null : value;
 +  };
++}
++
++/** Builds the calculation options shared by main-thread, worker, and deferred recalculation paths. */
++export function externalCalcOptions(values?: ExternalFnValues): ExternalCalcOptions | undefined {
++  return values ? { externalFnFn: makeExternalFn(values) } : undefined;
 +}
 diff --git a/packages/react-xlsx/src/index.ts b/packages/react-xlsx/src/index.ts
 index f1d5da5..67b72d0 100644
@@ -1470,44 +1560,121 @@ index f1d5da5..67b72d0 100644
    useXlsxViewerCharts,
 diff --git a/packages/react-xlsx/src/safe-calculate.test.ts b/packages/react-xlsx/src/safe-calculate.test.ts
 new file mode 100644
-index 0000000..ec6f616
+index 0000000..22ddeb9
 --- /dev/null
 +++ b/packages/react-xlsx/src/safe-calculate.test.ts
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,61 @@
 +import assert from "node:assert/strict";
-+import { test } from "node:test";
-+import type { Workbook } from "@dukelib/sheets-wasm";
-+import { externalCallKey, makeExternalFn } from "./external-fn.ts";
-+import { tryRecalculate } from "./safe-calculate.ts";
++import { readFileSync } from "node:fs";
++import { before, test } from "node:test";
++import initSheetsWasm, { Workbook } from "@dukelib/sheets-wasm";
++import { externalCalcOptions, externalCallKey } from "./external-fn.ts";
++import { CALCULATE_FORMULA_HARD_LIMIT, safeCalculate } from "./safe-calculate.ts";
++
++before(async () => {
++  const wasmFile = readFileSync(new URL(import.meta.resolve("@dukelib/sheets-wasm/duke_sheets_wasm_bg.wasm")));
++  await initSheetsWasm({ module_or_path: wasmFile });
++});
 +
 +test("recalculation passes external add-in values to the engine", () => {
 +  const key = externalCallKey("TBLink", ["Ledger"]);
 +  const workbook = {
++    sheetCount: 0,
++    sheetNames: [],
 +    calculate(options?: { externalFnFn?: (name: string, args: string[]) => string | number | null }) {
 +      assert.equal(options?.externalFnFn?.("TBLink", ["Ledger"]), 123.45);
 +      assert.equal(options?.externalFnFn?.("TBLink", ["Missing"]), null);
 +    },
 +  } as unknown as Workbook;
 +
-+  const calcOptions = { externalFnFn: makeExternalFn({ [key]: 123.45 }) };
-+  assert.deepEqual(tryRecalculate(workbook, calcOptions), {
-+    calculated: true,
-+    error: null,
-+  });
++  const result = safeCalculate(workbook, { calcOptions: externalCalcOptions({ [key]: 123.45 }) });
++  assert.equal(result.calculated, true);
++  assert.equal(result.skipReason, null);
++  assert.strictEqual(result.workbook, workbook);
++});
++
++function workbookWithFormulaCount(formulaCount: number) {
++  const source = new Workbook();
++  source.addSheet("Main");
++  const sheet = source.getSheet(0);
++  for (let index = 1; index <= formulaCount; index += 1) {
++    sheet.setFormula(`B${index}`, "1+2");
++  }
++  const bytes = source.saveXlsxBytes();
++  source.free();
++  return Workbook.fromBytes(bytes);
++}
++
++test("recalculates immediately below the engine formula limit", () => {
++  const workbook = workbookWithFormulaCount(CALCULATE_FORMULA_HARD_LIMIT - 1);
++  const result = safeCalculate(workbook);
++
++  assert.equal(result.calculated, true);
++  assert.equal(result.skipReason, null);
++  assert.equal(workbook.getSheet(0).formulaCount, CALCULATE_FORMULA_HARD_LIMIT - 1);
++  workbook.free();
++});
++
++test("skips the engine formula limit without poisoning the workbook", () => {
++  const workbook = workbookWithFormulaCount(CALCULATE_FORMULA_HARD_LIMIT);
++  const result = safeCalculate(workbook);
++
++  assert.equal(result.calculated, false);
++  assert.equal(result.skipReason, "formula-limit");
++  assert.doesNotThrow(() => workbook.getSheet(0));
++  assert.equal(workbook.getSheet(0).formulaCount, CALCULATE_FORMULA_HARD_LIMIT);
++  workbook.free();
 +});
 diff --git a/packages/react-xlsx/src/safe-calculate.ts b/packages/react-xlsx/src/safe-calculate.ts
-index 76df88d..6d8c6d1 100644
+index 76df88d..5fd94d7 100644
 --- a/packages/react-xlsx/src/safe-calculate.ts
 +++ b/packages/react-xlsx/src/safe-calculate.ts
-@@ -63,6 +63,7 @@ export type SafeCalculateResult = {
+@@ -1,4 +1,11 @@
+ import type { Workbook } from "@dukelib/sheets-wasm";
++import type { ExternalCalcOptions } from "./external-fn.ts";
++
++/** Automatic load-time calculation stays conservative to keep large workbooks responsive. */
++export const AUTO_CALCULATE_FORMULA_THRESHOLD = 1_000;
++
++/** The current engine traps at this formula count. Never enter `calculate()` at or above it. */
++export const CALCULATE_FORMULA_HARD_LIMIT = 5_000;
+ 
+ const SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
+ 
+@@ -53,7 +60,7 @@ function hasUnresolvedSheetReferences(workbook: Workbook): boolean {
+   return false;
+ }
+ 
+-export type SafeCalculateSkipReason = "unresolved-sheet-refs" | "calculate-trapped";
++export type SafeCalculateSkipReason = "formula-limit" | "unresolved-sheet-refs" | "calculate-trapped";
+ 
+ export type SafeCalculateResult = {
+   workbook: Workbook;
+@@ -63,17 +70,31 @@ export type SafeCalculateResult = {
  
  export type SafeCalculateOptions = {
    reparse?: () => Workbook;
-+  calcOptions?: unknown;
++  calcOptions?: ExternalCalcOptions;
  };
  
++export function countWorkbookFormulas(workbook: Workbook): number {
++  let total = 0;
++  for (let index = 0; index < workbook.sheetCount; index += 1) {
++    total += workbook.getSheet(index).formulaCount;
++  }
++  return total;
++}
++
  // Pre-scans for formulas referencing missing sheets (which cause the Rust
-@@ -73,7 +74,7 @@ export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions
+ // engine to panic into a wasm `unreachable` trap that poisons the Workbook
+ // instance). On trap, `reparse` is used to return a fresh usable instance.
+ export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions = {}): SafeCalculateResult {
++  // This guard must run before `calculate()`: catching the WASM trap is too late because the
++  // workbook instance is poisoned and later reads fail as well.
++  if (countWorkbookFormulas(workbook) >= CALCULATE_FORMULA_HARD_LIMIT) {
++    return { workbook, calculated: false, skipReason: "formula-limit" };
++  }
+   if (hasUnresolvedSheetReferences(workbook)) {
      return { workbook, calculated: false, skipReason: "unresolved-sheet-refs" };
    }
    try {
@@ -1516,23 +1683,22 @@ index 76df88d..6d8c6d1 100644
      return { workbook, calculated: true, skipReason: null };
    } catch (err) {
      console.warn("[react-xlsx] workbook.calculate() trapped; falling back to cached formula values", err);
-@@ -88,9 +89,12 @@ export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions
+@@ -87,13 +108,3 @@ export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions
+     return { workbook, calculated: false, skipReason: "calculate-trapped" };
    }
  }
- 
+-
 -export function tryRecalculate(workbook: Workbook): { calculated: boolean; error: unknown } {
-+export function tryRecalculate(
-+  workbook: Workbook,
-+  calcOptions?: unknown,
-+): { calculated: boolean; error: unknown } {
-   try {
+-  try {
 -    workbook.calculate();
-+    workbook.calculate(calcOptions);
-     return { calculated: true, error: null };
-   } catch (err) {
-     console.warn("[react-xlsx] workbook.calculate() trapped during recalculation", err);
+-    return { calculated: true, error: null };
+-  } catch (err) {
+-    console.warn("[react-xlsx] workbook.calculate() trapped during recalculation", err);
+-    return { calculated: false, error: err };
+-  }
+-}
 diff --git a/packages/react-xlsx/src/types.ts b/packages/react-xlsx/src/types.ts
-index 16b5350..9ca33b2 100644
+index 16b5350..a7c461e 100644
 --- a/packages/react-xlsx/src/types.ts
 +++ b/packages/react-xlsx/src/types.ts
 @@ -1,3 +1,5 @@
@@ -1553,20 +1719,17 @@ index 16b5350..9ca33b2 100644
    /**
     * Defers loading until `continueDeferredLoad()` is called when the file is larger than this byte threshold.
     * Set to `0` to parse immediately.
-@@ -1109,7 +1116,11 @@ export interface XlsxViewerController {
+@@ -1109,7 +1116,8 @@ export interface XlsxViewerController {
    /** Removes a Duke-supported control by its worksheet-local index. */
    removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
    readOnly: boolean;
 -  recalculate: () => void;
 +  /** Recalculates formulas, optionally resolving external add-in calls. */
-+  recalculate: {
-+    (): void;
-+    (externalFnValues: ExternalFnValues): void;
-+  };
++  recalculate: (externalFnValues?: ExternalFnValues) => void;
    revision: number;
    resetZoom: () => void;
    resizeChartBy: (
-@@ -1176,11 +1187,19 @@ export interface XlsxViewerController {
+@@ -1176,11 +1184,19 @@ export interface XlsxViewerController {
     */
    setRangeStyle: (range: XlsxCellRange, style: XlsxCellStyleInput) => void;
    setZoomScale: (zoomScale: number) => void;
@@ -1588,7 +1751,7 @@ index 16b5350..9ca33b2 100644
    setActiveSheetIndex: (index: number) => void;
    setActiveTabIndex: (index: number) => void;
    selectedChart: XlsxChart | null;
-@@ -1233,9 +1252,11 @@ export interface XlsxViewerSelection {
+@@ -1233,9 +1249,11 @@ export interface XlsxViewerSelection {
    activeCellAddress: string | null;
    clearSelection: () => void;
    selectedRangeAddress: string | null;
@@ -1602,7 +1765,7 @@ index 16b5350..9ca33b2 100644
  }
  
  export interface XlsxViewerZoom {
-@@ -1578,6 +1599,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
+@@ -1578,6 +1596,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
     * ```
     */
    getCellStyle?: (context: XlsxCellStyleContext) => React.CSSProperties | null | undefined;
@@ -1612,23 +1775,32 @@ index 16b5350..9ca33b2 100644
    headerBackgroundColor?: string;
    /** Text color used for row-number and column-letter headers. */
 diff --git a/packages/react-xlsx/src/worker-client.ts b/packages/react-xlsx/src/worker-client.ts
-index 0a6a9c7..48bfcdf 100644
+index 0a6a9c7..22ad727 100644
 --- a/packages/react-xlsx/src/worker-client.ts
 +++ b/packages/react-xlsx/src/worker-client.ts
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,6 @@
 +import type { DataNavigationRequest } from "./data-navigation";
++import type { ExternalFnValues } from "./external-fn";
++import type { SafeCalculateSkipReason } from "./safe-calculate";
  import type { XlsxChart, XlsxChartsheet, XlsxFormControl, XlsxSheetData, XlsxTable, XlsxWorkbookTab } from "./types";
  import { getConfiguredWorkerWasmSource, type WorkerWasmSource } from "./wasm";
  
-@@ -10,6 +11,7 @@ type WorkerMessage =
+@@ -10,8 +13,14 @@ type WorkerMessage =
          showHiddenSheets?: boolean;
          skipXmlParsing?: boolean;
          wasmSource?: WorkerWasmSource;
-+        externalFnValues?: Record<string, string | number>;
++        externalFnValues?: ExternalFnValues;
        };
      }
++  | {
++      id: number;
++      type: "recalculate";
++      payload: { externalFnValues?: ExternalFnValues };
++    }
    | {
-@@ -31,6 +33,11 @@ type WorkerMessage =
+       id: number;
+       type: "parseCharts";
+@@ -31,6 +40,11 @@ type WorkerMessage =
          col: number;
        };
      }
@@ -1640,15 +1812,16 @@ index 0a6a9c7..48bfcdf 100644
    | {
        id: number;
        type: "getRowsBatch";
-@@ -42,6 +49,7 @@ type WorkerMessage =
+@@ -42,6 +56,8 @@ type WorkerMessage =
      };
  
  type WorkerSuccessMessage =
 +  | { id: number; success: true; result: { row: number; col: number } }
++  | { id: number; success: true; result: { calculated: boolean; skipReason: SafeCalculateSkipReason | null } }
    | {
        id: number;
        success: true;
-@@ -131,7 +139,12 @@ export class XlsxWorkerClient {
+@@ -131,7 +147,12 @@ export class XlsxWorkerClient {
      this.pendingRequests.clear();
    }
  
@@ -1662,7 +1835,7 @@ index 0a6a9c7..48bfcdf 100644
      const workerBuffer = cloneArrayBufferForTransfer(buffer);
      return this.request<{
        chartsByWorkbookSheetIndex: XlsxChart[][];
-@@ -146,7 +159,8 @@ export class XlsxWorkerClient {
+@@ -146,12 +167,21 @@ export class XlsxWorkerClient {
          buffer: workerBuffer,
          showHiddenSheets,
          skipXmlParsing,
@@ -1672,7 +1845,20 @@ index 0a6a9c7..48bfcdf 100644
        },
        type: "load"
      }, [workerBuffer]);
-@@ -181,6 +195,12 @@ export class XlsxWorkerClient {
+   }
+ 
++  recalculate(externalFnValues?: ExternalFnValues) {
++    return this.request<{ calculated: boolean; skipReason: SafeCalculateSkipReason | null }>({
++      id: 0,
++      payload: { externalFnValues },
++      type: "recalculate"
++    });
++  }
++
+   getCellSnapshot(workbookSheetIndex: number, row: number, col: number) {
+     return this.request<{
+       displayValue: string;
+@@ -181,6 +211,12 @@ export class XlsxWorkerClient {
      }, [workerBuffer]);
    }
  
@@ -1686,7 +1872,7 @@ index 0a6a9c7..48bfcdf 100644
      return this.request<unknown[] | null>({
        id: 0,
 diff --git a/packages/react-xlsx/src/xlsx-worker.ts b/packages/react-xlsx/src/xlsx-worker.ts
-index 8857fde..2818e2a 100644
+index 8857fde..7a5e51a 100644
 --- a/packages/react-xlsx/src/xlsx-worker.ts
 +++ b/packages/react-xlsx/src/xlsx-worker.ts
 @@ -1,3 +1,4 @@
@@ -1694,15 +1880,31 @@ index 8857fde..2818e2a 100644
  import type { Workbook } from "@dukelib/sheets-wasm";
  import { strFromU8, unzipSync } from "fflate";
  import { loadWorkbookChartAssets } from "./charts";
-@@ -10,6 +11,7 @@ import {
+@@ -10,8 +11,14 @@ import {
    resolveWorksheetDefaultRowHeightPixels,
    resolveWorksheetMergeMetadata
  } from "./images";
-+import { type ExternalFnValues, makeExternalFn } from "./external-fn";
++import { externalCalcOptions, type ExternalFnValues } from "./external-fn";
  import type { WorkbookStructureAssets } from "./images";
- import { safeCalculate } from "./safe-calculate";
+-import { safeCalculate } from "./safe-calculate";
++import {
++  AUTO_CALCULATE_FORMULA_THRESHOLD,
++  countWorkbookFormulas,
++  safeCalculate,
++  type SafeCalculateSkipReason
++} from "./safe-calculate";
  import { getSheetsWasmModule, setWasmSource, type WorkerWasmSource } from "./wasm";
-@@ -67,6 +69,7 @@ type WorkerRequest =
+ import type {
+   XlsxChart,
+@@ -32,7 +39,6 @@ import type {
+ const DEFAULT_ROW_HEIGHT = 24;
+ const DEFAULT_COL_WIDTH = 80;
+ const DEFAULT_ZOOM_SCALE = 100;
+-const FORMULA_COUNT_THRESHOLD = 1000;
+ const FAST_STRUCTURE_PARSE_THRESHOLD_BYTES = 5 * 1024 * 1024;
+ const MIN_ROW_HEIGHT_PX = 16;
+ 
+@@ -67,6 +73,7 @@ type WorkerRequest =
          showHiddenSheets?: boolean;
          skipXmlParsing?: boolean;
          wasmSource?: WorkerWasmSource;
@@ -1710,7 +1912,19 @@ index 8857fde..2818e2a 100644
        };
      }
    | {
-@@ -88,6 +91,11 @@ type WorkerRequest =
+@@ -79,6 +86,11 @@ type WorkerRequest =
+         wasmSource?: WorkerWasmSource;
+       };
+     }
++  | {
++      id: number;
++      type: "recalculate";
++      payload: { externalFnValues?: ExternalFnValues };
++    }
+   | {
+       id: number;
+       type: "getCellSnapshot";
+@@ -88,6 +100,11 @@ type WorkerRequest =
          col: number;
        };
      }
@@ -1722,15 +1936,24 @@ index 8857fde..2818e2a 100644
    | {
        id: number;
        type: "getRowsBatch";
-@@ -119,6 +127,7 @@ type WorkerSuccessResponse = {
+@@ -119,6 +136,8 @@ type WorkerSuccessResponse = {
          displayValue: string;
          formula: string;
        }
++    | { calculated: boolean; skipReason: SafeCalculateSkipReason | null }
 +    | { row: number; col: number }
      | unknown[]
      | null;
  };
-@@ -560,7 +569,11 @@ function buildSheetList(
+@@ -132,6 +151,7 @@ type WorkerErrorResponse = {
+ type WorkerResponse = WorkerSuccessResponse | WorkerErrorResponse;
+ 
+ let workbook: Workbook | null = null;
++let workbookSourceBytes: Uint8Array | null = null;
+ let chartsByWorkbookSheetIndex: XlsxChart[][] = [];
+ let chartsheets: XlsxChartsheet[] = [];
+ let formControlsByWorkbookSheetIndex: XlsxFormControl[][] = [];
+@@ -560,7 +580,11 @@ function buildSheetList(
        continue;
      }
  
@@ -1743,7 +1966,7 @@ index 8857fde..2818e2a 100644
      const visibleRows: number[] = [];
      const hiddenRows: number[] = [];
      for (let row = 0; row <= maxRow; row += 1) {
-@@ -782,7 +795,12 @@ function cellAddressToA1(cell: XlsxCellAddress) {
+@@ -782,26 +806,29 @@ function cellAddressToA1(cell: XlsxCellAddress) {
    return `${label}${cell.row + 1}`;
  }
  
@@ -1757,23 +1980,75 @@ index 8857fde..2818e2a 100644
    const wasmModule = await getSheetsWasmModule();
    const bytes = new Uint8Array(buffer);
    const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
-@@ -792,9 +810,14 @@ async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHid
-     totalFormulas += activeWorkbook.getSheet(index).formulaCount;
-   }
+   let activeWorkbook = wasmModule.Workbook.fromBytes(bytes);
+-  let totalFormulas = 0;
+-  for (let index = 0; index < activeWorkbook.sheetCount; index += 1) {
+-    totalFormulas += activeWorkbook.getSheet(index).formulaCount;
+-  }
++  const totalFormulas = countWorkbookFormulas(activeWorkbook);
  
-+  const calcOptions = externalFnValues
-+    ? { externalFnFn: makeExternalFn(externalFnValues) }
-+    : undefined;
-+
-   if (totalFormulas <= FORMULA_COUNT_THRESHOLD) {
+-  if (totalFormulas <= FORMULA_COUNT_THRESHOLD) {
++  if (totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD) {
      const result = safeCalculate(activeWorkbook, {
 -      reparse: () => wasmModule.Workbook.fromBytes(bytes)
 +      reparse: () => wasmModule.Workbook.fromBytes(bytes),
-+      calcOptions
++      calcOptions: externalCalcOptions(externalFnValues)
      });
      activeWorkbook = result.workbook;
    }
-@@ -898,7 +921,12 @@ async function handleMessage(message: WorkerRequest) {
+ 
+   const nextWorkbook = activeWorkbook;
+   const shouldUseFastStructureParse =
+-    bytes.byteLength >= FAST_STRUCTURE_PARSE_THRESHOLD_BYTES && totalFormulas <= FORMULA_COUNT_THRESHOLD;
++    bytes.byteLength >= FAST_STRUCTURE_PARSE_THRESHOLD_BYTES && totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD;
+   const structureAssets = effectiveSkipXmlParsing || shouldUseFastStructureParse || !canParseXmlInWorker()
+     ? null
+     : parseWorkbookStructureAssets(bytes, {
+@@ -818,6 +845,7 @@ async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHid
+   );
+   const sheetLayoutStates = structureAssets ? undefined : parseWorkerSheetLayoutAssets(bytes, nextWorkbook.sheetCount);
+   workbook = nextWorkbook;
++  workbookSourceBytes = bytes;
+   sheets = buildSheetList(nextWorkbook, structureAssets, sheetLayoutStates, showHiddenSheets);
+   tablesByWorkbookSheetIndex = Array.from({ length: nextWorkbook.sheetCount }, (_, workbookSheetIndex) =>
+     mapWorksheetTables(
+@@ -859,11 +887,8 @@ async function parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHidd
+   const bytes = new Uint8Array(buffer);
+   const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
+   let activeWorkbook = wasmModule.Workbook.fromBytes(bytes);
+-  let totalFormulas = 0;
+-  for (let index = 0; index < activeWorkbook.sheetCount; index += 1) {
+-    totalFormulas += activeWorkbook.getSheet(index).formulaCount;
+-  }
+-  if (totalFormulas <= FORMULA_COUNT_THRESHOLD) {
++  const totalFormulas = countWorkbookFormulas(activeWorkbook);
++  if (totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD) {
+     const result = safeCalculate(activeWorkbook, {
+       reparse: () => wasmModule.Workbook.fromBytes(bytes)
+     });
+@@ -888,6 +913,21 @@ async function parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHidd
+   };
+ }
+ 
++async function recalculateWorkbook(externalFnValues?: ExternalFnValues) {
++  if (!workbook) {
++    return { calculated: false, skipReason: null };
++  }
++
++  const wasmModule = await getSheetsWasmModule();
++  const sourceBytes = workbookSourceBytes;
++  const result = safeCalculate(workbook, {
++    calcOptions: externalCalcOptions(externalFnValues),
++    reparse: sourceBytes ? () => wasmModule.Workbook.fromBytes(sourceBytes) : undefined
++  });
++  workbook = result.workbook;
++  return { calculated: result.calculated, skipReason: result.skipReason };
++}
++
+ function respond(message: WorkerResponse) {
+   self.postMessage(message);
+ }
+@@ -898,7 +938,12 @@ async function handleMessage(message: WorkerRequest) {
        if (message.payload.wasmSource !== undefined) {
          setWasmSource(message.payload.wasmSource);
        }
@@ -1787,7 +2062,17 @@ index 8857fde..2818e2a 100644
      }
      case "parseCharts": {
        if (message.payload.wasmSource !== undefined) {
-@@ -921,6 +949,14 @@ async function handleMessage(message: WorkerRequest) {
+@@ -906,6 +951,9 @@ async function handleMessage(message: WorkerRequest) {
+       }
+       return parseCharts(message.payload.buffer, message.payload.skipXmlParsing, message.payload.showHiddenSheets);
+     }
++    case "recalculate": {
++      return recalculateWorkbook(message.payload.externalFnValues);
++    }
+     case "getCellSnapshot": {
+       if (!workbook) {
+         return {
+@@ -921,6 +969,14 @@ async function handleMessage(message: WorkerRequest) {
          formula: worksheet.getFormulaAt(message.payload.row, message.payload.col) ?? ""
        };
      }
