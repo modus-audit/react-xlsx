@@ -11,6 +11,10 @@ export function externalCallKey(name: string, args: readonly string[]): string {
 /** Serializable map handed to the controller: `externalCallKey(name, args)` -> resolved value. */
 export type ExternalFnValues = Record<string, string | number>;
 
+export type ExternalCalcOptions = {
+  externalFnFn: (name: string, args: string[]) => string | number | null;
+};
+
 /** Rebuild the engine callback from the serializable map (inside the worker). Returns `null` for
  *  unmapped calls so the engine preserves the cell's cached value. */
 export function makeExternalFn(
@@ -20,4 +24,9 @@ export function makeExternalFn(
     const value = values[externalCallKey(name, args)];
     return value === undefined ? null : value;
   };
+}
+
+/** Builds the calculation options shared by main-thread, worker, and deferred recalculation paths. */
+export function externalCalcOptions(values?: ExternalFnValues): ExternalCalcOptions | undefined {
+  return values ? { externalFnFn: makeExternalFn(values) } : undefined;
 }

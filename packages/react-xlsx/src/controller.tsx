@@ -47,8 +47,8 @@ import {
   type WorkbookImageAssets,
   type WorkbookImageSheetOrigin
 } from "./images";
-import { type ExternalFnValues, makeExternalFn } from "./external-fn";
-import { safeCalculate, tryRecalculate } from "./safe-calculate";
+import { externalCalcOptions, type ExternalFnValues } from "./external-fn";
+import { AUTO_CALCULATE_FORMULA_THRESHOLD, countWorkbookFormulas, safeCalculate } from "./safe-calculate";
 import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
 import { XlsxWorkerClient } from "./worker-client";
 import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
@@ -87,7 +87,6 @@ import type {
   XlsxWorkbookTab
 } from "./types";
 
-const FORMULA_COUNT_THRESHOLD = 1000;
 const DEFAULT_ROW_HEIGHT = 24;
 const DEFAULT_COL_WIDTH = 80;
 const XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -1461,20 +1460,14 @@ async function parseWorkbookBuffer(
 }> {
   const wasmModule = await getSheetsWasmModule();
   const initialWorkbook = wasmModule.Workbook.fromBytes(new Uint8Array(buffer));
-  let totalFormulas = 0;
-
-  for (let index = 0; index < initialWorkbook.sheetCount; index += 1) {
-    totalFormulas += initialWorkbook.getSheet(index).formulaCount;
-  }
-
-  const shouldAutoCalculate = totalFormulas <= FORMULA_COUNT_THRESHOLD;
+  const shouldAutoCalculate = countWorkbookFormulas(initialWorkbook) <= AUTO_CALCULATE_FORMULA_THRESHOLD;
   if (!shouldAutoCalculate) {
     return { shouldAutoCalculate, workbook: initialWorkbook };
   }
 
   const result = safeCalculate(initialWorkbook, {
     reparse: () => wasmModule.Workbook.fromBytes(new Uint8Array(buffer)),
-    calcOptions: externalFnValues ? { externalFnFn: makeExternalFn(externalFnValues) } : undefined
+    calcOptions: externalCalcOptions(externalFnValues)
   });
 
   return {
@@ -2745,7 +2738,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
-    const result = tryRecalculate(targetWorkbook);
+    const result = safeCalculate(targetWorkbook);
     if (!result.calculated) {
       setShouldAutoCalculate(false);
     }
@@ -3784,21 +3777,38 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     downloadText(workbook.saveCsvString(), `${fileStem(displayFileName)}-${activeSheetName}.csv`, CSV_MIME_TYPE);
   }, [activeSheet?.name, displayFileName, workbook]);
 
-  const recalculate = React.useCallback(() => {
+  const recalculate = React.useCallback((externalFnValues?: ExternalFnValues) => {
+    if (isWorkerBacked) {
+      const workerClient = getWorkerClient();
+      void workerClient.recalculate(externalFnValues)
+        .then((result) => {
+          if (!result.calculated || workerClientRef.current !== workerClient) {
+            return;
+          }
+          workerCellSnapshotCacheRef.current.clear();
+          setWorkerCellSnapshotRevision((current) => current + 1);
+          setRevision((current) => current + 1);
+        })
+        .catch((recalculateError: unknown) => {
+          if (!isAbortError(recalculateError)) {
+            console.warn("[react-xlsx] worker recalculation failed", recalculateError);
+          }
+        });
+      return;
+    }
+
     if (!workbook) {
       return;
     }
 
-    const result = tryRecalculate(workbook);
+    const result = safeCalculate(workbook, { calcOptions: externalCalcOptions(externalFnValues) });
     if (result.calculated) {
       refreshWorkbookState(workbook);
       return;
     }
 
-    // Trap poisons the Workbook pointer; skip refreshWorkbookState so we
-    // don't crash reading cells from it.
     setShouldAutoCalculate(false);
-  }, [refreshWorkbookState, workbook]);
+  }, [getWorkerClient, isWorkerBacked, refreshWorkbookState, workbook]);
 
   const applyReadOnlyResizeOverride = React.useCallback((
     axis: "column" | "row",

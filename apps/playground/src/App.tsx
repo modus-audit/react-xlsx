@@ -848,7 +848,7 @@ function WorkbookToolbar({
           {activeRibbonTab === "Formulas" ? (
             <>
               <RibbonGroup label="Calculation">
-                <Button disabled={!canExport} onClick={recalculate} size="sm" variant="outline">
+                <Button disabled={!canExport} onClick={() => recalculate()} size="sm" variant="outline">
                   <PlaygroundIcon name="refresh" />
                   Recalc
                 </Button>
@@ -881,7 +881,7 @@ function WorkbookToolbar({
                 </div>
               </RibbonGroup>
               <RibbonGroup label="Refresh">
-                <Button disabled={!canExport} onClick={recalculate} size="sm" variant="outline">
+                <Button disabled={!canExport} onClick={() => recalculate()} size="sm" variant="outline">
                   <PlaygroundIcon name="refresh" />
                   Recalc
                 </Button>
