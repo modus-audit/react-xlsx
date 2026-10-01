@@ -5683,7 +5683,7 @@ function resolveConditionalFormulaComparable(
   worksheet: Worksheet | null | undefined,
   sheet: XlsxSheetData | null | undefined,
   batchedCells?: Map<string, BatchedCellData>
-) {
+): string | number | null {
   const literal = parseConditionalFormulaLiteral(formula);
   if (typeof literal === "number") {
     return literal;
@@ -5692,6 +5692,14 @@ function resolveConditionalFormulaComparable(
   const normalized = formula.trim().replace(/^=/, "").trim();
   if (normalized.length === 0) {
     return literal;
+  }
+
+  if (normalized.startsWith("-")) {
+    const inner = resolveConditionalFormulaComparable(normalized.slice(1), worksheet, sheet, batchedCells);
+    if (typeof inner === "number") {
+      return inner === 0 ? 0 : -inner;
+    }
+    return inner === "" ? 0 : literal;
   }
 
   const splitReference = splitSheetFormulaReference(normalized);
@@ -5745,7 +5753,7 @@ function resolveConditionalOperand(
   anchor: XlsxCellAddress,
   activeSheet?: XlsxSheetData | null
 ): ConditionalOperand | null {
-  let trimmed = token.trim();
+  let trimmed = token.trim().replace(/^=/, "").trim();
   while (trimmed.startsWith("(") && trimmed.endsWith(")")) {
     trimmed = trimmed.slice(1, -1).trim();
   }
@@ -5769,12 +5777,17 @@ function resolveConditionalOperand(
     return number === null ? null : { number, text: String(number) };
   }
 
-  // A negated reference, as in a plus-or-minus threshold rule: `lessThan -$H$13`.
+  // A negated reference, as in a plus-or-minus threshold rule: `lessThan -$H$13`. Excel reads an
+  // empty referenced cell as zero.
   const negated = /^-(.+)$/s.exec(trimmed);
   if (negated) {
     const operand = resolveConditionalOperand(negated[1] ?? "", worksheet, cell, anchor, activeSheet);
-    const number = operand?.number === null || operand?.number === undefined ? null : -operand.number;
-    return number === null ? null : { number, text: String(number) };
+    const value = operand ? (operand.number ?? (operand.text.trim() === "" ? 0 : null)) : null;
+    if (value === null) {
+      return null;
+    }
+    const number = value === 0 ? 0 : -value;
+    return { number, text: String(number) };
   }
 
   const reference = /^(\$?)([A-Z]{1,3})(\$?)(\d+)$/i.exec(trimmed);
