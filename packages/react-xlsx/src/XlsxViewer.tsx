@@ -5769,6 +5769,14 @@ function resolveConditionalOperand(
     return number === null ? null : { number, text: String(number) };
   }
 
+  // A negated reference, as in a plus-or-minus threshold rule: `lessThan -$H$13`.
+  const negated = /^-(.+)$/s.exec(trimmed);
+  if (negated) {
+    const operand = resolveConditionalOperand(negated[1] ?? "", worksheet, cell, anchor, activeSheet);
+    const number = operand?.number === null || operand?.number === undefined ? null : -operand.number;
+    return number === null ? null : { number, text: String(number) };
+  }
+
   const reference = /^(\$?)([A-Z]{1,3})(\$?)(\d+)$/i.exec(trimmed);
   if (!reference) {
     return null;
