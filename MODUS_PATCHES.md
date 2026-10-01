@@ -9,7 +9,7 @@ Preserved behavior:
   worker-backed read-only workbooks. Calculation skips the engine's known 5,000-formula trap.
 - `revealCell` selects and centers off-screen search results.
 - `selections`, append/toggle operations, and canvas Ctrl/Cmd drag support non-contiguous selections. Re-adding an existing range preserves the other regions.
-- Conditional formatting retains relative references, comparison/ABS/AND expressions, text and blank rules, and cached numeric fallback. These extend upstream's styled rules and retain its priority handling.
+- Conditional formatting retains relative references, negated references (`lessThan -$H$13`, the plus-or-minus flux threshold), comparison/ABS/AND expressions, text and blank rules, and cached numeric fallback. These extend upstream's styled rules and retain its priority handling.
 - Worker row batches reuse upstream's viewport calculation, also applying it to worker DOM rendering and excluding frozen rows from the scrolling batch. Frozen rows are fetched separately; sparse batch coverage and cache invalidation keep distant cells visible without requesting every preceding row.
 - Worker sheet bounds retain merged/content extents and the initial view of leading blank rows/columns. Upstream supplies hidden axes, dimensions for populated and empty sheets, and absolute batch row indices.
 - The atlas build plugin bundles US/world geography as JSON text parsed at runtime. This preserves ESM/CJS delivery without making downstream bundlers analyze hundreds of thousands of coordinate literals. The packaging regression checks data equality and syntax-tree size in both formats.
@@ -25,7 +25,7 @@ The app configures `initWasm` with a bundler-resolved asset URL and explicitly c
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.6` tag. The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.N` tag (currently `modus.7`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 
