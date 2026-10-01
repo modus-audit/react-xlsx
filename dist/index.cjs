@@ -23103,6 +23103,13 @@ function resolveConditionalFormulaComparable(formula, worksheet, sheet, batchedC
   if (normalized.length === 0) {
     return literal;
   }
+  if (normalized.startsWith("-")) {
+    const inner = resolveConditionalFormulaComparable(normalized.slice(1), worksheet, sheet, batchedCells);
+    if (typeof inner === "number") {
+      return inner === 0 ? 0 : -inner;
+    }
+    return inner === "" ? 0 : literal;
+  }
   const splitReference = splitSheetFormulaReference(normalized);
   const targetSheetName = splitReference?.sheetName ?? null;
   if (targetSheetName && sheet?.name && targetSheetName !== sheet.name) {
@@ -23139,7 +23146,7 @@ function normalizeConditionalTextOperand(value) {
   return String(value).trim().toLowerCase();
 }
 function resolveConditionalOperand(token, worksheet, cell, anchor, activeSheet) {
-  let trimmed = token.trim();
+  let trimmed = token.trim().replace(/^=/, "").trim();
   while (trimmed.startsWith("(") && trimmed.endsWith(")")) {
     trimmed = trimmed.slice(1, -1).trim();
   }
@@ -23158,6 +23165,16 @@ function resolveConditionalOperand(token, worksheet, cell, anchor, activeSheet) 
     const operand = resolveConditionalOperand(absolute[1] ?? "", worksheet, cell, anchor, activeSheet);
     const number = operand?.number === null || operand?.number === void 0 ? null : Math.abs(operand.number);
     return number === null ? null : { number, text: String(number) };
+  }
+  const negated = /^-(.+)$/s.exec(trimmed);
+  if (negated) {
+    const operand = resolveConditionalOperand(negated[1] ?? "", worksheet, cell, anchor, activeSheet);
+    const value = operand ? operand.number ?? (operand.text.trim() === "" ? 0 : null) : null;
+    if (value === null) {
+      return null;
+    }
+    const number = value === 0 ? 0 : -value;
+    return { number, text: String(number) };
   }
   const reference = /^(\$?)([A-Z]{1,3})(\$?)(\d+)$/i.exec(trimmed);
   if (!reference) {
