@@ -50,6 +50,7 @@ import {
 import { externalCalcOptions, type ExternalFnValues } from "./external-fn";
 import { AUTO_CALCULATE_FORMULA_THRESHOLD, countWorkbookFormulas, safeCalculate } from "./safe-calculate";
 import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
+import { type ClipboardMatrixCell, clipboardStyleTable, copiedCell, styleToRestore, writePastedCell } from "./clipboard-cells";
 import { XlsxWorkerClient } from "./worker-client";
 import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
 import type {
@@ -370,13 +371,6 @@ export class XlsxFileSizeLimitExceededError extends Error {
 
 type HistoryEntry = SnapshotHistoryEntry | CellEditHistoryEntry | RangeEditHistoryEntry;
 
-type ClipboardMatrixCell = {
-  colOffset: number;
-  formula: string | null;
-  rowOffset: number;
-  value: string;
-};
-
 type ClipboardMerge = {
   colSpan: number;
   colOffset: number;
@@ -389,6 +383,8 @@ type ClipboardPayload = {
   cols: number;
   merges: ClipboardMerge[];
   rows: number;
+  /** Copied styles, referenced by each cell's `styleIndex`. */
+  styles?: unknown[];
 };
 
 function resolveDisplayFileName(src?: string, fileName?: string): string {
@@ -1376,8 +1372,9 @@ function applyCellMutationState(
     worksheet.setCell(cellAddressToA1(cell), normalizeCellValue(state.value));
   }
 
-  if (state.style && typeof state.style === "object") {
-    worksheet.setCellStyleAt(cell.row, cell.col, state.style);
+  // A cell that had no style of its own is reset to plain, or undoing its first format keeps it.
+  if ((state.style && typeof state.style === "object") || worksheet.getCellStyleAt(cell.row, cell.col)) {
+    worksheet.setCellStyleAt(cell.row, cell.col, styleToRestore(state.style));
   }
 }
 
@@ -3121,11 +3118,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     const normalized = normalizeRange(targetRange);
     const rows: string[] = [];
     const htmlRows: string[] = [];
+    const styleTable = clipboardStyleTable();
     const payload: ClipboardPayload = {
       cells: [],
       cols: normalized.end.col - normalized.start.col + 1,
       merges: [],
-      rows: normalized.end.row - normalized.start.row + 1
+      rows: normalized.end.row - normalized.start.row + 1,
+      styles: styleTable.styles
     };
 
     for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
@@ -3138,7 +3137,6 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
           continue;
         }
 
-        const formula = worksheet.getFormulaAt(row, col) ?? null;
         const value = getCellDisplayValue({ row, col });
         const merge = worksheet.getMergeSpan(row, col) as
           | { colSpan?: number; rowSpan?: number }
@@ -3213,12 +3211,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         const rowSpan = Math.min(merge?.rowSpan ?? 1, normalized.end.row - row + 1);
         const colSpan = Math.min(merge?.colSpan ?? 1, normalized.end.col - col + 1);
 
-        payload.cells.push({
-          colOffset: col - normalized.start.col,
-          formula,
-          rowOffset: row - normalized.start.row,
-          value
-        });
+        payload.cells.push(
+          copiedCell(
+            worksheet,
+            row,
+            col,
+            { colOffset: col - normalized.start.col, rowOffset: row - normalized.start.row },
+            value,
+            styleTable
+          )
+        );
 
         if (rowSpan > 1 || colSpan > 1) {
           payload.merges.push({
@@ -4852,32 +4854,17 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       };
       const before = hasMergeOperations ? null : captureCellMutationState(nextCell);
 
-      if (cell.formula) {
-        worksheet.setFormula(cellAddressToA1(nextCell), cell.formula);
-        if (before) {
-          const after = captureCellMutationState(nextCell);
-          if (!after) {
-            continue;
-          }
-          mutations.push({
-            after,
-            before,
-            cell: nextCell
-          });
+      writePastedCell(worksheet, cellAddressToA1(nextCell), nextCell.row, nextCell.col, cell, payload.styles);
+      if (before) {
+        const after = captureCellMutationState(nextCell);
+        if (!after) {
+          continue;
         }
-      } else {
-        worksheet.setCell(cellAddressToA1(nextCell), cell.value);
-        if (before) {
-          const after = captureCellMutationState(nextCell);
-          if (!after) {
-            continue;
-          }
-          mutations.push({
-            after,
-            before,
-            cell: nextCell
-          });
-        }
+        mutations.push({
+          after,
+          before,
+          cell: nextCell
+        });
       }
     }
 
