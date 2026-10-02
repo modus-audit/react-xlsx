@@ -24,6 +24,7 @@ export type {
   XlsxChartReference,
   XlsxChartsheet,
   XlsxChartSeries,
+  XlsxAxisSize,
   XlsxCellAddress,
   XlsxCellAlignmentInput,
   XlsxCellBorderEdgeInput,

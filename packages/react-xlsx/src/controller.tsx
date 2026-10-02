@@ -52,6 +52,7 @@ import { AUTO_CALCULATE_FORMULA_THRESHOLD, countWorkbookFormulas, safeCalculate 
 import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
 import { type ClipboardMatrixCell, clipboardStyleTable, copiedCell, styleToRestore, writePastedCell } from "./clipboard-cells";
 import { XlsxWorkerClient } from "./worker-client";
+import { mergesTouching } from "./merge-regions";
 import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
 import type {
   UseXlsxViewerControllerOptions,
@@ -59,6 +60,7 @@ import type {
   XlsxChartElementSelection,
   XlsxChartsheet,
   XlsxCellAddress,
+  XlsxAxisSize,
   XlsxCellRange,
   XlsxCellStyleColorInput,
   XlsxCellStyleInput,
@@ -3929,6 +3931,46 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     workbook
   ]);
 
+  const resizeAxis = React.useCallback((axis: "column" | "row", sizes: ReadonlyArray<XlsxAxisSize>) => {
+    if ((readOnly && !canResizeReadOnly) || !activeSheet || sizes.length === 0) {
+      return;
+    }
+
+    if (isWorkerBacked) {
+      for (const { index, sizePx } of sizes) {
+        applyReadOnlyResizeOverride(axis, index, sizePx);
+      }
+      return;
+    }
+
+    if (!workbook) {
+      return;
+    }
+
+    recordHistoryBeforeMutation();
+    const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
+    for (const { index, sizePx } of sizes) {
+      const contentPx = resolveContentSheetAxisPixels(sizePx, activeSheet.showGridLines);
+      if (axis === "column") {
+        worksheet.setColumnWidth(index, pxToSheetColumnWidth(contentPx));
+      } else {
+        worksheet.setRowHeight(index, pxToSheetRowHeight(contentPx));
+      }
+    }
+    refreshWorkbookState(workbook);
+  }, [
+    activeSheet,
+    applyReadOnlyResizeOverride,
+    canResizeReadOnly,
+    isWorkerBacked,
+    readOnly,
+    recordHistoryBeforeMutation,
+    refreshWorkbookState,
+    workbook
+  ]);
+  const resizeColumns = React.useCallback((sizes: ReadonlyArray<XlsxAxisSize>) => resizeAxis("column", sizes), [resizeAxis]);
+  const resizeRows = React.useCallback((sizes: ReadonlyArray<XlsxAxisSize>) => resizeAxis("row", sizes), [resizeAxis]);
+
   const resolveAnchoredObjectRect = React.useCallback((
     anchor: XlsxImage["anchor"],
     worksheet: ReturnType<Workbook["getSheet"]>
@@ -4645,8 +4687,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
+    const merges = mergesTouching(worksheet.mergedRegions, selection);
+    if (merges.length === 0) {
+      return;
+    }
+
     recordHistoryBeforeMutation();
-    worksheet.unmergeCells(rangeToA1(selection));
+    for (const merge of merges) {
+      worksheet.unmergeCells(merge);
+    }
     refreshWorkbookState(workbook);
   }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
 
@@ -5101,7 +5150,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       resizeChartBy,
       resizeImageBy,
       resizeColumn,
+      resizeColumns,
       resizeRow,
+      resizeRows,
       setCellFormula,
       setCellStyle,
       setCellValue,
@@ -5223,7 +5274,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       resizeChartBy,
       resizeImageBy,
       resizeColumn,
+      resizeColumns,
       resizeRow,
+      resizeRows,
       setCellFormula,
       setCellStyle,
       setCellValue,
