@@ -161,6 +161,9 @@ export interface XlsxCellAddress {
   row: number;
 }
 
+/** A column width or row height in pixels, for `resizeColumns` and `resizeRows`. */
+export type XlsxAxisSize = { index: number; sizePx: number };
+
 export interface XlsxCellRange {
   end: XlsxCellAddress;
   start: XlsxCellAddress;
@@ -1134,6 +1137,10 @@ export interface XlsxViewerController {
   ) => void;
   resizeColumn: (col: number, widthPx: number) => void;
   resizeRow: (row: number, heightPx: number) => void;
+  /** Resizes several columns as one undo step, e.g. fitting every selected column. */
+  resizeColumns: (sizes: ReadonlyArray<XlsxAxisSize>) => void;
+  /** Resizes several rows as one undo step, e.g. fitting every selected row. */
+  resizeRows: (sizes: ReadonlyArray<XlsxAxisSize>) => void;
   redo: () => void;
   pasteFromClipboard: () => Promise<boolean>;
   pasteStructuredClipboardData: (payload: string) => boolean;
