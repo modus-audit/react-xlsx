@@ -15,36 +15,53 @@ export type ClipboardMatrixCell = {
   raw?: CellPrimitive;
   /** The cell's style in the payload's `styles`: Excel's paste carries formatting by default. */
   styleIndex?: number;
+  /** A merged block's covered cell: only its style travels (Excel keeps a merge's edge borders on
+   *  the edge cells). */
+  styleOnly?: boolean;
 };
 
 /** A cell with no style of its own reads back as `null`, and the engine has no call that clears a
- *  style, so writing one back (a paste, an undo) resets it to these plain settings instead. Font
- *  name and size stay as they are. */
-export const PLAIN_CELL_STYLE: StyleInput = {
-  font: {
-    bold: false,
-    italic: false,
-    underline: "none",
-    strikethrough: false,
-    color: { colorType: "auto" },
-    verticalAlign: "baseline"
-  },
-  fill: { fillType: "none" },
-  border: {
-    left: { style: "none" },
-    right: { style: "none" },
-    top: { style: "none" },
-    bottom: { style: "none" },
-    diagonal: { style: "none" },
-    diagonalDirection: "none"
-  },
-  alignment: { horizontal: "general", vertical: "bottom", wrapText: false, shrinkToFit: false, indent: 0, rotation: 0 },
-  numberFormat: { formatType: "general" }
-};
+ *  style; it patches the fields it is given. Writing one back (a paste, an undo) sets every field to
+ *  the workbook's default instead, which reads back as `null` again. `defaultFont` is that font,
+ *  from the workbook's first cell format. */
+export function plainCellStyle(defaultFont?: { name?: unknown; size?: unknown }): StyleInput {
+  return {
+    font: {
+      ...(typeof defaultFont?.name === "string" ? { name: defaultFont.name } : {}),
+      ...(typeof defaultFont?.size === "number" ? { size: defaultFont.size } : {}),
+      bold: false,
+      italic: false,
+      underline: "none",
+      strikethrough: false,
+      color: { colorType: "auto" },
+      verticalAlign: "baseline"
+    },
+    fill: { fillType: "none" },
+    border: {
+      left: { style: "none" },
+      right: { style: "none" },
+      top: { style: "none" },
+      bottom: { style: "none" },
+      diagonal: { style: "none" },
+      diagonalDirection: "none"
+    },
+    alignment: {
+      horizontal: "general",
+      vertical: "bottom",
+      wrapText: false,
+      shrinkToFit: false,
+      indent: 0,
+      rotation: 0,
+      readingOrder: "contextDependent"
+    },
+    numberFormat: { formatType: "general" },
+    protection: { locked: true, hidden: false }
+  };
+}
 
-/** The style to write back for a cell whose style read as `style`. */
-export function styleToRestore(style: unknown): StyleInput {
-  return style && typeof style === "object" ? (style as StyleInput) : PLAIN_CELL_STYLE;
+/** The style to write back for a cell whose style read as `style`; `plain` resets a `null` one. */
+export function styleToRestore(style: unknown, plain: StyleInput): StyleInput {
+  return style && typeof style === "object" ? (style as StyleInput) : plain;
 }
 
 /** Collects copied styles once each, since a range usually repeats a handful of them. */
@@ -69,13 +86,15 @@ function primitive(value: unknown): CellPrimitive | undefined {
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? value : undefined;
 }
 
-/** The clipboard entry for the cell at `row`, `col`; `offset` places it within the copied range. */
+/** The clipboard entry for the cell at `row`, `col`, whose own style (`null` when it has none) is
+ *  `style`; `offset` places it within the copied range. */
 export function copiedCell(
   worksheet: Worksheet,
   row: number,
   col: number,
   offset: { rowOffset: number; colOffset: number },
   displayValue: string,
+  style: unknown,
   styles: ReturnType<typeof clipboardStyleTable>
 ): ClipboardMatrixCell {
   const formula = worksheet.getFormulaAt(row, col) ?? null;
@@ -86,26 +105,29 @@ export function copiedCell(
     formula,
     value: displayValue,
     ...(raw === undefined ? {} : { raw }),
-    styleIndex: styles.add(worksheet.getCellStyleAt(row, col))
+    styleIndex: styles.add(style)
   };
 }
 
 /** Writes a copied cell at `row`, `col`: its formula or value, then its style when the payload
- *  carries one. */
+ *  carries one; `plain` resets formatting for a copied cell that had none. */
 export function writePastedCell(
   worksheet: Worksheet,
   a1: string,
   row: number,
   col: number,
   cell: ClipboardMatrixCell,
-  styles: unknown[] | undefined
+  styles: unknown[] | undefined,
+  plain: StyleInput
 ) {
-  if (cell.formula) {
-    worksheet.setFormula(a1, cell.formula);
-  } else {
-    worksheet.setCell(a1, cell.raw ?? cell.value);
+  if (!cell.styleOnly) {
+    if (cell.formula) {
+      worksheet.setFormula(a1, cell.formula);
+    } else {
+      worksheet.setCell(a1, cell.raw ?? cell.value);
+    }
   }
   if (cell.styleIndex !== undefined && styles && cell.styleIndex < styles.length) {
-    worksheet.setCellStyleAt(row, col, styleToRestore(styles[cell.styleIndex]));
+    worksheet.setCellStyleAt(row, col, styleToRestore(styles[cell.styleIndex], plain));
   }
 }

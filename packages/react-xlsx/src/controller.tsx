@@ -10,6 +10,7 @@ import type {
   FormControlKind as DukeFormControlKind,
   FormControlKindInput as DukeFormControlKindInput,
   ImageDrawing as DukeImageDrawing,
+  StyleInput,
   Workbook
 } from "@dukelib/sheets-wasm";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
@@ -50,7 +51,7 @@ import {
 import { externalCalcOptions, type ExternalFnValues } from "./external-fn";
 import { AUTO_CALCULATE_FORMULA_THRESHOLD, countWorkbookFormulas, safeCalculate } from "./safe-calculate";
 import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
-import { type ClipboardMatrixCell, clipboardStyleTable, copiedCell, styleToRestore, writePastedCell } from "./clipboard-cells";
+import { type ClipboardMatrixCell, clipboardStyleTable, copiedCell, plainCellStyle, styleToRestore, writePastedCell } from "./clipboard-cells";
 import { XlsxWorkerClient } from "./worker-client";
 import { mergesTouching } from "./merge-regions";
 import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
@@ -1366,7 +1367,8 @@ function coerceUserEnteredValue(value: string): unknown {
 function applyCellMutationState(
   worksheet: ReturnType<Workbook["getSheet"]>,
   cell: XlsxCellAddress,
-  state: CellMutationState
+  state: CellMutationState,
+  plain: StyleInput
 ) {
   if (state.formula) {
     worksheet.setFormula(cellAddressToA1(cell), state.formula);
@@ -1376,7 +1378,7 @@ function applyCellMutationState(
 
   // A cell that had no style of its own is reset to plain, or undoing its first format keeps it.
   if ((state.style && typeof state.style === "object") || worksheet.getCellStyleAt(cell.row, cell.col)) {
-    worksheet.setCellStyleAt(cell.row, cell.col, styleToRestore(state.style));
+    worksheet.setCellStyleAt(cell.row, cell.col, styleToRestore(state.style, plain));
   }
 }
 
@@ -1933,6 +1935,11 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const deferredBufferRef = React.useRef<ArrayBuffer | null>(null);
   const [deferredLoadFileSize, setDeferredLoadFileSize] = React.useState<number | null>(null);
   const imageAssetsRef = React.useRef<WorkbookImageAssets | null>(null);
+  /** The workbook's default cell format as a style patch, for resetting a cell that had none. */
+  const plainStyle = React.useCallback(
+    () => plainCellStyle(imageAssetsRef.current?.styleById?.[0]?.font),
+    []
+  );
   const chartAssetsRef = React.useRef<WorkbookChartAssets | null>(null);
   const chartLoadRequestTokenRef = React.useRef(0);
   const chartDisplayFallbackCleanupRef = React.useRef<(() => void) | null>(null);
@@ -3134,7 +3141,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       const htmlCells: string[] = [];
 
       for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
+        const offset = { colOffset: col - normalized.start.col, rowOffset: row - normalized.start.row };
+        const ownStyle = worksheet.getCellStyleAt(row, col) as Record<string, unknown> | null | undefined;
         if (worksheet.isMergedSecondary(row, col)) {
+          payload.cells.push({ ...offset, formula: null, value: "", styleOnly: true, styleIndex: styleTable.add(ownStyle) });
           textCells.push("");
           continue;
         }
@@ -3144,9 +3154,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
           | { colSpan?: number; rowSpan?: number }
           | null
           | undefined;
-        const rawStyle = (
-          worksheet.getCellStyleAt(row, col) as Record<string, unknown> | null | undefined
-        ) ?? resolveInheritedCellStyle(activeSheet, row, col);
+        const rawStyle = ownStyle ?? resolveInheritedCellStyle(activeSheet, row, col);
         const cellStyles: string[] = [
           "padding:2px 4px",
           "white-space:pre-wrap",
@@ -3214,14 +3222,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         const colSpan = Math.min(merge?.colSpan ?? 1, normalized.end.col - col + 1);
 
         payload.cells.push(
-          copiedCell(
-            worksheet,
-            row,
-            col,
-            { colOffset: col - normalized.start.col, rowOffset: row - normalized.start.row },
-            value,
-            styleTable
-          )
+          copiedCell(worksheet, row, col, offset, value, ownStyle, styleTable)
         );
 
         if (rowSpan > 1 || colSpan > 1) {
@@ -3410,7 +3411,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     const targetState = direction === "undo" ? entry.before : entry.after;
 
     isApplyingHistoryRef.current = true;
-    applyCellMutationState(worksheet, entry.cell, targetState);
+    applyCellMutationState(worksheet, entry.cell, targetState, plainStyle());
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
 
@@ -3423,7 +3424,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setSelection(nextSelection);
     selectionAnchorRef.current = nextSelection ? normalizeRange(nextSelection).start : nextActiveCell;
     isApplyingHistoryRef.current = false;
-  }, [maybeRecalculateWorkbook, refreshWorkbookState, sheets, workbook]);
+  }, [maybeRecalculateWorkbook, refreshWorkbookState, sheets, workbook, plainStyle]);
 
   const applyRangeEditHistoryEntry = React.useCallback((
     entry: RangeEditHistoryEntry,
@@ -3437,8 +3438,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     const visibleSheetIndex = sheets.findIndex((sheet) => sheet.workbookSheetIndex === entry.sheetIndex);
 
     isApplyingHistoryRef.current = true;
+    const plain = plainStyle();
     for (const mutation of entry.mutations) {
-      applyCellMutationState(worksheet, mutation.cell, direction === "undo" ? mutation.before : mutation.after);
+      applyCellMutationState(worksheet, mutation.cell, direction === "undo" ? mutation.before : mutation.after, plain);
     }
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
@@ -3452,7 +3454,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setSelection(nextSelection);
     selectionAnchorRef.current = nextSelection ? normalizeRange(nextSelection).start : nextActiveCell;
     isApplyingHistoryRef.current = false;
-  }, [maybeRecalculateWorkbook, refreshWorkbookState, sheets, workbook]);
+  }, [maybeRecalculateWorkbook, refreshWorkbookState, sheets, workbook, plainStyle]);
 
   const recordHistoryBeforeMutation = React.useCallback(() => {
     if (isApplyingHistoryRef.current) {
@@ -3727,7 +3729,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         }
 
         const cell = { row: targetRow, col: startCol + colOffset };
-        applyCellMutationState(worksheet, cell, after);
+        applyCellMutationState(worksheet, cell, after, plainStyle());
         mutations.push({
           after,
           before,
@@ -3750,7 +3752,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     refreshWorkbookState,
     selection,
     tables,
-    workbook
+    workbook,
+    plainStyle
   ]);
 
   const download = React.useCallback(() => {
@@ -3814,122 +3817,40 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setShouldAutoCalculate(false);
   }, [getWorkerClient, isWorkerBacked, refreshWorkbookState, workbook]);
 
-  const applyReadOnlyResizeOverride = React.useCallback((
+  const applyReadOnlyResizeOverrides = React.useCallback((
     axis: "column" | "row",
-    actualIndex: number,
-    sizePx: number
+    sizes: ReadonlyArray<XlsxAxisSize>
   ) => {
     if (!activeSheet) {
       return;
     }
 
-    const contentSizePx = resolveContentSheetAxisPixels(sizePx, activeSheet.showGridLines);
+    const showGridLines = activeSheet.showGridLines;
     const targetWorkbookSheetIndex = activeSheet.workbookSheetIndex;
     setSheets((currentSheets) => currentSheets.map((sheet) => {
       if (sheet.workbookSheetIndex !== targetWorkbookSheetIndex) {
         return sheet;
       }
 
-      if (axis === "column") {
-        const nextColWidthOverridesPx = {
-          ...sheet.colWidthOverridesPx,
-          [actualIndex]: contentSizePx
-        };
-        const nextColWidths = [...sheet.colWidths];
-        const visibleColIndex = sheet.visibleCols.indexOf(actualIndex);
-        if (visibleColIndex >= 0) {
-          nextColWidths[visibleColIndex] = contentSizePx;
+      const visible = axis === "column" ? sheet.visibleCols : sheet.visibleRows;
+      const visibleIndexByActual = new Map(visible.map((actual, visibleIndex) => [actual, visibleIndex]));
+      const overrides = { ...(axis === "column" ? sheet.colWidthOverridesPx : sheet.rowHeightOverridesPx) };
+      const visibleSizes = [...(axis === "column" ? sheet.colWidths : sheet.rowHeights)];
+      for (const { index, sizePx } of sizes) {
+        const contentSizePx = resolveContentSheetAxisPixels(sizePx, showGridLines);
+        overrides[index] = contentSizePx;
+        const visibleIndex = visibleIndexByActual.get(index);
+        if (visibleIndex !== undefined) {
+          visibleSizes[visibleIndex] = contentSizePx;
         }
-
-        return {
-          ...sheet,
-          colWidthOverridesPx: nextColWidthOverridesPx,
-          colWidths: nextColWidths
-        };
       }
 
-      const nextRowHeightOverridesPx = {
-        ...sheet.rowHeightOverridesPx,
-        [actualIndex]: contentSizePx
-      };
-      const nextRowHeights = [...sheet.rowHeights];
-      const visibleRowIndex = sheet.visibleRows.indexOf(actualIndex);
-      if (visibleRowIndex >= 0) {
-        nextRowHeights[visibleRowIndex] = contentSizePx;
-      }
-
-      return {
-        ...sheet,
-        rowHeightOverridesPx: nextRowHeightOverridesPx,
-        rowHeights: nextRowHeights
-      };
+      return axis === "column"
+        ? { ...sheet, colWidthOverridesPx: overrides, colWidths: visibleSizes }
+        : { ...sheet, rowHeightOverridesPx: overrides, rowHeights: visibleSizes };
     }));
     setRevision((current) => current + 1);
   }, [activeSheet]);
-
-  const resizeColumn = React.useCallback((col: number, widthPx: number) => {
-    if ((readOnly && !canResizeReadOnly) || !activeSheet) {
-      return;
-    }
-
-    if (isWorkerBacked) {
-      applyReadOnlyResizeOverride("column", col, widthPx);
-      return;
-    }
-
-    if (!workbook) {
-      return;
-    }
-
-    recordHistoryBeforeMutation();
-    const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
-    worksheet.setColumnWidth(
-      col,
-      pxToSheetColumnWidth(resolveContentSheetAxisPixels(widthPx, activeSheet.showGridLines))
-    );
-    refreshWorkbookState(workbook);
-  }, [
-    activeSheet,
-    applyReadOnlyResizeOverride,
-    canResizeReadOnly,
-    isWorkerBacked,
-    readOnly,
-    recordHistoryBeforeMutation,
-    refreshWorkbookState,
-    workbook
-  ]);
-
-  const resizeRow = React.useCallback((row: number, heightPx: number) => {
-    if ((readOnly && !canResizeReadOnly) || !activeSheet) {
-      return;
-    }
-
-    if (isWorkerBacked) {
-      applyReadOnlyResizeOverride("row", row, heightPx);
-      return;
-    }
-
-    if (!workbook) {
-      return;
-    }
-
-    recordHistoryBeforeMutation();
-    const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
-    worksheet.setRowHeight(
-      row,
-      pxToSheetRowHeight(resolveContentSheetAxisPixels(heightPx, activeSheet.showGridLines))
-    );
-    refreshWorkbookState(workbook);
-  }, [
-    activeSheet,
-    applyReadOnlyResizeOverride,
-    canResizeReadOnly,
-    isWorkerBacked,
-    readOnly,
-    recordHistoryBeforeMutation,
-    refreshWorkbookState,
-    workbook
-  ]);
 
   const resizeAxis = React.useCallback((axis: "column" | "row", sizes: ReadonlyArray<XlsxAxisSize>) => {
     if ((readOnly && !canResizeReadOnly) || !activeSheet || sizes.length === 0) {
@@ -3937,9 +3858,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     }
 
     if (isWorkerBacked) {
-      for (const { index, sizePx } of sizes) {
-        applyReadOnlyResizeOverride(axis, index, sizePx);
-      }
+      applyReadOnlyResizeOverrides(axis, sizes);
       return;
     }
 
@@ -3960,7 +3879,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     refreshWorkbookState(workbook);
   }, [
     activeSheet,
-    applyReadOnlyResizeOverride,
+    applyReadOnlyResizeOverrides,
     canResizeReadOnly,
     isWorkerBacked,
     readOnly,
@@ -3968,6 +3887,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     refreshWorkbookState,
     workbook
   ]);
+  const resizeColumn = React.useCallback(
+    (col: number, widthPx: number) => resizeAxis("column", [{ index: col, sizePx: widthPx }]),
+    [resizeAxis]
+  );
+  const resizeRow = React.useCallback(
+    (row: number, heightPx: number) => resizeAxis("row", [{ index: row, sizePx: heightPx }]),
+    [resizeAxis]
+  );
   const resizeColumns = React.useCallback((sizes: ReadonlyArray<XlsxAxisSize>) => resizeAxis("column", sizes), [resizeAxis]);
   const resizeRows = React.useCallback((sizes: ReadonlyArray<XlsxAxisSize>) => resizeAxis("row", sizes), [resizeAxis]);
 
@@ -4621,6 +4548,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
+    const plain = plainStyle();
     const mutations: RangeCellMutation[] = [];
     for (let row = nextRange.start.row; row <= nextRange.end.row; row += 1) {
       for (let col = nextRange.start.col; col <= nextRange.end.col; col += 1) {
@@ -4646,9 +4574,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
           worksheet.setCell(cellAddressToA1(targetCell), sourceValue);
         }
 
-        if (sourceStyle && typeof sourceStyle === "object") {
-          worksheet.setCellStyleAt(targetCell.row, targetCell.col, sourceStyle);
-        }
+        worksheet.setCellStyleAt(targetCell.row, targetCell.col, styleToRestore(sourceStyle, plain));
 
         const after = captureCellMutationState(targetCell);
         if (!after) {
@@ -4668,7 +4594,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setActiveCell(nextRange.end);
     selectionAnchorRef.current = nextRange.start;
     recordRangeEditHistory(mutations, nextRange, nextRange.end);
-  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
+  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook, plainStyle]);
 
   const mergeSelection = React.useCallback(() => {
     const worksheet = getActiveWorksheet();
@@ -4896,6 +4822,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     if (hasMergeOperations) {
       recordHistoryBeforeMutation();
     }
+    const plain = plainStyle();
     for (const cell of payload.cells) {
       const nextCell = {
         col: targetCell.col + cell.colOffset,
@@ -4903,7 +4830,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       };
       const before = hasMergeOperations ? null : captureCellMutationState(nextCell);
 
-      writePastedCell(worksheet, cellAddressToA1(nextCell), nextCell.row, nextCell.col, cell, payload.styles);
+      writePastedCell(worksheet, cellAddressToA1(nextCell), nextCell.row, nextCell.col, cell, payload.styles, plain);
       if (before) {
         const after = captureCellMutationState(nextCell);
         if (!after) {
@@ -4963,7 +4890,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     recordRangeEditHistory,
     refreshWorkbookState,
     selection,
-    workbook
+    workbook,
+    plainStyle
   ]);
 
   const copySelectionToClipboard = React.useCallback(async () => {
@@ -4972,9 +4900,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return false;
     }
 
+    // Browsers refuse custom types here (Chrome: "not supported on write"), which made this copy
+    // nothing at all. The cells' own format travels only through copy events.
     if (typeof ClipboardItem === "function" && navigator.clipboard.write) {
       const item = new ClipboardItem({
-        [INTERNAL_CLIPBOARD_MIME]: new Blob([clipboardData.structured], { type: INTERNAL_CLIPBOARD_MIME }),
         "text/html": new Blob([clipboardData.html], { type: "text/html" }),
         "text/plain": new Blob([clipboardData.text], { type: "text/plain" })
       });

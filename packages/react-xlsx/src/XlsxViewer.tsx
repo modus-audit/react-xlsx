@@ -12389,31 +12389,41 @@ function XlsxGrid({
   }, [readOnly, resolvePointerCellFromClient, startEditing]);
 
   /** The corner above the row numbers and left of the column letters, which selects every cell. */
-  const isCanvasCornerPoint = React.useCallback((clientX: number, clientY: number) => {
+  /** A press in the corner above the row numbers selects every cell. The header canvases run
+   *  under the corner (their scroll buffer), so their handlers check this before anything else. */
+  const selectAllFromCorner = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     const scrollerRect = scrollRef.current?.getBoundingClientRect();
-    return Boolean(
-      scrollerRect &&
-        clientX - scrollerRect.left < ROW_HEADER_WIDTH &&
-        clientY - scrollerRect.top < HEADER_HEIGHT
-    );
-  }, []);
-  const selectAllVisibleCells = React.useCallback(() => {
     if (
+      !scrollerRect ||
+      event.clientX - scrollerRect.left >= displayRowHeaderWidth ||
+      event.clientY - scrollerRect.top >= displayHeaderHeight ||
       firstVisibleRow === undefined ||
       lastVisibleRow === undefined ||
       firstVisibleCol === undefined ||
       lastVisibleCol === undefined
     ) {
-      return;
+      return false;
     }
+    event.preventDefault();
+    focusGrid();
     axisSelectionRef.current = null;
     commitSelectionRange({
       start: { row: firstVisibleRow, col: firstVisibleCol },
       end: { row: lastVisibleRow, col: lastVisibleCol }
     });
-  }, [commitSelectionRange, firstVisibleCol, firstVisibleRow, lastVisibleCol, lastVisibleRow]);
+    return true;
+  }, [
+    commitSelectionRange,
+    displayHeaderHeight,
+    displayRowHeaderWidth,
+    firstVisibleCol,
+    firstVisibleRow,
+    focusGrid,
+    lastVisibleCol,
+    lastVisibleRow
+  ]);
   const handleCanvasColumnHeaderPointerDown = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (event.button !== 0 || firstVisibleRow === undefined || lastVisibleRow === undefined) {
+    if (event.button !== 0 || firstVisibleRow === undefined || lastVisibleRow === undefined || selectAllFromCorner(event)) {
       return;
     }
 
@@ -12427,11 +12437,6 @@ function XlsxGrid({
 
     const actualCol = resolveCanvasColumnHeaderTarget(event.clientX);
     if (actualCol === null) {
-      if (isCanvasCornerPoint(event.clientX, event.clientY)) {
-        event.preventDefault();
-        focusGrid();
-        selectAllVisibleCells();
-      }
       return;
     }
 
@@ -12479,17 +12484,16 @@ function XlsxGrid({
     commitSelectionRange,
     firstVisibleRow,
     focusGrid,
-    isCanvasCornerPoint,
     lastVisibleRow,
     resolveCanvasColumnHeaderTarget,
     resolveCanvasColumnResizeTarget,
     rowPrefixSums,
-    selectAllVisibleCells,
+    selectAllFromCorner,
     startCellSelection
   ]);
 
   const handleCanvasRowHeaderPointerDown = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (event.button !== 0 || firstVisibleCol === undefined || lastVisibleCol === undefined) {
+    if (event.button !== 0 || firstVisibleCol === undefined || lastVisibleCol === undefined || selectAllFromCorner(event)) {
       return;
     }
 
@@ -12503,11 +12507,6 @@ function XlsxGrid({
 
     const actualRow = resolveCanvasRowHeaderTarget(event.clientY);
     if (actualRow === null) {
-      if (isCanvasCornerPoint(event.clientX, event.clientY)) {
-        event.preventDefault();
-        focusGrid();
-        selectAllVisibleCells();
-      }
       return;
     }
 
@@ -12553,13 +12552,12 @@ function XlsxGrid({
     commitSelectionRange,
     firstVisibleCol,
     focusGrid,
-    isCanvasCornerPoint,
     lastVisibleCol,
     resolveCanvasRowHeaderTarget,
     resolveCanvasRowResizeTarget,
     rowIndexByActual,
     rowPrefixSums,
-    selectAllVisibleCells,
+    selectAllFromCorner,
     startCellSelection
   ]);
 
