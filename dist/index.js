@@ -6794,6 +6794,88 @@ function getSheetsWasmModule() {
   return wasmModulePromise;
 }
 
+// src/clipboard-cells.ts
+function plainCellStyle(defaultFont) {
+  return {
+    font: {
+      ...typeof defaultFont?.name === "string" ? { name: defaultFont.name } : {},
+      ...typeof defaultFont?.size === "number" ? { size: defaultFont.size } : {},
+      bold: false,
+      italic: false,
+      underline: "none",
+      strikethrough: false,
+      color: { colorType: "auto" },
+      verticalAlign: "baseline"
+    },
+    fill: { fillType: "none" },
+    border: {
+      left: { style: "none" },
+      right: { style: "none" },
+      top: { style: "none" },
+      bottom: { style: "none" },
+      diagonal: { style: "none" },
+      diagonalDirection: "none"
+    },
+    alignment: {
+      horizontal: "general",
+      vertical: "bottom",
+      wrapText: false,
+      shrinkToFit: false,
+      indent: 0,
+      rotation: 0,
+      readingOrder: "contextDependent"
+    },
+    numberFormat: { formatType: "general" },
+    protection: { locked: true, hidden: false }
+  };
+}
+function styleToRestore(style, plain) {
+  return style && typeof style === "object" ? style : plain;
+}
+function clipboardStyleTable() {
+  const styles = [];
+  const indexByKey = /* @__PURE__ */ new Map();
+  return {
+    styles,
+    add(style) {
+      const key = JSON.stringify(style ?? null);
+      let index = indexByKey.get(key);
+      if (index === void 0) {
+        index = styles.push(style ?? null) - 1;
+        indexByKey.set(key, index);
+      }
+      return index;
+    }
+  };
+}
+function primitive(value) {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? value : void 0;
+}
+function copiedCell(worksheet, row, col, offset, displayValue, style, styles) {
+  const formula = worksheet.getFormulaAt(row, col) ?? null;
+  const value = formula ? worksheet.getCalculatedValueAt(row, col) : worksheet.getCellAt(row, col);
+  const raw = primitive(value.toJs());
+  return {
+    ...offset,
+    formula,
+    value: displayValue,
+    ...raw === void 0 ? {} : { raw },
+    styleIndex: styles.add(style)
+  };
+}
+function writePastedCell(worksheet, a1, row, col, cell, styles, plain) {
+  if (!cell.styleOnly) {
+    if (cell.formula) {
+      worksheet.setFormula(a1, cell.formula);
+    } else {
+      worksheet.setCell(a1, cell.raw ?? cell.value);
+    }
+  }
+  if (cell.styleIndex !== void 0 && styles && cell.styleIndex < styles.length) {
+    worksheet.setCellStyleAt(row, col, styleToRestore(styles[cell.styleIndex], plain));
+  }
+}
+
 // src/worker-client.ts
 function createAbortError() {
   if (typeof DOMException !== "undefined") {
@@ -6916,6 +6998,21 @@ var XlsxWorkerClient = class {
 };
 function cloneArrayBufferForTransfer(buffer) {
   return buffer.slice(0);
+}
+
+// src/merge-regions.ts
+function isMergedRegion(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const region = value;
+  return typeof region.range === "string" && ["startRow", "startCol", "endRow", "endCol"].every((key) => typeof region[key] === "number");
+}
+function mergesTouching(mergedRegions, range) {
+  if (!Array.isArray(mergedRegions)) return [];
+  const top = Math.min(range.start.row, range.end.row);
+  const bottom = Math.max(range.start.row, range.end.row);
+  const left = Math.min(range.start.col, range.end.col);
+  const right = Math.max(range.start.col, range.end.col);
+  return mergedRegions.filter(isMergedRegion).filter((region) => region.startRow <= bottom && region.endRow >= top && region.startCol <= right && region.endCol >= left).map((region) => region.range);
 }
 
 // src/zip-entry-names.ts
@@ -8024,14 +8121,14 @@ function coerceUserEnteredValue(value) {
   }
   return value;
 }
-function applyCellMutationState(worksheet, cell, state) {
+function applyCellMutationState(worksheet, cell, state, plain) {
   if (state.formula) {
     worksheet.setFormula(cellAddressToA1(cell), state.formula);
   } else {
     worksheet.setCell(cellAddressToA1(cell), normalizeCellValue(state.value));
   }
-  if (state.style && typeof state.style === "object") {
-    worksheet.setCellStyleAt(cell.row, cell.col, state.style);
+  if (state.style && typeof state.style === "object" || worksheet.getCellStyleAt(cell.row, cell.col)) {
+    worksheet.setCellStyleAt(cell.row, cell.col, styleToRestore(state.style, plain));
   }
 }
 function escapeHtml(value) {
@@ -8483,6 +8580,10 @@ function useXlsxViewerController(options) {
   const deferredBufferRef = React.useRef(null);
   const [deferredLoadFileSize, setDeferredLoadFileSize] = React.useState(null);
   const imageAssetsRef = React.useRef(null);
+  const plainStyle = React.useCallback(
+    () => plainCellStyle(imageAssetsRef.current?.styleById?.[0]?.font),
+    []
+  );
   const chartAssetsRef = React.useRef(null);
   const chartLoadRequestTokenRef = React.useRef(0);
   const chartDisplayFallbackCleanupRef = React.useRef(null);
@@ -9492,24 +9593,28 @@ function useXlsxViewerController(options) {
     const normalized = normalizeRange(targetRange);
     const rows = [];
     const htmlRows = [];
+    const styleTable = clipboardStyleTable();
     const payload = {
       cells: [],
       cols: normalized.end.col - normalized.start.col + 1,
       merges: [],
-      rows: normalized.end.row - normalized.start.row + 1
+      rows: normalized.end.row - normalized.start.row + 1,
+      styles: styleTable.styles
     };
     for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
       const textCells = [];
       const htmlCells = [];
       for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
+        const offset = { colOffset: col - normalized.start.col, rowOffset: row - normalized.start.row };
+        const ownStyle = worksheet.getCellStyleAt(row, col);
         if (worksheet.isMergedSecondary(row, col)) {
+          payload.cells.push({ ...offset, formula: null, value: "", styleOnly: true, styleIndex: styleTable.add(ownStyle) });
           textCells.push("");
           continue;
         }
-        const formula = worksheet.getFormulaAt(row, col) ?? null;
         const value = getCellDisplayValue2({ row, col });
         const merge = worksheet.getMergeSpan(row, col);
-        const rawStyle = worksheet.getCellStyleAt(row, col) ?? resolveInheritedCellStyle(activeSheet, row, col);
+        const rawStyle = ownStyle ?? resolveInheritedCellStyle(activeSheet, row, col);
         const cellStyles = [
           "padding:2px 4px",
           "white-space:pre-wrap",
@@ -9570,12 +9675,9 @@ function useXlsxViewerController(options) {
         }
         const rowSpan = Math.min(merge?.rowSpan ?? 1, normalized.end.row - row + 1);
         const colSpan = Math.min(merge?.colSpan ?? 1, normalized.end.col - col + 1);
-        payload.cells.push({
-          colOffset: col - normalized.start.col,
-          formula,
-          rowOffset: row - normalized.start.row,
-          value
-        });
+        payload.cells.push(
+          copiedCell(worksheet, row, col, offset, value, ownStyle, styleTable)
+        );
         if (rowSpan > 1 || colSpan > 1) {
           payload.merges.push({
             colOffset: col - normalized.start.col,
@@ -9729,7 +9831,7 @@ function useXlsxViewerController(options) {
     const visibleSheetIndex = sheets.findIndex((sheet) => sheet.workbookSheetIndex === entry.sheetIndex);
     const targetState = direction === "undo" ? entry.before : entry.after;
     isApplyingHistoryRef.current = true;
-    applyCellMutationState(worksheet, entry.cell, targetState);
+    applyCellMutationState(worksheet, entry.cell, targetState, plainStyle());
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
     const nextActiveCell = direction === "undo" ? entry.activeCellBefore : entry.activeCellAfter;
@@ -9741,7 +9843,7 @@ function useXlsxViewerController(options) {
     setSelection(nextSelection);
     selectionAnchorRef.current = nextSelection ? normalizeRange(nextSelection).start : nextActiveCell;
     isApplyingHistoryRef.current = false;
-  }, [maybeRecalculateWorkbook, refreshWorkbookState, sheets, workbook]);
+  }, [maybeRecalculateWorkbook, refreshWorkbookState, sheets, workbook, plainStyle]);
   const applyRangeEditHistoryEntry = React.useCallback((entry, direction) => {
     if (!workbook) {
       return;
@@ -9749,8 +9851,9 @@ function useXlsxViewerController(options) {
     const worksheet = workbook.getSheet(entry.sheetIndex);
     const visibleSheetIndex = sheets.findIndex((sheet) => sheet.workbookSheetIndex === entry.sheetIndex);
     isApplyingHistoryRef.current = true;
+    const plain = plainStyle();
     for (const mutation of entry.mutations) {
-      applyCellMutationState(worksheet, mutation.cell, direction === "undo" ? mutation.before : mutation.after);
+      applyCellMutationState(worksheet, mutation.cell, direction === "undo" ? mutation.before : mutation.after, plain);
     }
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
@@ -9763,7 +9866,7 @@ function useXlsxViewerController(options) {
     setSelection(nextSelection);
     selectionAnchorRef.current = nextSelection ? normalizeRange(nextSelection).start : nextActiveCell;
     isApplyingHistoryRef.current = false;
-  }, [maybeRecalculateWorkbook, refreshWorkbookState, sheets, workbook]);
+  }, [maybeRecalculateWorkbook, refreshWorkbookState, sheets, workbook, plainStyle]);
   const recordHistoryBeforeMutation = React.useCallback(() => {
     if (isApplyingHistoryRef.current) {
       return;
@@ -9975,7 +10078,7 @@ function useXlsxViewerController(options) {
           continue;
         }
         const cell = { row: targetRow, col: startCol + colOffset };
-        applyCellMutationState(worksheet, cell, after);
+        applyCellMutationState(worksheet, cell, after, plainStyle());
         mutations.push({
           after,
           before,
@@ -9997,7 +10100,8 @@ function useXlsxViewerController(options) {
     refreshWorkbookState,
     selection,
     tables,
-    workbook
+    workbook,
+    plainStyle
   ]);
   const download = React.useCallback(() => {
     if (file) {
@@ -10048,55 +10152,38 @@ function useXlsxViewerController(options) {
     }
     setShouldAutoCalculate(false);
   }, [getWorkerClient, isWorkerBacked, refreshWorkbookState, workbook]);
-  const applyReadOnlyResizeOverride = React.useCallback((axis, actualIndex, sizePx) => {
+  const applyReadOnlyResizeOverrides = React.useCallback((axis, sizes) => {
     if (!activeSheet) {
       return;
     }
-    const contentSizePx = resolveContentSheetAxisPixels(sizePx, activeSheet.showGridLines);
+    const showGridLines = activeSheet.showGridLines;
     const targetWorkbookSheetIndex = activeSheet.workbookSheetIndex;
     setSheets((currentSheets) => currentSheets.map((sheet) => {
       if (sheet.workbookSheetIndex !== targetWorkbookSheetIndex) {
         return sheet;
       }
-      if (axis === "column") {
-        const nextColWidthOverridesPx = {
-          ...sheet.colWidthOverridesPx,
-          [actualIndex]: contentSizePx
-        };
-        const nextColWidths = [...sheet.colWidths];
-        const visibleColIndex = sheet.visibleCols.indexOf(actualIndex);
-        if (visibleColIndex >= 0) {
-          nextColWidths[visibleColIndex] = contentSizePx;
+      const visible = axis === "column" ? sheet.visibleCols : sheet.visibleRows;
+      const visibleIndexByActual = new Map(visible.map((actual, visibleIndex) => [actual, visibleIndex]));
+      const overrides = { ...axis === "column" ? sheet.colWidthOverridesPx : sheet.rowHeightOverridesPx };
+      const visibleSizes = [...axis === "column" ? sheet.colWidths : sheet.rowHeights];
+      for (const { index, sizePx } of sizes) {
+        const contentSizePx = resolveContentSheetAxisPixels(sizePx, showGridLines);
+        overrides[index] = contentSizePx;
+        const visibleIndex = visibleIndexByActual.get(index);
+        if (visibleIndex !== void 0) {
+          visibleSizes[visibleIndex] = contentSizePx;
         }
-        return {
-          ...sheet,
-          colWidthOverridesPx: nextColWidthOverridesPx,
-          colWidths: nextColWidths
-        };
       }
-      const nextRowHeightOverridesPx = {
-        ...sheet.rowHeightOverridesPx,
-        [actualIndex]: contentSizePx
-      };
-      const nextRowHeights = [...sheet.rowHeights];
-      const visibleRowIndex = sheet.visibleRows.indexOf(actualIndex);
-      if (visibleRowIndex >= 0) {
-        nextRowHeights[visibleRowIndex] = contentSizePx;
-      }
-      return {
-        ...sheet,
-        rowHeightOverridesPx: nextRowHeightOverridesPx,
-        rowHeights: nextRowHeights
-      };
+      return axis === "column" ? { ...sheet, colWidthOverridesPx: overrides, colWidths: visibleSizes } : { ...sheet, rowHeightOverridesPx: overrides, rowHeights: visibleSizes };
     }));
     setRevision((current) => current + 1);
   }, [activeSheet]);
-  const resizeColumn = React.useCallback((col, widthPx) => {
-    if (readOnly && !canResizeReadOnly || !activeSheet) {
+  const resizeAxis = React.useCallback((axis, sizes) => {
+    if (readOnly && !canResizeReadOnly || !activeSheet || sizes.length === 0) {
       return;
     }
     if (isWorkerBacked) {
-      applyReadOnlyResizeOverride("column", col, widthPx);
+      applyReadOnlyResizeOverrides(axis, sizes);
       return;
     }
     if (!workbook) {
@@ -10104,14 +10191,18 @@ function useXlsxViewerController(options) {
     }
     recordHistoryBeforeMutation();
     const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
-    worksheet.setColumnWidth(
-      col,
-      pxToSheetColumnWidth(resolveContentSheetAxisPixels(widthPx, activeSheet.showGridLines))
-    );
+    for (const { index, sizePx } of sizes) {
+      const contentPx = resolveContentSheetAxisPixels(sizePx, activeSheet.showGridLines);
+      if (axis === "column") {
+        worksheet.setColumnWidth(index, pxToSheetColumnWidth(contentPx));
+      } else {
+        worksheet.setRowHeight(index, pxToSheetRowHeight(contentPx));
+      }
+    }
     refreshWorkbookState(workbook);
   }, [
     activeSheet,
-    applyReadOnlyResizeOverride,
+    applyReadOnlyResizeOverrides,
     canResizeReadOnly,
     isWorkerBacked,
     readOnly,
@@ -10119,34 +10210,16 @@ function useXlsxViewerController(options) {
     refreshWorkbookState,
     workbook
   ]);
-  const resizeRow = React.useCallback((row, heightPx) => {
-    if (readOnly && !canResizeReadOnly || !activeSheet) {
-      return;
-    }
-    if (isWorkerBacked) {
-      applyReadOnlyResizeOverride("row", row, heightPx);
-      return;
-    }
-    if (!workbook) {
-      return;
-    }
-    recordHistoryBeforeMutation();
-    const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
-    worksheet.setRowHeight(
-      row,
-      pxToSheetRowHeight(resolveContentSheetAxisPixels(heightPx, activeSheet.showGridLines))
-    );
-    refreshWorkbookState(workbook);
-  }, [
-    activeSheet,
-    applyReadOnlyResizeOverride,
-    canResizeReadOnly,
-    isWorkerBacked,
-    readOnly,
-    recordHistoryBeforeMutation,
-    refreshWorkbookState,
-    workbook
-  ]);
+  const resizeColumn = React.useCallback(
+    (col, widthPx) => resizeAxis("column", [{ index: col, sizePx: widthPx }]),
+    [resizeAxis]
+  );
+  const resizeRow = React.useCallback(
+    (row, heightPx) => resizeAxis("row", [{ index: row, sizePx: heightPx }]),
+    [resizeAxis]
+  );
+  const resizeColumns = React.useCallback((sizes) => resizeAxis("column", sizes), [resizeAxis]);
+  const resizeRows = React.useCallback((sizes) => resizeAxis("row", sizes), [resizeAxis]);
   const resolveAnchoredObjectRect = React.useCallback((anchor, worksheet) => {
     const resolveAxisSum = (index, getSize) => {
       let total = 0;
@@ -10671,6 +10744,7 @@ function useXlsxViewerController(options) {
     if (sourceHeight <= 0 || sourceWidth <= 0) {
       return;
     }
+    const plain = plainStyle();
     const mutations = [];
     for (let row = nextRange.start.row; row <= nextRange.end.row; row += 1) {
       for (let col = nextRange.start.col; col <= nextRange.end.col; col += 1) {
@@ -10692,9 +10766,7 @@ function useXlsxViewerController(options) {
           const sourceValue = normalizeCellValue(worksheet.getCellAt(sourceRow, sourceCol).toJs());
           worksheet.setCell(cellAddressToA1(targetCell), sourceValue);
         }
-        if (sourceStyle && typeof sourceStyle === "object") {
-          worksheet.setCellStyleAt(targetCell.row, targetCell.col, sourceStyle);
-        }
+        worksheet.setCellStyleAt(targetCell.row, targetCell.col, styleToRestore(sourceStyle, plain));
         const after = captureCellMutationState(targetCell);
         if (!after) {
           continue;
@@ -10712,7 +10784,7 @@ function useXlsxViewerController(options) {
     setActiveCell(nextRange.end);
     selectionAnchorRef.current = nextRange.start;
     recordRangeEditHistory(mutations, nextRange, nextRange.end);
-  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
+  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook, plainStyle]);
   const mergeSelection = React.useCallback(() => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !selection || !workbook) {
@@ -10727,8 +10799,14 @@ function useXlsxViewerController(options) {
     if (readOnly || !worksheet || !selection || !workbook) {
       return;
     }
+    const merges = mergesTouching(worksheet.mergedRegions, selection);
+    if (merges.length === 0) {
+      return;
+    }
     recordHistoryBeforeMutation();
-    worksheet.unmergeCells(rangeToA1(selection));
+    for (const merge of merges) {
+      worksheet.unmergeCells(merge);
+    }
     refreshWorkbookState(workbook);
   }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
   const addSheet = React.useCallback((name) => {
@@ -10910,38 +10988,24 @@ function useXlsxViewerController(options) {
     if (hasMergeOperations) {
       recordHistoryBeforeMutation();
     }
+    const plain = plainStyle();
     for (const cell of payload.cells) {
       const nextCell = {
         col: targetCell.col + cell.colOffset,
         row: targetCell.row + cell.rowOffset
       };
       const before = hasMergeOperations ? null : captureCellMutationState(nextCell);
-      if (cell.formula) {
-        worksheet.setFormula(cellAddressToA1(nextCell), cell.formula);
-        if (before) {
-          const after = captureCellMutationState(nextCell);
-          if (!after) {
-            continue;
-          }
-          mutations.push({
-            after,
-            before,
-            cell: nextCell
-          });
+      writePastedCell(worksheet, cellAddressToA1(nextCell), nextCell.row, nextCell.col, cell, payload.styles, plain);
+      if (before) {
+        const after = captureCellMutationState(nextCell);
+        if (!after) {
+          continue;
         }
-      } else {
-        worksheet.setCell(cellAddressToA1(nextCell), cell.value);
-        if (before) {
-          const after = captureCellMutationState(nextCell);
-          if (!after) {
-            continue;
-          }
-          mutations.push({
-            after,
-            before,
-            cell: nextCell
-          });
-        }
+        mutations.push({
+          after,
+          before,
+          cell: nextCell
+        });
       }
     }
     if (Array.isArray(payload.merges)) {
@@ -10988,7 +11052,8 @@ function useXlsxViewerController(options) {
     recordRangeEditHistory,
     refreshWorkbookState,
     selection,
-    workbook
+    workbook,
+    plainStyle
   ]);
   const copySelectionToClipboard = React.useCallback(async () => {
     const clipboardData = getClipboardData();
@@ -10997,7 +11062,6 @@ function useXlsxViewerController(options) {
     }
     if (typeof ClipboardItem === "function" && navigator.clipboard.write) {
       const item = new ClipboardItem({
-        [INTERNAL_CLIPBOARD_MIME]: new Blob([clipboardData.structured], { type: INTERNAL_CLIPBOARD_MIME }),
         "text/html": new Blob([clipboardData.html], { type: "text/html" }),
         "text/plain": new Blob([clipboardData.text], { type: "text/plain" })
       });
@@ -11157,7 +11221,9 @@ function useXlsxViewerController(options) {
       resizeChartBy,
       resizeImageBy,
       resizeColumn,
+      resizeColumns,
       resizeRow,
+      resizeRows,
       setCellFormula,
       setCellStyle,
       setCellValue,
@@ -11279,7 +11345,9 @@ function useXlsxViewerController(options) {
       resizeChartBy,
       resizeImageBy,
       resizeColumn,
+      resizeColumns,
       resizeRow,
+      resizeRows,
       setCellFormula,
       setCellStyle,
       setCellValue,
@@ -11911,6 +11979,13 @@ function resolveCellTextClipOverscan(overscan, usesWrappedText) {
     horizontal: overscan,
     vertical: usesWrappedText ? 0 : overscan
   };
+}
+
+// src/resize-hit-slop.ts
+var MAX_SLOP_PX = 8;
+var MIN_SLOP_PX = 2;
+function resizeHitSlopPx(sizePx) {
+  return Math.max(MIN_SLOP_PX, Math.min(MAX_SLOP_PX, Math.floor(sizePx / 6)));
 }
 
 // src/chart-renderer.tsx
@@ -18758,7 +18833,6 @@ var OPEN_GRID_HORIZONTAL_EDGE_PX = 480;
 var SELECTION_DRAG_THRESHOLD_PX = 4;
 var IMAGE_MIN_SIZE_PX = 16;
 var IMAGE_HANDLE_SIZE_PX = 10;
-var CANVAS_RESIZE_HIT_SLOP_PX = 8;
 var CANVAS_VIEWPORT_OVERSCAN_PX = 480;
 var CANVAS_SCROLL_BUFFER_PX = 480;
 var CANVAS_DEFERRED_VIEWPORT_SYNC_THRESHOLD_PX = CANVAS_SCROLL_BUFFER_PX - 96;
@@ -24012,9 +24086,9 @@ function GridRow({
               onPointerDown: (event) => onRowResizePointerDown(event, actualRow, rowHeight),
               style: {
                 backgroundColor: "transparent",
-                bottom: -8 * zoomFactor,
+                bottom: -resizeHitSlopPx(rowHeight),
                 cursor: "row-resize",
-                height: 16 * zoomFactor,
+                height: 2 * resizeHitSlopPx(rowHeight),
                 left: 0,
                 position: "absolute",
                 width: "100%",
@@ -28160,6 +28234,7 @@ function XlsxGrid({
     }
     event.preventDefault();
     focusGrid();
+    const append = (event.ctrlKey || event.metaKey) && !event.shiftKey;
     const currentSelection = selectionRef.current;
     const anchorRow = event.shiftKey && currentSelection ? currentSelection.start.row : actualRow;
     const initialRange = normalizeRange2({
@@ -28178,13 +28253,16 @@ function XlsxGrid({
       { row: actualRow, col: firstVisibleCol },
       pointerOrigin,
       null,
-      true,
+      !append,
       initialRange,
       event.clientX,
-      event.clientY
+      event.clientY,
+      append
     );
     axisSelectionRef.current = { axis: "row", startRow: anchorRow, endRow: actualRow };
-    commitSelectionRange(initialRange);
+    if (!append) {
+      commitSelectionRange(initialRange);
+    }
   }, [commitSelectionRange, firstVisibleCol, focusGrid, lastVisibleCol, resolveRowPointerOrigin]);
   const handleColumnPointerDown = React4.useCallback((event, actualCol) => {
     if (event.button !== 0 || firstVisibleRow === void 0 || lastVisibleRow === void 0) {
@@ -28192,6 +28270,7 @@ function XlsxGrid({
     }
     event.preventDefault();
     focusGrid();
+    const append = (event.ctrlKey || event.metaKey) && !event.shiftKey;
     const currentSelection = selectionRef.current;
     const anchorCol = event.shiftKey && currentSelection ? currentSelection.start.col : actualCol;
     const initialRange = normalizeRange2({
@@ -28210,13 +28289,16 @@ function XlsxGrid({
       { row: firstVisibleRow, col: actualCol },
       pointerOrigin,
       null,
-      true,
+      !append,
       initialRange,
       event.clientX,
-      event.clientY
+      event.clientY,
+      append
     );
     axisSelectionRef.current = { axis: "column", startCol: anchorCol, endCol: actualCol };
-    commitSelectionRange(initialRange);
+    if (!append) {
+      commitSelectionRange(initialRange);
+    }
   }, [commitSelectionRange, firstVisibleRow, focusGrid, lastVisibleRow, resolveColumnPointerOrigin]);
   const handleRowResizePointerDown = React4.useCallback((event, actualRow, rowHeight) => {
     if (!canResizeHeaders) {
@@ -28393,7 +28475,7 @@ function XlsxGrid({
     }
     const localX = clientX - scrollerRect.left;
     for (const column of canvasColumnHeaderCells) {
-      if (Math.abs(localX - (column.left + column.width)) <= CANVAS_RESIZE_HIT_SLOP_PX) {
+      if (Math.abs(localX - (column.left + column.width)) <= resizeHitSlopPx(column.width)) {
         return { actualCol: column.actualCol, width: column.width };
       }
     }
@@ -28422,7 +28504,7 @@ function XlsxGrid({
     }
     const localY = clientY - scrollerRect.top;
     for (const row of canvasRowHeaderCells) {
-      if (Math.abs(localY - (row.top + row.height)) <= CANVAS_RESIZE_HIT_SLOP_PX) {
+      if (Math.abs(localY - (row.top + row.height)) <= resizeHitSlopPx(row.height)) {
         return { actualRow: row.actualRow, height: row.height };
       }
     }
@@ -28566,6 +28648,18 @@ function XlsxGrid({
     }
     startEditing(cell);
   }, [readOnly, resolvePointerCellFromClient, startEditing]);
+  const handleCornerPointerDown = React4.useCallback((event) => {
+    if (event.button !== 0 || firstVisibleRow === void 0 || lastVisibleRow === void 0 || firstVisibleCol === void 0 || lastVisibleCol === void 0) {
+      return;
+    }
+    event.preventDefault();
+    focusGrid();
+    axisSelectionRef.current = null;
+    commitSelectionRange({
+      start: { row: firstVisibleRow, col: firstVisibleCol },
+      end: { row: lastVisibleRow, col: lastVisibleCol }
+    });
+  }, [commitSelectionRange, firstVisibleCol, firstVisibleRow, focusGrid, lastVisibleCol, lastVisibleRow]);
   const handleCanvasColumnHeaderPointerDown = React4.useCallback((event) => {
     if (event.button !== 0 || firstVisibleRow === void 0 || lastVisibleRow === void 0) {
       return;
@@ -28583,6 +28677,7 @@ function XlsxGrid({
     }
     event.preventDefault();
     focusGrid();
+    const append = (event.ctrlKey || event.metaKey) && !event.shiftKey;
     const currentSelection = selectionRef.current;
     const anchorCol = event.shiftKey && currentSelection ? currentSelection.start.col : actualCol;
     const initialRange = normalizeRange2({
@@ -28606,13 +28701,16 @@ function XlsxGrid({
         originContentY: rowPrefixSums[0] ?? 0
       },
       null,
-      true,
+      !append,
       initialRange,
       event.clientX,
-      event.clientY
+      event.clientY,
+      append
     );
     axisSelectionRef.current = { axis: "column", startCol: anchorCol, endCol: actualCol };
-    commitSelectionRange(initialRange);
+    if (!append) {
+      commitSelectionRange(initialRange);
+    }
   }, [
     colIndexByActual,
     colPrefixSums,
@@ -28642,6 +28740,7 @@ function XlsxGrid({
     }
     event.preventDefault();
     focusGrid();
+    const append = (event.ctrlKey || event.metaKey) && !event.shiftKey;
     const currentSelection = selectionRef.current;
     const anchorRow = event.shiftKey && currentSelection ? currentSelection.start.row : actualRow;
     const initialRange = normalizeRange2({
@@ -28665,13 +28764,16 @@ function XlsxGrid({
         originContentY: rowPrefixSums[anchorRowIndex] ?? 0
       },
       null,
-      true,
+      !append,
       initialRange,
       event.clientX,
-      event.clientY
+      event.clientY,
+      append
     );
     axisSelectionRef.current = { axis: "row", startRow: anchorRow, endRow: actualRow };
-    commitSelectionRange(initialRange);
+    if (!append) {
+      commitSelectionRange(initialRange);
+    }
   }, [
     colPrefixSums,
     commitSelectionRange,
@@ -30076,16 +30178,14 @@ function XlsxGrid({
     whiteSpace: "nowrap",
     zIndex: canvasHeaderOverlayZIndex
   }, zoomFactor);
-  const columnResizeHandleStyle = scaleCssProperties({
+  const columnResizeHandleStyle = {
     backgroundColor: "transparent",
     cursor: "col-resize",
     position: "absolute",
-    right: -8,
     top: 0,
-    width: 16,
     height: "100%",
     zIndex: 5
-  }, zoomFactor);
+  };
   const canvasBodyViewportLayerStyle = {
     height: 0,
     left: 0,
@@ -30177,7 +30277,7 @@ function XlsxGrid({
   const canvasCornerHeaderStyle = {
     display: drawingViewport.width > 0 && drawingViewport.height > 0 ? "block" : "none",
     left: 0,
-    pointerEvents: "none",
+    pointerEvents: "auto",
     position: "absolute",
     top: 0,
     transformOrigin: "0 0",
@@ -32023,7 +32123,7 @@ function XlsxGrid({
                     style: canvasLeftScrollHeaderStyle
                   }
                 ),
-                /* @__PURE__ */ jsx3("canvas", { ref: cornerHeaderCanvasRef, style: canvasCornerHeaderStyle })
+                /* @__PURE__ */ jsx3("canvas", { ref: cornerHeaderCanvasRef, onPointerDown: handleCornerPointerDown, style: canvasCornerHeaderStyle })
               ] }),
               editingCell && editingOverlayRect ? (() => {
                 const editingCellStyle = getCellData(editingCell.row, editingCell.col).style;
@@ -32136,6 +32236,7 @@ function XlsxGrid({
                     /* @__PURE__ */ jsx3(
                       "th",
                       {
+                        onPointerDown: handleCornerPointerDown,
                         style: {
                           ...headerCellStyle,
                           backgroundColor: palette.headerSurface,
@@ -32185,7 +32286,11 @@ function XlsxGrid({
                                   event.clientX
                                 );
                               },
-                              style: columnResizeHandleStyle
+                              style: {
+                                ...columnResizeHandleStyle,
+                                right: -resizeHitSlopPx(column.size),
+                                width: 2 * resizeHitSlopPx(column.size)
+                              }
                             }
                           )
                         ] })
