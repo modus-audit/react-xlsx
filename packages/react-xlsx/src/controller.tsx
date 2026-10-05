@@ -53,7 +53,7 @@ import { AUTO_CALCULATE_FORMULA_THRESHOLD, countWorkbookFormulas, safeCalculate 
 import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
 import { type ClipboardMatrixCell, clipboardStyleTable, copiedCell, plainCellStyle, styleToRestore, writePastedCell } from "./clipboard-cells";
 import { XlsxWorkerClient } from "./worker-client";
-import { mergesTouching } from "./merge-regions";
+import { mergesTouching, mergeTarget } from "./merge-regions";
 import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
 import type {
   UseXlsxViewerControllerOptions,
@@ -4596,16 +4596,28 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     recordRangeEditHistory(mutations, nextRange, nextRange.end);
   }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook, plainStyle]);
 
-  const mergeSelection = React.useCallback(() => {
+  const mergeSelection = React.useCallback((): XlsxCellRange | null => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !selection || !workbook) {
-      return;
+      return null;
     }
 
+    const target = mergeTarget(worksheet.mergedRegions, selection);
+    // Excel does nothing when asked to merge a single cell.
+    if (target.range.start.row === target.range.end.row && target.range.start.col === target.range.end.col) {
+      return null;
+    }
     recordHistoryBeforeMutation();
-    worksheet.mergeCells(rangeToA1(selection));
+    for (const merge of target.merges) {
+      worksheet.unmergeCells(merge);
+    }
+    worksheet.mergeCells(rangeToA1(target.range));
     refreshWorkbookState(workbook);
-  }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
+    // Excel leaves the merged block selected with its top-left cell active.
+    selectRange(target.range);
+    setActiveCell(target.range.start);
+    return target.range;
+  }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selectRange, selection, workbook]);
 
   const unmergeSelection = React.useCallback(() => {
     const worksheet = getActiveWorksheet();

@@ -8,6 +8,7 @@ import {
 import { resolveBuiltinTableStyle } from "./builtin-table-styles";
 import { resolveCellTextClipOverscan } from "./cell-text-clip";
 import { resizeHitSlopPx } from "./resize-hit-slop";
+import { visibleSpan } from "./visible-axis";
 import { resolveWorkbookColor, resolveWorkbookFillStyle } from "./colors";
 import { useXlsxViewerController, XlsxFileSizeLimitExceededError } from "./controller";
 import { MemoChartSvg } from "./chart-renderer";
@@ -10461,19 +10462,13 @@ function XlsxGrid({
 
   const rangeToOverlayRect = React.useCallback((range: XlsxCellRange) => {
     const normalized = normalizeRange(range);
-    const startRowIndex = rowIndexByActual.get(normalized.start.row);
-    const endRowIndex = rowIndexByActual.get(normalized.end.row);
-    const startColIndex = colIndexByActual.get(normalized.start.col);
-    const endColIndex = colIndexByActual.get(normalized.end.col);
-
-    if (
-      startRowIndex === undefined ||
-      endRowIndex === undefined ||
-      startColIndex === undefined ||
-      endColIndex === undefined
-    ) {
+    const rowSpan = visibleSpan(visibleRows, normalized.start.row, normalized.end.row);
+    const colSpan = visibleSpan(visibleCols, normalized.start.col, normalized.end.col);
+    if (!rowSpan || !colSpan) {
       return null;
     }
+    const [startRowIndex, endRowIndex] = rowSpan;
+    const [startColIndex, endColIndex] = colSpan;
 
     return {
       height: sumPrefixRange(rowPrefixSums, startRowIndex, endRowIndex),
@@ -10481,7 +10476,7 @@ function XlsxGrid({
       top: displayHeaderHeight + sumPrefixRange(rowPrefixSums, 0, startRowIndex - 1),
       width: sumPrefixRange(colPrefixSums, startColIndex, endColIndex)
     };
-  }, [colIndexByActual, colPrefixSums, displayHeaderHeight, displayRowHeaderWidth, rowIndexByActual, rowPrefixSums]);
+  }, [colPrefixSums, displayHeaderHeight, displayRowHeaderWidth, rowPrefixSums, visibleCols, visibleRows]);
 
   const selectionOverlay = React.useMemo(
     () => (displayedSelection ? rangeToOverlayRect(displayedSelection) : null),
@@ -10920,19 +10915,13 @@ function XlsxGrid({
           col: startCell.col + Math.max(1, merge?.colSpan ?? 1) - 1
         }
       : normalized.end;
-    const startRowIndex = rowIndexByActual.get(startCell.row);
-    const endRowIndex = rowIndexByActual.get(endCell.row);
-    const startColIndex = colIndexByActual.get(startCell.col);
-    const endColIndex = colIndexByActual.get(endCell.col);
-
-    if (
-      startRowIndex === undefined ||
-      endRowIndex === undefined ||
-      startColIndex === undefined ||
-      endColIndex === undefined
-    ) {
+    const rowSpan = visibleSpan(visibleRows, startCell.row, endCell.row);
+    const colSpan = visibleSpan(visibleCols, startCell.col, endCell.col);
+    if (!rowSpan || !colSpan) {
       return null;
     }
+    const [startRowIndex, endRowIndex] = rowSpan;
+    const [startColIndex, endColIndex] = colSpan;
 
     let left = displayRowHeaderWidth + sumPrefixRange(colPrefixSums, 0, startColIndex - 1);
     let top = displayHeaderHeight + sumPrefixRange(rowPrefixSums, 0, startRowIndex - 1);
@@ -10975,7 +10964,7 @@ function XlsxGrid({
       top: Math.max(displayHeaderHeight, top),
       width: Math.max(0, width)
     };
-  }, [colIndexByActual, colPrefixSums, displayDefaultColWidth, displayDefaultRowHeight, displayEffectiveColWidths, displayEffectiveRowHeights, displayHeaderHeight, displayRowHeaderWidth, resolveMergeAnchorCell, rowIndexByActual, rowPrefixSums, worksheet]);
+  }, [colIndexByActual, colPrefixSums, displayDefaultColWidth, displayDefaultRowHeight, displayEffectiveColWidths, displayEffectiveRowHeights, displayHeaderHeight, displayRowHeaderWidth, resolveMergeAnchorCell, rowIndexByActual, rowPrefixSums, visibleCols, visibleRows, worksheet]);
 
   const resolveMountedRangeOverlayRect = React.useCallback((range: XlsxCellRange, geometryRect: {
     height: number;
@@ -12388,7 +12377,6 @@ function XlsxGrid({
     startEditing(cell);
   }, [readOnly, resolvePointerCellFromClient, startEditing]);
 
-  /** The corner above the row numbers and left of the column letters, which selects every cell. */
   /** A press on the corner above the row numbers selects every cell, as in Excel. */
   const handleCornerPointerDown = React.useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (
@@ -12403,11 +12391,15 @@ function XlsxGrid({
     event.preventDefault();
     focusGrid();
     axisSelectionRef.current = null;
+    // The whole sheet, hidden rows and columns included, so Unhide reaches ones hidden at the edges.
     commitSelectionRange({
-      start: { row: firstVisibleRow, col: firstVisibleCol },
-      end: { row: lastVisibleRow, col: lastVisibleCol }
+      start: { row: 0, col: 0 },
+      end: {
+        row: Math.max(lastVisibleRow, activeSheet?.maxUsedRow ?? -1),
+        col: Math.max(lastVisibleCol, activeSheet?.maxUsedCol ?? -1)
+      }
     });
-  }, [commitSelectionRange, firstVisibleCol, firstVisibleRow, focusGrid, lastVisibleCol, lastVisibleRow]);
+  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, commitSelectionRange, firstVisibleCol, firstVisibleRow, focusGrid, lastVisibleCol, lastVisibleRow]);
 
   const handleCanvasColumnHeaderPointerDown = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0 || firstVisibleRow === undefined || lastVisibleRow === undefined) {
