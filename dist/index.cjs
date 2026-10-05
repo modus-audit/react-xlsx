@@ -7059,12 +7059,35 @@ function isMergedRegion(value) {
   return typeof region.range === "string" && ["startRow", "startCol", "endRow", "endCol"].every((key) => typeof region[key] === "number");
 }
 function mergesTouching(mergedRegions, range) {
+  return regionsTouching(mergedRegions, range).map((region) => region.range);
+}
+function regionsTouching(mergedRegions, range) {
   if (!Array.isArray(mergedRegions)) return [];
   const top = Math.min(range.start.row, range.end.row);
   const bottom = Math.max(range.start.row, range.end.row);
   const left = Math.min(range.start.col, range.end.col);
   const right = Math.max(range.start.col, range.end.col);
-  return mergedRegions.filter(isMergedRegion).filter((region) => region.startRow <= bottom && region.endRow >= top && region.startCol <= right && region.endCol >= left).map((region) => region.range);
+  return mergedRegions.filter(isMergedRegion).filter((region) => region.startRow <= bottom && region.endRow >= top && region.startCol <= right && region.endCol >= left);
+}
+function mergeTarget(mergedRegions, range) {
+  let top = Math.min(range.start.row, range.end.row);
+  let bottom = Math.max(range.start.row, range.end.row);
+  let left = Math.min(range.start.col, range.end.col);
+  let right = Math.max(range.start.col, range.end.col);
+  let merges = [];
+  for (; ; ) {
+    merges = regionsTouching(mergedRegions, { start: { row: top, col: left }, end: { row: bottom, col: right } });
+    const nextTop = Math.min(top, ...merges.map((region) => region.startRow));
+    const nextBottom = Math.max(bottom, ...merges.map((region) => region.endRow));
+    const nextLeft = Math.min(left, ...merges.map((region) => region.startCol));
+    const nextRight = Math.max(right, ...merges.map((region) => region.endCol));
+    if (nextTop === top && nextBottom === bottom && nextLeft === left && nextRight === right) break;
+    [top, bottom, left, right] = [nextTop, nextBottom, nextLeft, nextRight];
+  }
+  return {
+    range: { start: { row: top, col: left }, end: { row: bottom, col: right } },
+    merges: merges.map((region) => region.range)
+  };
 }
 
 // src/zip-entry-names.ts
@@ -10840,12 +10863,22 @@ function useXlsxViewerController(options) {
   const mergeSelection = React.useCallback(() => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !selection || !workbook) {
-      return;
+      return null;
+    }
+    const target = mergeTarget(worksheet.mergedRegions, selection);
+    if (target.range.start.row === target.range.end.row && target.range.start.col === target.range.end.col) {
+      return null;
     }
     recordHistoryBeforeMutation();
-    worksheet.mergeCells(rangeToA1(selection));
+    for (const merge of target.merges) {
+      worksheet.unmergeCells(merge);
+    }
+    worksheet.mergeCells(rangeToA1(target.range));
     refreshWorkbookState(workbook);
-  }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
+    selectRange(target.range);
+    setActiveCell(target.range.start);
+    return target.range;
+  }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selectRange, selection, workbook]);
   const unmergeSelection = React.useCallback(() => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !selection || !workbook) {
@@ -12036,6 +12069,23 @@ var MAX_SLOP_PX = 8;
 var MIN_SLOP_PX = 2;
 function resizeHitSlopPx(sizePx) {
   return Math.max(MIN_SLOP_PX, Math.min(MAX_SLOP_PX, Math.floor(sizePx / 6)));
+}
+
+// src/visible-axis.ts
+function visibleSpan(visible, start, end) {
+  const first = firstAtLeast(visible, Math.min(start, end));
+  const last = firstAtLeast(visible, Math.max(start, end) + 1) - 1;
+  return first <= last ? [first, last] : void 0;
+}
+function firstAtLeast(sorted, value) {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = low + high >> 1;
+    if (sorted[middle] < value) low = middle + 1;
+    else high = middle;
+  }
+  return low;
 }
 
 // src/chart-renderer.tsx
@@ -27078,20 +27128,20 @@ function XlsxGrid({
   }, [activeSheet?.conditionalFormatRules, activeSheet?.workbookSheetIndex, revision]);
   const rangeToOverlayRect = React4.useCallback((range) => {
     const normalized = normalizeRange2(range);
-    const startRowIndex = rowIndexByActual.get(normalized.start.row);
-    const endRowIndex = rowIndexByActual.get(normalized.end.row);
-    const startColIndex = colIndexByActual.get(normalized.start.col);
-    const endColIndex = colIndexByActual.get(normalized.end.col);
-    if (startRowIndex === void 0 || endRowIndex === void 0 || startColIndex === void 0 || endColIndex === void 0) {
+    const rowSpan = visibleSpan(visibleRows, normalized.start.row, normalized.end.row);
+    const colSpan = visibleSpan(visibleCols, normalized.start.col, normalized.end.col);
+    if (!rowSpan || !colSpan) {
       return null;
     }
+    const [startRowIndex, endRowIndex] = rowSpan;
+    const [startColIndex, endColIndex] = colSpan;
     return {
       height: sumPrefixRange(rowPrefixSums, startRowIndex, endRowIndex),
       left: displayRowHeaderWidth + sumPrefixRange(colPrefixSums, 0, startColIndex - 1),
       top: displayHeaderHeight + sumPrefixRange(rowPrefixSums, 0, startRowIndex - 1),
       width: sumPrefixRange(colPrefixSums, startColIndex, endColIndex)
     };
-  }, [colIndexByActual, colPrefixSums, displayHeaderHeight, displayRowHeaderWidth, rowIndexByActual, rowPrefixSums]);
+  }, [colPrefixSums, displayHeaderHeight, displayRowHeaderWidth, rowPrefixSums, visibleCols, visibleRows]);
   const selectionOverlay = React4.useMemo(
     () => displayedSelection ? rangeToOverlayRect(displayedSelection) : null,
     [displayedSelection, rangeToOverlayRect]
@@ -27456,13 +27506,13 @@ function XlsxGrid({
       row: startCell.row + Math.max(1, merge?.rowSpan ?? 1) - 1,
       col: startCell.col + Math.max(1, merge?.colSpan ?? 1) - 1
     } : normalized.end;
-    const startRowIndex = rowIndexByActual.get(startCell.row);
-    const endRowIndex = rowIndexByActual.get(endCell.row);
-    const startColIndex = colIndexByActual.get(startCell.col);
-    const endColIndex = colIndexByActual.get(endCell.col);
-    if (startRowIndex === void 0 || endRowIndex === void 0 || startColIndex === void 0 || endColIndex === void 0) {
+    const rowSpan = visibleSpan(visibleRows, startCell.row, endCell.row);
+    const colSpan = visibleSpan(visibleCols, startCell.col, endCell.col);
+    if (!rowSpan || !colSpan) {
       return null;
     }
+    const [startRowIndex, endRowIndex] = rowSpan;
+    const [startColIndex, endColIndex] = colSpan;
     let left = displayRowHeaderWidth + sumPrefixRange(colPrefixSums, 0, startColIndex - 1);
     let top = displayHeaderHeight + sumPrefixRange(rowPrefixSums, 0, startRowIndex - 1);
     let width = sumPrefixRange(colPrefixSums, startColIndex, endColIndex);
@@ -27501,7 +27551,7 @@ function XlsxGrid({
       top: Math.max(displayHeaderHeight, top),
       width: Math.max(0, width)
     };
-  }, [colIndexByActual, colPrefixSums, displayDefaultColWidth, displayDefaultRowHeight, displayEffectiveColWidths, displayEffectiveRowHeights, displayHeaderHeight, displayRowHeaderWidth, resolveMergeAnchorCell, rowIndexByActual, rowPrefixSums, worksheet]);
+  }, [colIndexByActual, colPrefixSums, displayDefaultColWidth, displayDefaultRowHeight, displayEffectiveColWidths, displayEffectiveRowHeights, displayHeaderHeight, displayRowHeaderWidth, resolveMergeAnchorCell, rowIndexByActual, rowPrefixSums, visibleCols, visibleRows, worksheet]);
   const resolveMountedRangeOverlayRect = React4.useCallback((range, geometryRect) => {
     const normalized = normalizeRange2(range);
     const startRect = resolveMountedCellOverlayRectForAddress(normalized.start);
@@ -28691,10 +28741,13 @@ function XlsxGrid({
     focusGrid();
     axisSelectionRef.current = null;
     commitSelectionRange({
-      start: { row: firstVisibleRow, col: firstVisibleCol },
-      end: { row: lastVisibleRow, col: lastVisibleCol }
+      start: { row: 0, col: 0 },
+      end: {
+        row: Math.max(lastVisibleRow, activeSheet?.maxUsedRow ?? -1),
+        col: Math.max(lastVisibleCol, activeSheet?.maxUsedCol ?? -1)
+      }
     });
-  }, [commitSelectionRange, firstVisibleCol, firstVisibleRow, focusGrid, lastVisibleCol, lastVisibleRow]);
+  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, commitSelectionRange, firstVisibleCol, firstVisibleRow, focusGrid, lastVisibleCol, lastVisibleRow]);
   const handleCanvasColumnHeaderPointerDown = React4.useCallback((event) => {
     if (event.button !== 0 || firstVisibleRow === void 0 || lastVisibleRow === void 0) {
       return;

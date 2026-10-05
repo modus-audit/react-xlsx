@@ -1104,7 +1104,7 @@ interface XlsxViewerController {
     images: XlsxImage[];
     moveChartBy: (id: string, deltaX: number, deltaY: number) => void;
     shapes: XlsxShape[];
-    mergeSelection: () => void;
+    mergeSelection: () => XlsxCellRange | null;
     maxZoomScale: number;
     minZoomScale: number;
     moveImageBy: (id: string, deltaX: number, deltaY: number) => void;
@@ -1283,7 +1283,7 @@ interface XlsxViewerEditing {
     getCellFormula: (cell?: XlsxCellAddress | null) => string;
     getFormControlItems: (controlIndex: number, sheetIndex?: number) => string[];
     getSheetFormControls: (sheetIndex?: number) => XlsxFormControl[];
-    mergeSelection: () => void;
+    mergeSelection: () => XlsxCellRange | null;
     pasteFromClipboard: () => Promise<boolean>;
     pasteStructuredClipboardData: (payload: string) => boolean;
     pasteText: (text: string) => boolean;
