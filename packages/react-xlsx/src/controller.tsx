@@ -53,7 +53,7 @@ import { AUTO_CALCULATE_FORMULA_THRESHOLD, countWorkbookFormulas, safeCalculate 
 import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
 import { type ClipboardMatrixCell, clipboardStyleTable, copiedCell, plainCellStyle, styleToRestore, writePastedCell } from "./clipboard-cells";
 import { XlsxWorkerClient } from "./worker-client";
-import { mergesTouching } from "./merge-regions";
+import { mergesTouching, mergeTarget } from "./merge-regions";
 import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
 import type {
   UseXlsxViewerControllerOptions,
@@ -4596,15 +4596,21 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     recordRangeEditHistory(mutations, nextRange, nextRange.end);
   }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook, plainStyle]);
 
-  const mergeSelection = React.useCallback(() => {
+  const mergeSelection = React.useCallback((): XlsxCellRange | null => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !selection || !workbook) {
-      return;
+      return null;
     }
 
+    const target = mergeTarget(worksheet.mergedRegions, selection);
     recordHistoryBeforeMutation();
-    worksheet.mergeCells(rangeToA1(selection));
+    for (const merge of target.merges) {
+      worksheet.unmergeCells(merge);
+    }
+    worksheet.mergeCells(rangeToA1(target.range));
     refreshWorkbookState(workbook);
+    setSelection(target.range);
+    return target.range;
   }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
 
   const unmergeSelection = React.useCallback(() => {
