@@ -1,3 +1,4 @@
+import { calculationReport, cellCalculationDiagnostic, countSourceWorkbookFormulas, type XlsxCalculationReport, type XlsxCellCalculationDiagnostic } from "./calculation-diagnostics";
 import { findDataBoundary, worksheetHasContent, type DataNavigationRequest } from "./data-navigation";
 import type { Workbook } from "@dukelib/sheets-wasm";
 import { strFromU8, unzipSync } from "fflate";
@@ -127,6 +128,7 @@ type WorkerSuccessResponse = {
     | {
         chartsByWorkbookSheetIndex: XlsxChart[][];
         chartsheets: XlsxChartsheet[];
+        calculation: XlsxCalculationReport;
         formControlsByWorkbookSheetIndex: XlsxFormControl[][];
         sheets: XlsxSheetData[];
         tablesByWorkbookSheetIndex: XlsxTable[][];
@@ -135,8 +137,9 @@ type WorkerSuccessResponse = {
     | {
         displayValue: string;
         formula: string;
+        diagnostic: XlsxCellCalculationDiagnostic;
       }
-    | { calculated: boolean; skipReason: SafeCalculateSkipReason | null }
+    | { calculated: boolean; skipReason: SafeCalculateSkipReason | null; calculation: XlsxCalculationReport }
     | { row: number; col: number }
     | unknown[]
     | null;
@@ -152,6 +155,9 @@ type WorkerResponse = WorkerSuccessResponse | WorkerErrorResponse;
 
 let workbook: Workbook | null = null;
 let workbookSourceBytes: Uint8Array | null = null;
+let sourceFormulaCount: number | null = null;
+let calculation = calculationReport("idle");
+let hasCalculatedValues = false;
 let chartsByWorkbookSheetIndex: XlsxChart[][] = [];
 let chartsheets: XlsxChartsheet[] = [];
 let formControlsByWorkbookSheetIndex: XlsxFormControl[][] = [];
@@ -817,12 +823,18 @@ async function loadWorkbook(
   const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
   let activeWorkbook = wasmModule.Workbook.fromBytes(bytes);
   const totalFormulas = countWorkbookFormulas(activeWorkbook);
+  sourceFormulaCount = countSourceWorkbookFormulas(bytes);
+  calculation = calculationReport("skipped", "auto-formula-limit", totalFormulas, sourceFormulaCount);
+  hasCalculatedValues = false;
 
   if (totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD) {
     const result = safeCalculate(activeWorkbook, {
       reparse: () => wasmModule.Workbook.fromBytes(bytes),
-      calcOptions: externalCalcOptions(externalFnValues)
+      calcOptions: externalCalcOptions(externalFnValues),
+      sourceFormulaCount
     });
+    calculation = result.calculation;
+    hasCalculatedValues = result.calculated;
     activeWorkbook = result.workbook;
   }
 
@@ -873,6 +885,7 @@ async function loadWorkbook(
   chartsheets = chartAssets.chartsheets;
   tabs = chartAssets.tabs;
   return {
+    calculation,
     chartsByWorkbookSheetIndex,
     chartsheets,
     formControlsByWorkbookSheetIndex,
@@ -915,17 +928,20 @@ async function parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHidd
 
 async function recalculateWorkbook(externalFnValues?: ExternalFnValues) {
   if (!workbook) {
-    return { calculated: false, skipReason: null };
+    return { calculated: false, skipReason: null, calculation: calculationReport("idle") };
   }
 
   const wasmModule = await getSheetsWasmModule();
   const sourceBytes = workbookSourceBytes;
   const result = safeCalculate(workbook, {
     calcOptions: externalCalcOptions(externalFnValues),
+    sourceFormulaCount,
     reparse: sourceBytes ? () => wasmModule.Workbook.fromBytes(sourceBytes) : undefined
   });
+  hasCalculatedValues = result.workbook !== workbook ? false : hasCalculatedValues || result.calculated;
   workbook = result.workbook;
-  return { calculated: result.calculated, skipReason: result.skipReason };
+  calculation = result.calculation;
+  return { calculated: result.calculated, skipReason: result.skipReason, calculation };
 }
 
 function respond(message: WorkerResponse) {
@@ -958,7 +974,8 @@ async function handleMessage(message: WorkerRequest) {
       if (!workbook) {
         return {
           displayValue: "",
-          formula: ""
+          formula: "",
+          diagnostic: { source: "unknown", error: null } as XlsxCellCalculationDiagnostic
         };
       }
 
@@ -966,7 +983,8 @@ async function handleMessage(message: WorkerRequest) {
       const worksheet = workbook.getSheet(message.payload.workbookSheetIndex);
       return {
         displayValue: getCellDisplayValue(worksheet, message.payload.row, message.payload.col, targetSheet),
-        formula: worksheet.getFormulaAt(message.payload.row, message.payload.col) ?? ""
+        formula: worksheet.getFormulaAt(message.payload.row, message.payload.col) ?? "",
+        diagnostic: cellCalculationDiagnostic(worksheet, message.payload.row, message.payload.col, targetSheet?.cachedFormulaValues?.[cellAddressToA1(message.payload)], calculation, hasCalculatedValues)
       };
     }
     case "findDataBoundary": {

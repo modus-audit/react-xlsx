@@ -1052,6 +1052,9 @@ export interface UseXlsxViewerControllerOptions {
 }
 
 export interface XlsxViewerController {
+  /** Calculation execution coverage; complete does not establish Excel equivalence. */
+  calculation: import("./calculation-diagnostics").XlsxCalculationReport;
+  getCellCalculationDiagnostic: (cell?: XlsxCellAddress | null) => import("./calculation-diagnostics").XlsxCellCalculationDiagnostic | null;
   activeCell: XlsxCellAddress | null;
   activeCellAddress: string | null;
   activeSheet: XlsxSheetData | null;
@@ -1103,6 +1106,7 @@ export interface XlsxViewerController {
   getCellSnapshotAsync?: (workbookSheetIndex: number, row: number, col: number) => Promise<{
     displayValue: string;
     formula: string;
+    diagnostic: import("./calculation-diagnostics").XlsxCellCalculationDiagnostic;
   }>;
   isLoadDeferred: boolean;
   isLoading: boolean;

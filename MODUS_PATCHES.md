@@ -7,6 +7,11 @@ Preserved behavior:
 - Serializable external add-in values reach the engine in normal, worker, and deferred loads. Formula text remains intact; unresolved calls retain cached values.
 - `recalculate` accepts updated external add-in values without reloading the workbook, including
   worker-backed read-only workbooks. Calculation skips the engine's known 5,000-formula trap.
+- `controller.calculation` reports execution coverage on initial, deferred, and explicit recalculation.
+  It compares the source OOXML formula inventory with the imported inventory, retains the engine
+  statistics, and inspects typed formula results because engine `errors` misses some cell errors.
+  Failed or skipped calculations retain cache display behavior. Reports and cell snapshots expose
+  errors even when the displayed value uses a saved fallback; stale async results are ignored.
 - `revealCell` selects and centers off-screen search results.
 - `selections`, append/toggle operations, and canvas Ctrl/Cmd drag support non-contiguous selections. Re-adding an existing range preserves the other regions.
 - Conditional formatting retains relative references, negated references (`lessThan -$H$13`, the plus-or-minus flux threshold), comparison/ABS/AND expressions, text and blank rules, and cached numeric fallback. These extend upstream's styled rules and retain its priority handling.
@@ -30,7 +35,7 @@ The app configures `initWasm` with a bundler-resolved asset URL and explicitly c
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and create a new immutable `tb-dist-0.16.4-modus.N` tag (currently `modus.7`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.10`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 
@@ -41,3 +46,29 @@ Ctrl/Cmd+Arrow resolves the next data-block boundary, with Shift preserving the 
 The `showFormulas` rendering prop displays formula text in both DOM and canvas cells without changing calculated values, clipboard values, exports, or aggregates. `getCellStyle` now also applies to blank worker cells, allowing precedents that point at blank cells to be highlighted.
 
 The consuming app owns focus-scoped Find, shortcut bindings for formula view and precedents, and literal A1-reference highlighting. No engine API or workbook mutation is required. Named, table, dynamic, external, and 3D references are explicitly reported as incomplete by the app.
+
+## Calculation diagnostics
+
+`XlsxCalculationReport` is exported and available through `controller.calculation`. Its revision
+identifies each calculation attempt, including updated external values. `complete` means that the
+engine finished, the source/import/evaluated formula inventories agree, and inspected formula
+results contain no known errors. It does not establish equivalence with Excel, current external
+inputs, or financial correctness. `partial`, `skipped`, and `failed` give a reason; unavailable
+counts are `null` rather than assumed zero. Legacy XLS source inventories are unavailable.
+
+`errorCount` counts typed error-valued formula cells; `engineErrorCount` preserves the engine's
+separate statistic, which can include parsing failures without a typed error cell. `issues` samples
+up to 20 typed errors as `{ sheet, cell, error }`. The application owns presentation, telemetry,
+external-input readiness, and issue navigation.
+
+`getCellCalculationDiagnostic` describes the selected main-thread cell or an available worker
+snapshot. Worker `getCellSnapshotAsync` responses include the same `diagnostic`: `source` is
+`literal`, `calculated`, `saved`, `saved-fallback`, or `unknown`, with the typed `error` if present.
+Saved display fallbacks are retained wherever the viewer already has parsed cache metadata.
+
+The source inventory counts only SpreadsheetML formula children of worksheet cells, including
+shared formula entries; sparkline, validation, and conditional-format extension references do not
+count as formula cells. A new calculating or failed attempt clears earlier execution metrics.
+In-memory edits invalidate execution coverage (`workbook-edited` when automatic calculation is
+disabled) and make the original source inventory unavailable for later comparison. Partial
+coverage and values retained from an earlier calculation have conservative `unknown` provenance.

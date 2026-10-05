@@ -1,5 +1,6 @@
 import type { Workbook } from "@dukelib/sheets-wasm";
 import type { ExternalCalcOptions } from "./external-fn.ts";
+import { calculationReport, inspectCalculation, type XlsxCalculationReport } from "./calculation-diagnostics.ts";
 
 /** Automatic load-time calculation stays conservative to keep large workbooks responsive. */
 export const AUTO_CALCULATE_FORMULA_THRESHOLD = 1_000;
@@ -66,11 +67,13 @@ export type SafeCalculateResult = {
   workbook: Workbook;
   calculated: boolean;
   skipReason: SafeCalculateSkipReason | null;
+  calculation: XlsxCalculationReport;
 };
 
 export type SafeCalculateOptions = {
   reparse?: () => Workbook;
   calcOptions?: ExternalCalcOptions;
+  sourceFormulaCount?: number | null;
 };
 
 export function countWorkbookFormulas(workbook: Workbook): number {
@@ -85,26 +88,34 @@ export function countWorkbookFormulas(workbook: Workbook): number {
 // engine to panic into a wasm `unreachable` trap that poisons the Workbook
 // instance). On trap, `reparse` is used to return a fresh usable instance.
 export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions = {}): SafeCalculateResult {
+  const formulaCount = countWorkbookFormulas(workbook);
+  const sourceFormulaCount = options.sourceFormulaCount ?? null;
+  const skipped = (reason: SafeCalculateSkipReason, nextWorkbook = workbook): SafeCalculateResult => ({
+    workbook: nextWorkbook, calculated: false, skipReason: reason,
+    calculation: calculationReport(reason === "calculate-trapped" ? "failed" : "skipped", reason, formulaCount, sourceFormulaCount)
+  });
   // This guard must run before `calculate()`: catching the WASM trap is too late because the
   // workbook instance is poisoned and later reads fail as well.
-  if (countWorkbookFormulas(workbook) >= CALCULATE_FORMULA_HARD_LIMIT) {
-    return { workbook, calculated: false, skipReason: "formula-limit" };
+  if (formulaCount >= CALCULATE_FORMULA_HARD_LIMIT) {
+    return skipped("formula-limit");
   }
   if (hasUnresolvedSheetReferences(workbook)) {
-    return { workbook, calculated: false, skipReason: "unresolved-sheet-refs" };
+    return skipped("unresolved-sheet-refs");
   }
   try {
-    workbook.calculate(options.calcOptions);
-    return { workbook, calculated: true, skipReason: null };
+    const start = performance.now();
+    const stats: unknown = workbook.calculate(options.calcOptions);
+    return { workbook, calculated: true, skipReason: null,
+      calculation: inspectCalculation(workbook, stats, formulaCount, sourceFormulaCount, performance.now() - start) };
   } catch (err) {
     console.warn("[react-xlsx] workbook.calculate() trapped; falling back to cached formula values", err);
     if (options.reparse) {
       try {
-        return { workbook: options.reparse(), calculated: false, skipReason: "calculate-trapped" };
+        return skipped("calculate-trapped", options.reparse());
       } catch (reparseErr) {
         console.warn("[react-xlsx] workbook reparse after calculate trap failed", reparseErr);
       }
     }
-    return { workbook, calculated: false, skipReason: "calculate-trapped" };
+    return skipped("calculate-trapped");
   }
 }

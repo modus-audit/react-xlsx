@@ -1,3 +1,4 @@
+import type { XlsxCalculationReport, XlsxCellCalculationDiagnostic } from "./calculation-diagnostics";
 import type { DataNavigationRequest } from "./data-navigation";
 import type { ExternalFnValues } from "./external-fn";
 import type { SafeCalculateSkipReason } from "./safe-calculate";
@@ -57,7 +58,7 @@ type WorkerMessage =
 
 type WorkerSuccessMessage =
   | { id: number; success: true; result: { row: number; col: number } }
-  | { id: number; success: true; result: { calculated: boolean; skipReason: SafeCalculateSkipReason | null } }
+  | { id: number; success: true; result: { calculated: boolean; skipReason: SafeCalculateSkipReason | null; calculation: XlsxCalculationReport } }
   | {
       id: number;
       success: true;
@@ -73,6 +74,7 @@ type WorkerSuccessMessage =
       result: {
         chartsByWorkbookSheetIndex: XlsxChart[][];
         chartsheets: XlsxChartsheet[];
+        calculation: XlsxCalculationReport;
         formControlsByWorkbookSheetIndex: XlsxFormControl[][];
         sheets: XlsxSheetData[];
         tablesByWorkbookSheetIndex: XlsxTable[][];
@@ -85,6 +87,7 @@ type WorkerSuccessMessage =
       result: {
         displayValue: string;
         formula: string;
+        diagnostic: XlsxCellCalculationDiagnostic;
       };
     }
   | {
@@ -157,6 +160,7 @@ export class XlsxWorkerClient {
     return this.request<{
       chartsByWorkbookSheetIndex: XlsxChart[][];
       chartsheets: XlsxChartsheet[];
+      calculation: XlsxCalculationReport;
       formControlsByWorkbookSheetIndex: XlsxFormControl[][];
       sheets: XlsxSheetData[];
       tablesByWorkbookSheetIndex: XlsxTable[][];
@@ -175,7 +179,7 @@ export class XlsxWorkerClient {
   }
 
   recalculate(externalFnValues?: ExternalFnValues) {
-    return this.request<{ calculated: boolean; skipReason: SafeCalculateSkipReason | null }>({
+    return this.request<{ calculated: boolean; skipReason: SafeCalculateSkipReason | null; calculation: XlsxCalculationReport }>({
       id: 0,
       payload: { externalFnValues },
       type: "recalculate"
@@ -186,6 +190,7 @@ export class XlsxWorkerClient {
     return this.request<{
       displayValue: string;
       formula: string;
+      diagnostic: XlsxCellCalculationDiagnostic;
     }>({
       id: 0,
       payload: { col, row, workbookSheetIndex },

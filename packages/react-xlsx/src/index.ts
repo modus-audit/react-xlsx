@@ -1,6 +1,7 @@
 export { useXlsxViewerController, XlsxFileSizeLimitExceededError } from "./controller";
 export { initWasm, setWasmSource, type XlsxWasmSource } from "./wasm";
 export { externalCallKey, type ExternalFnValues } from "./external-fn";
+export type { XlsxCalculationReport, XlsxCalculationIssue, XlsxCellCalculationDiagnostic } from "./calculation-diagnostics";
 export {
   DefaultXlsxToolbar,
   useXlsxViewerCharts,
