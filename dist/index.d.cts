@@ -3,6 +3,30 @@ import * as _dukelib_sheets_wasm from '@dukelib/sheets-wasm';
 import { Workbook, Worksheet } from '@dukelib/sheets-wasm';
 import * as react_jsx_runtime from 'react/jsx-runtime';
 
+interface XlsxCalculationIssue {
+    sheet: string;
+    cell: string;
+    error: string;
+}
+/** Engine execution coverage, not verification against Excel or financial correctness. */
+interface XlsxCalculationReport {
+    status: "idle" | "calculating" | "complete" | "partial" | "skipped" | "failed";
+    reason: string | null;
+    formulaCount: number;
+    parsedFormulaCount: number;
+    sourceFormulaCount: number | null;
+    evaluatedFormulaCount: number | null;
+    errorCount: number | null;
+    engineErrorCount: number | null;
+    durationMs: number | null;
+    revision: number;
+    issues: XlsxCalculationIssue[];
+}
+interface XlsxCellCalculationDiagnostic {
+    source: "literal" | "calculated" | "saved" | "saved-fallback" | "unknown";
+    error: string | null;
+}
+
 type DataDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 interface DataNavigationRequest {
     cell: XlsxCellAddress;
@@ -1045,6 +1069,9 @@ interface UseXlsxViewerControllerOptions {
     useWorker?: boolean;
 }
 interface XlsxViewerController {
+    /** Calculation execution coverage; complete does not establish Excel equivalence. */
+    calculation: XlsxCalculationReport;
+    getCellCalculationDiagnostic: (cell?: XlsxCellAddress | null) => XlsxCellCalculationDiagnostic | null;
     activeCell: XlsxCellAddress | null;
     activeCellAddress: string | null;
     activeSheet: XlsxSheetData | null;
@@ -1096,6 +1123,7 @@ interface XlsxViewerController {
     getCellSnapshotAsync?: (workbookSheetIndex: number, row: number, col: number) => Promise<{
         displayValue: string;
         formula: string;
+        diagnostic: XlsxCellCalculationDiagnostic;
     }>;
     isLoadDeferred: boolean;
     isLoading: boolean;
@@ -1708,4 +1736,4 @@ declare function useXlsxViewerThumbnails(options?: UseXlsxViewerThumbnailsOption
 declare function XlsxViewer(props: XlsxViewerProps): react_jsx_runtime.JSX.Element;
 declare function DefaultXlsxToolbar(): react_jsx_runtime.JSX.Element;
 
-export { DefaultXlsxToolbar, type ExternalFnValues, type UseXlsxViewerControllerOptions, type UseXlsxViewerThumbnailsOptions, type XlsxAxisSize, type XlsxCellAddress, type XlsxCellAlignmentInput, type XlsxCellBorderEdgeInput, type XlsxCellBorderStyleInput, type XlsxCellFillStyleInput, type XlsxCellFontStyleInput, type XlsxCellGradientStopInput, type XlsxCellNumberFormatInput, type XlsxCellProtectionInput, type XlsxCellRange, type XlsxCellStyleColorInput, type XlsxCellStyleContext, type XlsxCellStyleInput, type XlsxChart, type XlsxChartAxis, type XlsxChartDataLabels, type XlsxChartElementSelection, type XlsxChartLoadingRenderProps, type XlsxChartReference, type XlsxChartSeries, type XlsxChartsheet, type XlsxDrawingLayout, XlsxFileSizeLimitExceededError, type XlsxFileTooLargeRenderProps, type XlsxFormControl, type XlsxFormControlActionEvent, type XlsxFormControlCaption, type XlsxFormControlCaptionInput, type XlsxFormControlCaptionRun, type XlsxFormControlChangeEvent, type XlsxFormControlInput, type XlsxFormControlKind, type XlsxFormControlKindInput, type XlsxFormControlPatch, type XlsxFormControlRenderProps, type XlsxFormControlSelectionMode, type XlsxFormControlState, type XlsxFormulaTarget, type XlsxImage, type XlsxImageAnchor, type XlsxImageRect, type XlsxImageRenderProps, type XlsxImageResizeHandlePosition, type XlsxImageSelectionRenderProps, type XlsxScrollerRenderProps, type XlsxShape, type XlsxShapeFill, type XlsxShapeParagraph, type XlsxShapeStroke, type XlsxShapeTextBox, type XlsxShapeTextRun, type XlsxSheetData, type XlsxSheetThumbnail, type XlsxSheetThumbnailResolution, type XlsxSheetVisibility, type XlsxTable, type XlsxTableColumn, type XlsxTableHeaderMenuRenderProps, type XlsxTableSortDirection, type XlsxTableSortState, type XlsxThemePalette, XlsxViewer, type XlsxViewerCharts, type XlsxViewerController, type XlsxViewerEditing, type XlsxViewerImages, type XlsxViewerProps, XlsxViewerProvider, type XlsxViewerProviderProps, type XlsxViewerSelection, type XlsxViewerTables, type XlsxViewerThumbnails, type XlsxViewerZoom, type XlsxWasmSource, type XlsxWorkbookTab, externalCallKey, initWasm, setWasmSource, useXlsxViewer, useXlsxViewerCharts, useXlsxViewerController, useXlsxViewerEditing, useXlsxViewerImages, useXlsxViewerSelection, useXlsxViewerTables, useXlsxViewerThumbnails, useXlsxViewerZoom };
+export { DefaultXlsxToolbar, type ExternalFnValues, type UseXlsxViewerControllerOptions, type UseXlsxViewerThumbnailsOptions, type XlsxAxisSize, type XlsxCalculationIssue, type XlsxCalculationReport, type XlsxCellAddress, type XlsxCellAlignmentInput, type XlsxCellBorderEdgeInput, type XlsxCellBorderStyleInput, type XlsxCellCalculationDiagnostic, type XlsxCellFillStyleInput, type XlsxCellFontStyleInput, type XlsxCellGradientStopInput, type XlsxCellNumberFormatInput, type XlsxCellProtectionInput, type XlsxCellRange, type XlsxCellStyleColorInput, type XlsxCellStyleContext, type XlsxCellStyleInput, type XlsxChart, type XlsxChartAxis, type XlsxChartDataLabels, type XlsxChartElementSelection, type XlsxChartLoadingRenderProps, type XlsxChartReference, type XlsxChartSeries, type XlsxChartsheet, type XlsxDrawingLayout, XlsxFileSizeLimitExceededError, type XlsxFileTooLargeRenderProps, type XlsxFormControl, type XlsxFormControlActionEvent, type XlsxFormControlCaption, type XlsxFormControlCaptionInput, type XlsxFormControlCaptionRun, type XlsxFormControlChangeEvent, type XlsxFormControlInput, type XlsxFormControlKind, type XlsxFormControlKindInput, type XlsxFormControlPatch, type XlsxFormControlRenderProps, type XlsxFormControlSelectionMode, type XlsxFormControlState, type XlsxFormulaTarget, type XlsxImage, type XlsxImageAnchor, type XlsxImageRect, type XlsxImageRenderProps, type XlsxImageResizeHandlePosition, type XlsxImageSelectionRenderProps, type XlsxScrollerRenderProps, type XlsxShape, type XlsxShapeFill, type XlsxShapeParagraph, type XlsxShapeStroke, type XlsxShapeTextBox, type XlsxShapeTextRun, type XlsxSheetData, type XlsxSheetThumbnail, type XlsxSheetThumbnailResolution, type XlsxSheetVisibility, type XlsxTable, type XlsxTableColumn, type XlsxTableHeaderMenuRenderProps, type XlsxTableSortDirection, type XlsxTableSortState, type XlsxThemePalette, XlsxViewer, type XlsxViewerCharts, type XlsxViewerController, type XlsxViewerEditing, type XlsxViewerImages, type XlsxViewerProps, XlsxViewerProvider, type XlsxViewerProviderProps, type XlsxViewerSelection, type XlsxViewerTables, type XlsxViewerThumbnails, type XlsxViewerZoom, type XlsxWasmSource, type XlsxWorkbookTab, externalCallKey, initWasm, setWasmSource, useXlsxViewer, useXlsxViewerCharts, useXlsxViewerController, useXlsxViewerEditing, useXlsxViewerImages, useXlsxViewerSelection, useXlsxViewerTables, useXlsxViewerThumbnails, useXlsxViewerZoom };

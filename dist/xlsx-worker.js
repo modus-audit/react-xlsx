@@ -1,3 +1,147 @@
+// src/calculation-diagnostics.ts
+import { strFromU8, unzipSync } from "fflate";
+function calculationReport(status, reason = null, parsedFormulaCount = 0, sourceFormulaCount2 = null) {
+  return {
+    status,
+    reason,
+    parsedFormulaCount,
+    sourceFormulaCount: sourceFormulaCount2,
+    formulaCount: Math.max(parsedFormulaCount, sourceFormulaCount2 ?? 0),
+    evaluatedFormulaCount: null,
+    errorCount: null,
+    engineErrorCount: null,
+    durationMs: null,
+    revision: 0,
+    issues: []
+  };
+}
+function countSourceWorkbookFormulas(bytes) {
+  if (bytes[0] !== 80 || bytes[1] !== 75) return null;
+  try {
+    const archive = unzipSync(bytes, { filter: (entry) => /^xl\/worksheets\/[^/]+\.xml$/i.test(entry.name) });
+    let count = 0;
+    for (const data of Object.values(archive)) {
+      const xml = strFromU8(data);
+      count += countWorksheetCellFormulas(xml);
+    }
+    return count;
+  } catch {
+    return null;
+  }
+}
+function countWorksheetCellFormulas(xml) {
+  const spreadsheetNamespaces = /* @__PURE__ */ new Set([
+    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+    "http://purl.oclc.org/ooxml/spreadsheetml/main"
+  ]);
+  const stack = [];
+  const formulaPath = ["worksheet", "sheetData", "row", "c"];
+  let count = 0;
+  const tags = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<[^>"']*(?:"[^"]*"[^>"']*|'[^']*'[^>"']*)*>/g;
+  for (const match of xml.matchAll(tags)) {
+    const tag = match[0];
+    if (tag.startsWith("<!") || tag.startsWith("<?")) continue;
+    if (tag.startsWith("</")) {
+      stack.pop();
+      continue;
+    }
+    const qualifiedName = /^<([^\s/>]+)/.exec(tag)?.[1];
+    if (!qualifiedName) continue;
+    let namespaces = stack[stack.length - 1]?.namespaces ?? /* @__PURE__ */ Object.create(null);
+    if (/\sxmlns(?::|\s*=)/.test(tag)) {
+      namespaces = Object.create(namespaces);
+      for (const declaration of tag.matchAll(/\sxmlns(?::([\w.-]+))?\s*=\s*(["'])(.*?)\2/g)) {
+        namespaces[declaration[1] ?? ""] = declaration[3] ?? "";
+      }
+    }
+    const separator = qualifiedName.indexOf(":");
+    const name = separator < 0 ? qualifiedName : qualifiedName.slice(separator + 1);
+    const prefix = separator < 0 ? "" : qualifiedName.slice(0, separator);
+    const namespace = namespaces[prefix] ?? "";
+    if (name === "f" && spreadsheetNamespaces.has(namespace) && stack.length === 4 && stack.every((element, index) => element.name === formulaPath[index] && spreadsheetNamespaces.has(element.namespace))) count += 1;
+    if (!/\/\s*>$/.test(tag)) stack.push({ name, namespace, namespaces });
+  }
+  return count;
+}
+function nonnegativeInteger(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+function cellAddress(row, col) {
+  let column = col + 1;
+  let label = "";
+  while (column > 0) {
+    label = String.fromCharCode(65 + (column - 1) % 26) + label;
+    column = Math.floor((column - 1) / 26);
+  }
+  return `${label}${row + 1}`;
+}
+function inspectCalculation(workbook2, rawStats, parsedFormulaCount, sourceFormulaCount2, durationMs) {
+  const stats = rawStats && typeof rawStats === "object" ? rawStats : {};
+  const evaluatedFormulaCount = nonnegativeInteger(stats.cellsCalculated);
+  const engineErrorCount = nonnegativeInteger(stats.errors);
+  const issues = [];
+  let resultErrors = 0;
+  let inspected = 0;
+  let inspectionComplete = true;
+  try {
+    for (let index = 0; index < workbook2.sheetCount; index += 1) {
+      const sheet = workbook2.getSheet(index);
+      const cells = sheet.formulaCells;
+      if (!Array.isArray(cells)) {
+        inspectionComplete = false;
+        continue;
+      }
+      for (const cell of cells) {
+        if (!cell || !Number.isInteger(cell.row) || !Number.isInteger(cell.col)) {
+          inspectionComplete = false;
+          continue;
+        }
+        const value = sheet.getCalculatedValueAt(cell.row, cell.col);
+        inspected += 1;
+        if (value.is_error) {
+          resultErrors += 1;
+          if (issues.length < 20) issues.push({
+            sheet: workbook2.sheetNames[index] ?? String(index),
+            cell: cellAddress(cell.row, cell.col),
+            error: value.asError() ?? "Unknown formula error"
+          });
+        }
+        value.free();
+      }
+    }
+  } catch {
+    inspectionComplete = false;
+  }
+  inspectionComplete &&= inspected === parsedFormulaCount;
+  const errorCount = inspectionComplete ? resultErrors : null;
+  let reason = null;
+  if (sourceFormulaCount2 !== null && parsedFormulaCount !== sourceFormulaCount2) reason = "formula-import-mismatch";
+  else if (resultErrors > 0 || (engineErrorCount ?? 0) > 0) reason = "formula-errors";
+  else if ((nonnegativeInteger(stats.circularReferences) ?? 0) > 0) reason = "circular-references";
+  else if (stats.converged === false) reason = "not-converged";
+  else if (!inspectionComplete) reason = "result-inspection-incomplete";
+  else if (evaluatedFormulaCount === null || engineErrorCount === null || nonnegativeInteger(stats.formulaCount) === null || nonnegativeInteger(stats.circularReferences) === null || typeof stats.converged !== "boolean") reason = "engine-stats-unavailable";
+  else if (stats.formulaCount !== parsedFormulaCount || evaluatedFormulaCount < parsedFormulaCount) reason = "evaluation-incomplete";
+  else if (sourceFormulaCount2 === null) reason = "source-formula-inventory-unavailable";
+  return {
+    ...calculationReport(reason ? "partial" : "complete", reason, parsedFormulaCount, sourceFormulaCount2),
+    evaluatedFormulaCount,
+    engineErrorCount,
+    errorCount,
+    durationMs,
+    issues
+  };
+}
+function cellCalculationDiagnostic(worksheet, row, col, cachedValue, report, hasCalculatedValues2 = true) {
+  if (!worksheet.getFormulaAt(row, col)) return { source: "literal", error: null };
+  const value = worksheet.getCalculatedValueAt(row, col);
+  const error = value.is_error ? value.asError() ?? "Unknown formula error" : null;
+  value.free();
+  if (error && cachedValue !== void 0) return { source: "saved-fallback", error };
+  const source = report.status === "complete" ? "calculated" : report.status === "partial" || report.status === "calculating" ? "unknown" : !hasCalculatedValues2 && cachedValue !== void 0 ? "saved" : "unknown";
+  return { source, error };
+}
+
 // src/data-navigation.ts
 function findDataBoundary(request, sheet, hasContent) {
   const vertical = request.direction === "ArrowUp" || request.direction === "ArrowDown";
@@ -40,10 +184,10 @@ function worksheetHasContent(worksheet, row, col) {
 }
 
 // src/xlsx-worker.ts
-import { strFromU8 as strFromU83, unzipSync as unzipSync2 } from "fflate";
+import { strFromU8 as strFromU84, unzipSync as unzipSync3 } from "fflate";
 
 // src/charts.ts
-import { strFromU8, strToU8 } from "fflate";
+import { strFromU8 as strFromU82, strToU8 } from "fflate";
 var CHART_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
 var CHART_EX_REL_TYPE = "http://schemas.microsoft.com/office/2014/relationships/chartEx";
 var CHART_STYLE_REL_TYPE = "http://schemas.microsoft.com/office/2011/relationships/chartStyle";
@@ -286,7 +430,7 @@ function resolveArchiveFallbackBubbleSizes(archive, preferredTitle) {
     if (!/\/charts\/chart\d+\.xml$/i.test(path)) {
       continue;
     }
-    const chartXml = strFromU8(bytes);
+    const chartXml = strFromU82(bytes);
     if (!/<c:bubbleChart\b/i.test(chartXml)) {
       continue;
     }
@@ -354,7 +498,7 @@ function resolveArchiveFallbackPointStyles(archive, preferredTitle, preferredCha
     if (!/\/charts\/chart\d+\.xml$/i.test(path)) {
       continue;
     }
-    const chartXml = strFromU8(bytes);
+    const chartXml = strFromU82(bytes);
     const candidateType = parseChartTypeFromXml(chartXml);
     if (!candidateType) {
       continue;
@@ -1606,7 +1750,7 @@ function readArchiveText(archive, path) {
     return null;
   }
   const entry = archive[normalizeArchivePath(path)];
-  return entry ? strFromU8(entry) : null;
+  return entry ? strFromU82(entry) : null;
 }
 function parseXml(xml) {
   if (typeof DOMParser === "undefined") {
@@ -3045,7 +3189,7 @@ function loadWorkbookChartAssets(workbook2, imageAssets, visibleSheetIndexByWork
 }
 
 // src/images.ts
-import { strFromU8 as strFromU82, strToU8 as strToU82, unzipSync, zipSync } from "fflate";
+import { strFromU8 as strFromU83, strToU8 as strToU82, unzipSync as unzipSync2, zipSync } from "fflate";
 
 // src/colors.ts
 function normalizeHexColor2(value) {
@@ -3322,7 +3466,7 @@ function parseXml2(xml) {
 }
 function readArchiveText2(archive, path) {
   const entry = archive[path];
-  return entry ? strFromU82(entry) : null;
+  return entry ? strFromU83(entry) : null;
 }
 function parseColumnReference(reference) {
   let value = 0;
@@ -4607,7 +4751,7 @@ function parseWorkbookStructureAssetsFromArchive(archive, options) {
   };
 }
 function parseWorkbookStructureAssets(bytes, options) {
-  const archive = unzipSync(bytes);
+  const archive = unzipSync2(bytes);
   const {
     namedCellStyleByName,
     sheetStatesByWorkbookSheetIndex,
@@ -4626,7 +4770,7 @@ function parseWorkbookStructureAssets(bytes, options) {
   };
 }
 function parseWorkbookChartStyleAssets(bytes) {
-  const archive = unzipSync(bytes);
+  const archive = unzipSync2(bytes);
   const {
     themePalette,
     workbookSheets
@@ -4736,25 +4880,39 @@ function countWorkbookFormulas(workbook2) {
   return total;
 }
 function safeCalculate(workbook2, options = {}) {
-  if (countWorkbookFormulas(workbook2) >= CALCULATE_FORMULA_HARD_LIMIT) {
-    return { workbook: workbook2, calculated: false, skipReason: "formula-limit" };
+  const formulaCount = countWorkbookFormulas(workbook2);
+  const sourceFormulaCount2 = options.sourceFormulaCount ?? null;
+  const skipped = (reason, nextWorkbook = workbook2) => ({
+    workbook: nextWorkbook,
+    calculated: false,
+    skipReason: reason,
+    calculation: calculationReport(reason === "calculate-trapped" ? "failed" : "skipped", reason, formulaCount, sourceFormulaCount2)
+  });
+  if (formulaCount >= CALCULATE_FORMULA_HARD_LIMIT) {
+    return skipped("formula-limit");
   }
   if (hasUnresolvedSheetReferences(workbook2)) {
-    return { workbook: workbook2, calculated: false, skipReason: "unresolved-sheet-refs" };
+    return skipped("unresolved-sheet-refs");
   }
   try {
-    workbook2.calculate(options.calcOptions);
-    return { workbook: workbook2, calculated: true, skipReason: null };
+    const start = performance.now();
+    const stats = workbook2.calculate(options.calcOptions);
+    return {
+      workbook: workbook2,
+      calculated: true,
+      skipReason: null,
+      calculation: inspectCalculation(workbook2, stats, formulaCount, sourceFormulaCount2, performance.now() - start)
+    };
   } catch (err) {
     console.warn("[react-xlsx] workbook.calculate() trapped; falling back to cached formula values", err);
     if (options.reparse) {
       try {
-        return { workbook: options.reparse(), calculated: false, skipReason: "calculate-trapped" };
+        return skipped("calculate-trapped", options.reparse());
       } catch (reparseErr) {
         console.warn("[react-xlsx] workbook reparse after calculate trap failed", reparseErr);
       }
     }
-    return { workbook: workbook2, calculated: false, skipReason: "calculate-trapped" };
+    return skipped("calculate-trapped");
   }
 }
 
@@ -4825,6 +4983,9 @@ function normalizeWorksheetVisibility2(value) {
 }
 var workbook = null;
 var workbookSourceBytes = null;
+var sourceFormulaCount = null;
+var calculation = calculationReport("idle");
+var hasCalculatedValues = false;
 var chartsByWorkbookSheetIndex = [];
 var chartsheets = [];
 var formControlsByWorkbookSheetIndex = [];
@@ -4844,7 +5005,7 @@ function readXmlAttribute(tag, name) {
 }
 function readArchiveText3(archive, path) {
   const entry = archive[path];
-  return entry ? strFromU83(entry) : "";
+  return entry ? strFromU84(entry) : "";
 }
 function normalizeWorkbookRelationshipTarget(target) {
   if (target.startsWith("/")) {
@@ -4880,7 +5041,7 @@ function parseWorkbookSheetPathsFromArchive(archive) {
 }
 function parseWorkerSheetLayoutAssets(bytes, sheetCount) {
   try {
-    const archive = unzipSync2(bytes);
+    const archive = unzipSync3(bytes);
     const workbookSheetPaths = parseWorkbookSheetPathsFromArchive(archive);
     const sheetPaths = workbookSheetPaths.length > 0 ? workbookSheetPaths : Array.from({ length: sheetCount }, (_, index) => `xl/worksheets/sheet${index + 1}.xml`);
     return sheetPaths.slice(0, sheetCount).map((path) => {
@@ -5352,11 +5513,17 @@ async function loadWorkbook(buffer, skipXmlParsing = false, showHiddenSheets = f
   const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
   let activeWorkbook = wasmModule.Workbook.fromBytes(bytes);
   const totalFormulas = countWorkbookFormulas(activeWorkbook);
+  sourceFormulaCount = countSourceWorkbookFormulas(bytes);
+  calculation = calculationReport("skipped", "auto-formula-limit", totalFormulas, sourceFormulaCount);
+  hasCalculatedValues = false;
   if (totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD) {
     const result = safeCalculate(activeWorkbook, {
       reparse: () => wasmModule.Workbook.fromBytes(bytes),
-      calcOptions: externalCalcOptions(externalFnValues)
+      calcOptions: externalCalcOptions(externalFnValues),
+      sourceFormulaCount
     });
+    calculation = result.calculation;
+    hasCalculatedValues = result.calculated;
     activeWorkbook = result.workbook;
   }
   const nextWorkbook = activeWorkbook;
@@ -5402,6 +5569,7 @@ async function loadWorkbook(buffer, skipXmlParsing = false, showHiddenSheets = f
   chartsheets = chartAssets.chartsheets;
   tabs = chartAssets.tabs;
   return {
+    calculation,
     chartsByWorkbookSheetIndex,
     chartsheets,
     formControlsByWorkbookSheetIndex,
@@ -5439,16 +5607,19 @@ async function parseCharts(buffer, skipXmlParsing = false, showHiddenSheets = fa
 }
 async function recalculateWorkbook(externalFnValues) {
   if (!workbook) {
-    return { calculated: false, skipReason: null };
+    return { calculated: false, skipReason: null, calculation: calculationReport("idle") };
   }
   const wasmModule = await getSheetsWasmModule();
   const sourceBytes = workbookSourceBytes;
   const result = safeCalculate(workbook, {
     calcOptions: externalCalcOptions(externalFnValues),
+    sourceFormulaCount,
     reparse: sourceBytes ? () => wasmModule.Workbook.fromBytes(sourceBytes) : void 0
   });
+  hasCalculatedValues = result.workbook !== workbook ? false : hasCalculatedValues || result.calculated;
   workbook = result.workbook;
-  return { calculated: result.calculated, skipReason: result.skipReason };
+  calculation = result.calculation;
+  return { calculated: result.calculated, skipReason: result.skipReason, calculation };
 }
 function respond(message) {
   self.postMessage(message);
@@ -5479,14 +5650,16 @@ async function handleMessage(message) {
       if (!workbook) {
         return {
           displayValue: "",
-          formula: ""
+          formula: "",
+          diagnostic: { source: "unknown", error: null }
         };
       }
       const targetSheet = sheets.find((sheet) => sheet.workbookSheetIndex === message.payload.workbookSheetIndex) ?? null;
       const worksheet = workbook.getSheet(message.payload.workbookSheetIndex);
       return {
         displayValue: getCellDisplayValue(worksheet, message.payload.row, message.payload.col, targetSheet),
-        formula: worksheet.getFormulaAt(message.payload.row, message.payload.col) ?? ""
+        formula: worksheet.getFormulaAt(message.payload.row, message.payload.col) ?? "",
+        diagnostic: cellCalculationDiagnostic(worksheet, message.payload.row, message.payload.col, targetSheet?.cachedFormulaValues?.[cellAddressToA1(message.payload)], calculation, hasCalculatedValues)
       };
     }
     case "findDataBoundary": {

@@ -1,6 +1,6 @@
 {
   "name": "@extend-ai/react-xlsx",
-  "version": "0.16.4-modus.9",
+  "version": "0.16.4-modus.10",
   "description": "React components and hooks for viewing XLSX workbooks",
   "license": "MIT",
   "keywords": [
@@ -61,6 +61,6 @@
     "us-atlas": "^3.0.1",
     "world-atlas": "^2.0.2"
   },
-  "modusSource": "c02029866b865c8f5bf62f0465dc71871a07e64f",
+  "modusSource": "70cc9bca806906299b8408685ad0893248dadd1a",
   "modusUpstream": "873cd65bf3d04c4d1ff4f61263c7a2544b6571d0"
 }
