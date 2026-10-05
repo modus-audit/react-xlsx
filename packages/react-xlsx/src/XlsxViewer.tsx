@@ -8,7 +8,7 @@ import {
 import { resolveBuiltinTableStyle } from "./builtin-table-styles";
 import { resolveCellTextClipOverscan } from "./cell-text-clip";
 import { resizeHitSlopPx } from "./resize-hit-slop";
-import { lastSheetIndex, visibleSpan } from "./visible-axis";
+import { visibleSpan } from "./visible-axis";
 import { resolveWorkbookColor, resolveWorkbookFillStyle } from "./colors";
 import { useXlsxViewerController, XlsxFileSizeLimitExceededError } from "./controller";
 import { MemoChartSvg } from "./chart-renderer";
@@ -12394,9 +12394,12 @@ function XlsxGrid({
     // The whole sheet, hidden rows and columns included, so Unhide reaches ones hidden at the edges.
     commitSelectionRange({
       start: { row: 0, col: 0 },
-      end: { row: lastSheetIndex(lastVisibleRow, activeSheet?.hiddenRows), col: lastSheetIndex(lastVisibleCol, activeSheet?.hiddenCols) }
+      end: {
+        row: Math.max(lastVisibleRow, activeSheet?.maxUsedRow ?? -1),
+        col: Math.max(lastVisibleCol, activeSheet?.maxUsedCol ?? -1)
+      }
     });
-  }, [activeSheet?.hiddenCols, activeSheet?.hiddenRows, commitSelectionRange, firstVisibleCol, firstVisibleRow, focusGrid, lastVisibleCol, lastVisibleRow]);
+  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, commitSelectionRange, firstVisibleCol, firstVisibleRow, focusGrid, lastVisibleCol, lastVisibleRow]);
 
   const handleCanvasColumnHeaderPointerDown = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0 || firstVisibleRow === undefined || lastVisibleRow === undefined) {

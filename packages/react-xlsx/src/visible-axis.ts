@@ -18,9 +18,3 @@ function firstAtLeast(sorted: readonly number[], value: number): number {
   return low;
 }
 
-/** The last row (or column) a select-all covers: the last shown one, or a hidden one past it. */
-export function lastSheetIndex(lastVisible: number, hidden: readonly number[] | undefined): number {
-  let last = lastVisible;
-  for (const index of hidden ?? []) if (index > last) last = index;
-  return last;
-}

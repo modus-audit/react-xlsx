@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { lastSheetIndex, visibleSpan } from "./visible-axis.ts";
+import { visibleSpan } from "./visible-axis.ts";
 
 // Rows 0-2 and 6 hidden, as when a sheet's top rows are hidden.
 const visible = [3, 4, 5, 7, 8];
@@ -16,8 +16,3 @@ test("a range of only hidden rows has nothing to draw", () => {
   assert.equal(visibleSpan(visible, 6, 6), undefined);
 });
 
-test("select-all reaches hidden rows past the last shown one", () => {
-  assert.equal(lastSheetIndex(8, [0, 1, 2, 6]), 8);
-  assert.equal(lastSheetIndex(969, [0, 1, 2860]), 2860);
-  assert.equal(lastSheetIndex(5, undefined), 5);
-});

@@ -4603,15 +4603,21 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     }
 
     const target = mergeTarget(worksheet.mergedRegions, selection);
+    // Excel does nothing when asked to merge a single cell.
+    if (target.range.start.row === target.range.end.row && target.range.start.col === target.range.end.col) {
+      return null;
+    }
     recordHistoryBeforeMutation();
     for (const merge of target.merges) {
       worksheet.unmergeCells(merge);
     }
     worksheet.mergeCells(rangeToA1(target.range));
     refreshWorkbookState(workbook);
-    setSelection(target.range);
+    // Excel leaves the merged block selected with its top-left cell active.
+    selectRange(target.range);
+    setActiveCell(target.range.start);
     return target.range;
-  }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
+  }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selectRange, selection, workbook]);
 
   const unmergeSelection = React.useCallback(() => {
     const worksheet = getActiveWorksheet();
