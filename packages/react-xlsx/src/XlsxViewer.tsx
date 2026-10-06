@@ -7288,6 +7288,7 @@ function XlsxGrid({
   enableCanvasSelectionAnimation = true,
   errorState,
   fileTooLargeState,
+  formulaErrorTooltipClassName,
   getCellStyle,
   showFormulas = false,
   loadingComponent,
@@ -7309,7 +7310,7 @@ function XlsxGrid({
   showImages = true
 }: Pick<
   XlsxViewerProps,
-  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "getCellStyle" | "showFormulas" | "loadingComponent" | "loadingState" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
+  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "formulaErrorTooltipClassName" | "getCellStyle" | "showFormulas" | "loadingComponent" | "loadingState" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
 > & {
   controller: XlsxViewerController;
   palette: ViewerPalette;
@@ -10309,7 +10310,7 @@ function XlsxGrid({
     const formulaError = formulaErrors.get(cellAddressToA1({ row, col }));
     if (formulaError) {
       nextData.value = formulaError;
-      nextData.errorTooltip = formulaErrorTooltip(formulaError, formula);
+      nextData.errorTooltip = formulaErrorTooltip(formulaError);
     }
     if (showFormulas && formula) {
       nextData.value = `=${formula.replace(/^=/, "")}`;
@@ -16962,7 +16963,7 @@ function XlsxGrid({
         ? renderScroller({ children: scrollerContent, viewportProps: scrollerViewportProps })
         : <div key={activeTabIndex} {...scrollerViewportProps}>{scrollerContent}</div>}
       {formulaPopover && formulaPopover.calculation === controller.calculation && formulaPopover.sheet === activeSheet?.name
-        && <FormulaErrorPopover {...formulaPopover} palette={palette} />}
+        && <FormulaErrorPopover {...formulaPopover} palette={palette} className={formulaErrorTooltipClassName} />}
     </div>
   );
 }
@@ -16977,6 +16978,7 @@ function XlsxViewerInner({
   errorState,
   experimentalCanvas = true,
   fileTooLargeState,
+  formulaErrorTooltipClassName,
   getCellStyle,
   showFormulas,
   headerBackgroundColor,
@@ -17056,6 +17058,7 @@ function XlsxViewerInner({
                 errorState={errorState}
                 experimentalCanvas={experimentalCanvas}
                 fileTooLargeState={fileTooLargeState}
+                formulaErrorTooltipClassName={formulaErrorTooltipClassName}
                 getCellStyle={getCellStyle}
                 showFormulas={showFormulas}
                 loadingComponent={loadingComponent}

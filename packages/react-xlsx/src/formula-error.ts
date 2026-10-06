@@ -1,5 +1,5 @@
 const descriptions: Record<string, string> = {
-  "#DIV/0!": "The formula divides by zero or an empty cell.",
+  "#DIV/0!": "Divides by zero or an empty cell.",
   "#REF!": "The formula refers to a cell or range that is unavailable.",
   "#VALUE!": "A value has the wrong type for this formula.",
   "#NAME?": "A name or function could not be recognized.",
@@ -10,8 +10,6 @@ const descriptions: Record<string, string> = {
   "#CALC!": "The formula could not be calculated.",
 };
 
-/** Preserve any calculator error code, including ones introduced by a future engine. */
-export function formulaErrorTooltip(error: string, formula?: string | null) {
-  return [error, Object.hasOwn(descriptions, error) ? descriptions[error] : "The calculator returned an error for this formula.",
-    formula ? `=${formula.replace(/^=/, "")}` : null].filter(Boolean).join("\n");
+export function formulaErrorTooltip(error: string) {
+  return Object.hasOwn(descriptions, error) ? descriptions[error] : "This formula could not be calculated.";
 }

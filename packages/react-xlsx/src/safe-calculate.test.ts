@@ -260,7 +260,7 @@ test("keeps every calculator error and supports unfamiliar error codes", () => {
   assert.equal(report.errorCount, 25);
   assert.equal(report.issues.length, 25);
   assert.deepEqual(report.issues.map(issue => issue.cell).sort(), Array.from({ length: 25 }, (_, index) => `B${index + 1}`).sort());
-  assert.match(formulaErrorTooltip(report.issues[0].error, "1/0"), /divides by zero/);
-  assert.equal(formulaErrorTooltip("#FUTURE!", "NEWFUNCTION()"), "#FUTURE!\nThe calculator returned an error for this formula.\n=NEWFUNCTION()");
+  assert.equal(formulaErrorTooltip(report.issues[0].error), "Divides by zero or an empty cell.");
+  assert.equal(formulaErrorTooltip("#FUTURE!"), "This formula could not be calculated.");
   workbook.free();
 });
