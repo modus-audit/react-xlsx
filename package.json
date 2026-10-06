@@ -1,0 +1,66 @@
+{
+  "name": "@extend-ai/react-xlsx",
+  "version": "0.16.4-modus.13",
+  "description": "React components and hooks for viewing XLSX workbooks",
+  "license": "MIT",
+  "keywords": [
+    "react",
+    "xlsx",
+    "excel",
+    "spreadsheet",
+    "workbook",
+    "worksheet",
+    "viewer",
+    "xlsx-viewer",
+    "excel-viewer",
+    "spreadsheet-viewer",
+    "charts",
+    "tables"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/modus-audit/react-xlsx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/extend-hq/react-xlsx/issues"
+  },
+  "homepage": "https://github.com/extend-hq/react-xlsx#readme",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./duke_sheets_wasm_bg.wasm": "./dist/duke_sheets_wasm_bg.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "dependencies": {
+    "@dukelib/sheets-wasm": "https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.1.tar.gz",
+    "@tanstack/react-virtual": "^3.13.12",
+    "d3-geo": "^3.1.1",
+    "d3-hierarchy": "^3.1.2",
+    "d3-scale": "^4.0.2",
+    "d3-shape": "^3.2.0",
+    "fflate": "^0.8.3",
+    "regl": "^2.1.1",
+    "topojson-client": "^3.1.0",
+    "us-atlas": "^3.0.1",
+    "world-atlas": "^2.0.2"
+  },
+  "modusSource": "c4217e32fe37b92fbd08528a6ffa07cd123df8df",
+  "modusUpstream": "873cd65bf3d04c4d1ff4f61263c7a2544b6571d0"
+}
