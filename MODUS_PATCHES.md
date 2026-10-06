@@ -11,7 +11,7 @@ Preserved behavior:
   It compares the source OOXML formula inventory with the imported inventory, retains the engine
   statistics, and inspects typed formula results because engine `errors` misses some cell errors.
   Failed or skipped calculations retain saved values where no result is available. Calculated errors
-  replace saved numbers in cells, with formula-specific hover details in DOM and canvas renderers;
+  replace saved numbers in cells, with formula-specific corner-click details in DOM and canvas renderers;
   stale async results are ignored.
 - `revealCell` selects and centers off-screen search results.
 - `selections`, append/toggle operations, and canvas Ctrl/Cmd drag support non-contiguous selections. Re-adding an existing range preserves the other regions.
@@ -36,7 +36,7 @@ The app configures `initWasm` with a bundler-resolved asset URL and explicitly c
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.14`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.15`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 
@@ -66,8 +66,9 @@ external-input readiness, and issue navigation.
 snapshot. Worker `getCellSnapshotAsync` responses include the same `diagnostic`: `source` is
 `literal`, `calculated`, `saved`, or `unknown`, with the typed `error` if present.
 Typed formula errors remain visible instead of using saved numeric fallbacks. DOM and canvas cells
-mark them with a small yellow corner and provide a visible hover popup in both renderers.
-The popup closes on pointer exit, scrolling, and calculation or sheet changes. Unknown error codes
+mark them with a small yellow corner. Clicking that corner opens a compact popup anchored to the
+cell in both renderers; pointer movement does not open or reposition it. The popup closes on
+another click, Escape, scrolling, resizing, and calculation or sheet changes. Unknown error codes
 retain their original code and receive a generic explanation.
 
 The source inventory counts only SpreadsheetML formula children of worksheet cells, including

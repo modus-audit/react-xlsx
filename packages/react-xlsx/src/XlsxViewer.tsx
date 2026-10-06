@@ -12375,31 +12375,59 @@ function XlsxGrid({
     startCellSelection
   ]);
 
-  const [formulaHover, setFormulaHover] = React.useState<{
+  const [formulaPopover, setFormulaPopover] = React.useState<{
     text: string; x: number; y: number; cell: string;
     calculation: typeof controller.calculation; sheet: string | undefined;
   } | null>(null);
-  const clearFormulaHover = React.useCallback(() => setFormulaHover(null), []);
-  const handleFormulaPointerMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+  const clearFormulaPopover = React.useCallback(() => setFormulaPopover(null), []);
+  React.useEffect(() => {
+    if (!formulaPopover) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clearFormulaPopover();
+    };
+    window.addEventListener("pointerdown", clearFormulaPopover);
+    window.addEventListener("scroll", clearFormulaPopover, true);
+    window.addEventListener("resize", clearFormulaPopover);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", clearFormulaPopover);
+      window.removeEventListener("scroll", clearFormulaPopover, true);
+      window.removeEventListener("resize", clearFormulaPopover);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [clearFormulaPopover, formulaPopover]);
+  const handleFormulaCornerClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    clearFormulaPopover();
     const target = event.target;
-    if (event.buttons || event.pointerType === "touch" || !(target instanceof Element)
-      || !target.closest("[data-xlsx-cell], [data-xlsx-body-canvas]")) {
-      clearFormulaHover();
-      return;
-    }
-    const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
+    if (!(target instanceof Element) || !target.closest("[data-xlsx-cell], [data-xlsx-body-canvas]")) return;
+    const resolvedCell = resolvePointerCellFromClient(event.clientX, event.clientY);
+    const cell = resolvedCell ? resolveMergeAnchorCell(resolvedCell) : null;
     const address = cell ? cellAddressToA1(cell) : "";
-    if (!cell || !formulaErrors.has(address)) {
-      clearFormulaHover();
+    if (!cell || !formulaErrors.has(address)) return;
+    const scroller = scrollRef.current;
+    const geometry = resolveGeometryOverlayRect({ start: cell, end: cell });
+    if (!scroller || !geometry) return;
+    const mountedCell = wrapperRef.current?.querySelector<HTMLElement>(`[data-xlsx-cell="${cell.row}:${cell.col}"]`);
+    const viewport = scroller.getBoundingClientRect();
+    const rect = mountedCell?.getBoundingClientRect() ?? {
+      left: viewport.left + geometry.left - (geometry.left >= frozenPaneRight ? scroller.scrollLeft : 0),
+      top: viewport.top + geometry.top - (geometry.top >= frozenPaneBottom ? scroller.scrollTop : 0),
+      width: geometry.width,
+      height: geometry.height
+    };
+    const offsetX = event.clientX - rect.left;
+    const offsetY = event.clientY - rect.top;
+    if (offsetX < 0 || offsetY < 0 || offsetX > Math.min(12 * zoomFactor, rect.width)
+      || offsetY > Math.min(12 * zoomFactor, rect.height)) {
       return;
     }
     const text = getCellData(cell.row, cell.col).errorTooltip;
     if (!text) return;
-    const next = { text, x: event.clientX, y: event.clientY, cell: address,
-      calculation: controller.calculation, sheet: activeSheet?.name };
-    setFormulaHover(previous => previous?.cell === address && previous.calculation === next.calculation
-      && previous.sheet === next.sheet ? previous : next);
-  }, [activeSheet?.name, clearFormulaHover, controller.calculation, formulaErrors, getCellData, resolvePointerCellFromClient]);
+    event.stopPropagation();
+    setFormulaPopover({ text, x: rect.left + 8 * zoomFactor, y: rect.top + 8 * zoomFactor, cell: address,
+      calculation: controller.calculation, sheet: activeSheet?.name });
+  }, [activeSheet?.name, clearFormulaPopover, controller.calculation, formulaErrors, frozenPaneBottom,
+    frozenPaneRight, getCellData, resolveGeometryOverlayRect, resolveMergeAnchorCell, resolvePointerCellFromClient, zoomFactor]);
 
   const handleCanvasBodyClick = React.useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
@@ -16928,14 +16956,13 @@ function XlsxGrid({
   );
 
   return (
-    <div onPointerMove={handleFormulaPointerMove} onPointerLeave={clearFormulaHover}
-      onPointerDownCapture={clearFormulaHover} onScrollCapture={clearFormulaHover}
+    <div onClickCapture={handleFormulaCornerClick}
       style={{ backgroundColor: palette.canvas, display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
       {renderScroller
         ? renderScroller({ children: scrollerContent, viewportProps: scrollerViewportProps })
         : <div key={activeTabIndex} {...scrollerViewportProps}>{scrollerContent}</div>}
-      {formulaHover && formulaHover.calculation === controller.calculation && formulaHover.sheet === activeSheet?.name
-        && <FormulaErrorPopover {...formulaHover} palette={palette} />}
+      {formulaPopover && formulaPopover.calculation === controller.calculation && formulaPopover.sheet === activeSheet?.name
+        && <FormulaErrorPopover {...formulaPopover} palette={palette} />}
     </div>
   );
 }
