@@ -41,3 +41,7 @@ Ctrl/Cmd+Arrow resolves the next data-block boundary, with Shift preserving the 
 The `showFormulas` rendering prop displays formula text in both DOM and canvas cells without changing calculated values, clipboard values, exports, or aggregates. `getCellStyle` now also applies to blank worker cells, allowing precedents that point at blank cells to be highlighted.
 
 The consuming app owns focus-scoped Find, shortcut bindings for formula view and precedents, and literal A1-reference highlighting. No engine API or workbook mutation is required. Named, table, dynamic, external, and 3D references are explicitly reported as incomplete by the app.
+
+## Formula copy and fill (.13)
+
+Copy carries the original cell address so relative A1 references relocate on paste; absolute and mixed references retain their locked axes. One lexical helper also serves fill in every direction, preserving quoted strings, sheet qualifiers, names and structured references. The calculator and WASM engine remain unchanged.
