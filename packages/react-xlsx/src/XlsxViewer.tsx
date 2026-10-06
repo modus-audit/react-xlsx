@@ -16774,6 +16774,7 @@ function XlsxGrid({
               </div>
               <div
                 ref={fillHandleRef}
+                data-testid="xlsx-fill-handle"
                 onPointerDown={(event) => {
                   if (readOnly || event.button !== 0 || !normalizedSelection || !resolvedSelectionOverlay) {
                     return;
