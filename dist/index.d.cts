@@ -1564,6 +1564,8 @@ interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
      * ```
      */
     experimentalCanvas?: boolean;
+    /** Theme classes for the explanation opened by clicking a formula error corner. */
+    formulaErrorTooltipClassName?: string;
     /** Content shown for non-size load errors, or a function that receives the thrown error. */
     errorState?: React.ReactNode | ((error: Error) => React.ReactNode);
     /** Content shown when `maxFileSizeBytes` rejects a file. */

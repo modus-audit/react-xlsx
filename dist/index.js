@@ -11700,7 +11700,7 @@ function useXlsxViewerController(options) {
 
 // src/formula-error.ts
 var descriptions = {
-  "#DIV/0!": "The formula divides by zero or an empty cell.",
+  "#DIV/0!": "Divides by zero or an empty cell.",
   "#REF!": "The formula refers to a cell or range that is unavailable.",
   "#VALUE!": "A value has the wrong type for this formula.",
   "#NAME?": "A name or function could not be recognized.",
@@ -11710,19 +11710,15 @@ var descriptions = {
   "#SPILL!": "The formula cannot place its results in the required cells.",
   "#CALC!": "The formula could not be calculated."
 };
-function formulaErrorTooltip(error, formula) {
-  return [
-    error,
-    Object.hasOwn(descriptions, error) ? descriptions[error] : "The calculator returned an error for this formula.",
-    formula ? `=${formula.replace(/^=/, "")}` : null
-  ].filter(Boolean).join("\n");
+function formulaErrorTooltip(error) {
+  return Object.hasOwn(descriptions, error) ? descriptions[error] : "This formula could not be calculated.";
 }
 
 // src/FormulaErrorPopover.tsx
 import { useLayoutEffect, useRef as useRef2, useState as useState2 } from "react";
 import { createPortal } from "react-dom";
 import { jsx } from "react/jsx-runtime";
-function FormulaErrorPopover({ text, x, y, palette }) {
+function FormulaErrorPopover({ text, x, y, palette, className }) {
   const ref = useRef2(null);
   const [position, setPosition] = useState2({ left: x, top: y });
   useLayoutEffect(() => {
@@ -11734,25 +11730,26 @@ function FormulaErrorPopover({ text, x, y, palette }) {
     });
   }, [x, y, text]);
   return createPortal(
-    /* @__PURE__ */ jsx("div", { ref, role: "tooltip", "data-xlsx-formula-tooltip": "true", style: {
+    /* @__PURE__ */ jsx("div", { ref, role: "tooltip", "data-xlsx-formula-tooltip": "true", className, style: {
       position: "fixed",
       ...position,
       zIndex: 1e3,
       pointerEvents: "none",
-      maxWidth: "min(220px, calc(100vw - 16px))",
+      maxWidth: "min(256px, calc(100vw - 16px))",
       maxHeight: "calc(100vh - 16px)",
       overflow: "hidden",
-      padding: "6px 8px",
-      borderRadius: 5,
-      border: `1px solid ${palette.border}`,
-      background: palette.surface,
-      color: palette.text,
-      boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: 11,
-      lineHeight: 1.4,
-      whiteSpace: "pre-line",
-      overflowWrap: "anywhere"
+      overflowWrap: "anywhere",
+      ...!className ? {
+        padding: "4px 8px",
+        borderRadius: 6,
+        border: `1px solid ${palette.border}`,
+        background: palette.surface,
+        color: palette.text,
+        boxShadow: palette.shadow,
+        fontFamily: "system-ui, sans-serif",
+        fontSize: 12,
+        lineHeight: "16px"
+      } : {}
     }, children: text }),
     document.body
   );
@@ -24810,6 +24807,7 @@ function XlsxGrid({
   enableCanvasSelectionAnimation = true,
   errorState,
   fileTooLargeState,
+  formulaErrorTooltipClassName,
   getCellStyle,
   showFormulas = false,
   loadingComponent,
@@ -27286,7 +27284,7 @@ function XlsxGrid({
     const formulaError = formulaErrors.get(cellAddressToA12({ row, col }));
     if (formulaError) {
       nextData.value = formulaError;
-      nextData.errorTooltip = formulaErrorTooltip(formulaError, formula);
+      nextData.errorTooltip = formulaErrorTooltip(formulaError);
     }
     if (showFormulas && formula) {
       nextData.value = `=${formula.replace(/^=/, "")}`;
@@ -33010,7 +33008,7 @@ function XlsxGrid({
       style: { backgroundColor: palette.canvas, display: "flex", flex: 1, minHeight: 0, minWidth: 0 },
       children: [
         renderScroller ? renderScroller({ children: scrollerContent, viewportProps: scrollerViewportProps }) : /* @__PURE__ */ jsx4("div", { ...scrollerViewportProps, children: scrollerContent }, activeTabIndex),
-        formulaPopover && formulaPopover.calculation === controller.calculation && formulaPopover.sheet === activeSheet?.name && /* @__PURE__ */ jsx4(FormulaErrorPopover, { ...formulaPopover, palette })
+        formulaPopover && formulaPopover.calculation === controller.calculation && formulaPopover.sheet === activeSheet?.name && /* @__PURE__ */ jsx4(FormulaErrorPopover, { ...formulaPopover, palette, className: formulaErrorTooltipClassName })
       ]
     }
   );
@@ -33025,6 +33023,7 @@ function XlsxViewerInner({
   errorState,
   experimentalCanvas = true,
   fileTooLargeState,
+  formulaErrorTooltipClassName,
   getCellStyle,
   showFormulas,
   headerBackgroundColor,
@@ -33095,6 +33094,7 @@ function XlsxViewerInner({
             errorState,
             experimentalCanvas,
             fileTooLargeState,
+            formulaErrorTooltipClassName,
             getCellStyle,
             showFormulas,
             loadingComponent,
