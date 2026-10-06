@@ -1,9 +1,9 @@
 diff --git a/MODUS_PATCHES.md b/MODUS_PATCHES.md
 new file mode 100644
-index 0000000..22ad8f5
+index 0000000..422a928
 --- /dev/null
 +++ b/MODUS_PATCHES.md
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,78 @@
 +# Modus React XLSX viewer
 +
 +Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.1` WASM engine.
@@ -42,7 +42,7 @@ index 0000000..22ad8f5
 +
 +Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 +
-+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.12`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
++After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.14`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 +
 +The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 +
@@ -72,7 +72,8 @@ index 0000000..22ad8f5
 +snapshot. Worker `getCellSnapshotAsync` responses include the same `diagnostic`: `source` is
 +`literal`, `calculated`, `saved`, or `unknown`, with the typed `error` if present.
 +Typed formula errors remain visible instead of using saved numeric fallbacks. DOM and canvas cells
-+mark them with a small yellow corner and provide hover details. Unknown error codes
++mark them with a small yellow corner and provide a visible hover popup in both renderers.
++The popup closes on pointer exit, scrolling, and calculation or sheet changes. Unknown error codes
 +retain their original code and receive a generic explanation.
 +
 +The source inventory counts only SpreadsheetML formula children of worksheet cells, including
@@ -198,14 +199,14 @@ index 0000000..49eac7a
 +  };
 +}
 diff --git a/packages/react-xlsx/package.json b/packages/react-xlsx/package.json
-index 6455584..52e3fce 100644
+index 6455584..83d2028 100644
 --- a/packages/react-xlsx/package.json
 +++ b/packages/react-xlsx/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@extend-ai/react-xlsx",
 -  "version": "0.16.4",
-+  "version": "0.16.4-modus.12",
++  "version": "0.16.4-modus.14",
    "description": "React components and hooks for viewing XLSX workbooks",
    "license": "MIT",
    "keywords": [
@@ -227,17 +228,56 @@ index 6455584..52e3fce 100644
      "typecheck": "tsc -p tsconfig.json --noEmit",
      "clean": "rm -rf dist"
    },
+diff --git a/packages/react-xlsx/src/FormulaErrorPopover.tsx b/packages/react-xlsx/src/FormulaErrorPopover.tsx
+new file mode 100644
+index 0000000..1ddba5c
+--- /dev/null
++++ b/packages/react-xlsx/src/FormulaErrorPopover.tsx
+@@ -0,0 +1,32 @@
++import { useLayoutEffect, useRef, useState } from "react";
++import { createPortal } from "react-dom";
++import type { ViewerPalette } from "./viewer-palette";
++
++export function FormulaErrorPopover({ text, x, y, palette }: {
++  text: string;
++  x: number;
++  y: number;
++  palette: ViewerPalette;
++}) {
++  const ref = useRef<HTMLDivElement>(null);
++  const [position, setPosition] = useState({ left: x, top: y });
++  useLayoutEffect(() => {
++    const rect = ref.current?.getBoundingClientRect();
++    if (!rect) return;
++    setPosition({
++      left: Math.max(8, Math.min(x + 12, window.innerWidth - rect.width - 8)),
++      top: Math.max(8, y + 12 + rect.height < window.innerHeight - 8 ? y + 12 : y - rect.height - 12)
++    });
++  }, [x, y, text]);
++
++  return createPortal(
++    <div ref={ref} role="tooltip" data-xlsx-formula-tooltip="true" style={{
++      position: "fixed", ...position, zIndex: 1000, pointerEvents: "none",
++      maxWidth: "min(320px, calc(100vw - 16px))", maxHeight: "calc(100vh - 16px)", overflow: "hidden",
++      padding: "8px 10px", borderRadius: 6, border: `1px solid ${palette.border}`,
++      background: palette.surface, color: palette.text, boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
++      fontFamily: "system-ui, sans-serif", fontSize: 12, lineHeight: 1.5,
++      whiteSpace: "pre-line", overflowWrap: "anywhere"
++    }}>{text}</div>, document.body
++  );
++}
 diff --git a/packages/react-xlsx/src/XlsxViewer.tsx b/packages/react-xlsx/src/XlsxViewer.tsx
-index 20d313c..eaae09c 100644
+index 20d313c..87a95c7 100644
 --- a/packages/react-xlsx/src/XlsxViewer.tsx
 +++ b/packages/react-xlsx/src/XlsxViewer.tsx
-@@ -1,3 +1,5 @@
+@@ -1,3 +1,6 @@
 +import { formulaErrorTooltip } from "./formula-error";
++import { FormulaErrorPopover } from "./FormulaErrorPopover";
 +import type { DataDirection } from "./data-navigation";
  import * as React from "react";
  import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
  import {
-@@ -6,6 +8,8 @@ import {
+@@ -6,6 +9,8 @@ import {
  } from "@tanstack/react-virtual";
  import { resolveBuiltinTableStyle } from "./builtin-table-styles";
  import { resolveCellTextClipOverscan } from "./cell-text-clip";
@@ -246,7 +286,7 @@ index 20d313c..eaae09c 100644
  import { resolveWorkbookColor, resolveWorkbookFillStyle } from "./colors";
  import { useXlsxViewerController, XlsxFileSizeLimitExceededError } from "./controller";
  import { MemoChartSvg } from "./chart-renderer";
-@@ -78,7 +82,6 @@ const OPEN_GRID_HORIZONTAL_EDGE_PX = 480;
+@@ -78,7 +83,6 @@ const OPEN_GRID_HORIZONTAL_EDGE_PX = 480;
  const SELECTION_DRAG_THRESHOLD_PX = 4;
  const IMAGE_MIN_SIZE_PX = 16;
  const IMAGE_HANDLE_SIZE_PX = 10;
@@ -254,7 +294,7 @@ index 20d313c..eaae09c 100644
  const CANVAS_VIEWPORT_OVERSCAN_PX = 480;
  const CANVAS_SCROLL_BUFFER_PX = 480;
  const CANVAS_DEFERRED_VIEWPORT_SYNC_THRESHOLD_PX = CANVAS_SCROLL_BUFFER_PX - 96;
-@@ -118,6 +121,7 @@ const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = [];
+@@ -118,6 +122,7 @@ const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = [];
  
  type SelectionDragState = {
    anchor: XlsxCellAddress;
@@ -262,7 +302,7 @@ index 20d313c..eaae09c 100644
    axis: "cell" | "column" | "row";
    contentScaleX: number;
    contentScaleY: number;
-@@ -1146,6 +1150,7 @@ type BatchedCellData = {
+@@ -1146,6 +1151,7 @@ type BatchedCellData = {
  };
  
  type WorksheetBatchWindow = {
@@ -270,7 +310,7 @@ index 20d313c..eaae09c 100644
    cells: Map<string, BatchedCellData>;
    endRow: number;
    startRow: number;
-@@ -3748,18 +3753,13 @@ function canReceiveOverflowText(data: CellRenderData) {
+@@ -3748,18 +3754,13 @@ function canReceiveOverflowText(data: CellRenderData) {
    return !data.isMergedSecondary && !data.colSpan && data.value.length === 0;
  }
  
@@ -291,7 +331,7 @@ index 20d313c..eaae09c 100644
    if (cellValue.is_error) {
      return cellValue.asError() ?? "";
    }
-@@ -3770,7 +3770,7 @@ function getCellDisplayValue(worksheet: Worksheet, row: number, col: number, act
+@@ -3770,7 +3771,7 @@ function getCellDisplayValue(worksheet: Worksheet, row: number, col: number, act
    return cellValue.toString();
  }
  
@@ -300,7 +340,7 @@ index 20d313c..eaae09c 100644
    const cellValue = worksheet.getCalculatedValueAt(row, col);
    if (cellValue.is_number) {
      return cellValue.asNumber() ?? null;
-@@ -3779,7 +3779,10 @@ function getCellNumericValue(worksheet: Worksheet, row: number, col: number) {
+@@ -3779,7 +3780,10 @@ function getCellNumericValue(worksheet: Worksheet, row: number, col: number) {
      return cellValue.asBoolean() ? 1 : 0;
    }
    if (cellValue.is_empty || cellValue.is_error) {
@@ -312,7 +352,7 @@ index 20d313c..eaae09c 100644
    }
  
    const parsedValue = Number(cellValue.asText() ?? cellValue.toString());
-@@ -4277,6 +4280,37 @@ function buildWorksheetBatchWindow(
+@@ -4277,6 +4281,37 @@ function buildWorksheetBatchWindow(
    };
  }
  
@@ -350,7 +390,7 @@ index 20d313c..eaae09c 100644
  function getTableAtCell(tables: XlsxTable[], row: number, col: number) {
    return tables.find(
      (table) =>
-@@ -5248,6 +5282,7 @@ function resolveSelectionColors({
+@@ -5248,6 +5283,7 @@ function resolveSelectionColors({
  }
  
  type CellRenderData = {
@@ -358,7 +398,7 @@ index 20d313c..eaae09c 100644
    canvas?: CanvasCellStyleCache;
    chartHighlight?: CellChartHighlight | null;
    checkboxState?: boolean | null;
-@@ -5646,7 +5681,7 @@ function resolveConditionalFormulaComparable(
+@@ -5646,7 +5682,7 @@ function resolveConditionalFormulaComparable(
    worksheet: Worksheet | null | undefined,
    sheet: XlsxSheetData | null | undefined,
    batchedCells?: Map<string, BatchedCellData>
@@ -367,7 +407,7 @@ index 20d313c..eaae09c 100644
    const literal = parseConditionalFormulaLiteral(formula);
    if (typeof literal === "number") {
      return literal;
-@@ -5657,6 +5692,14 @@ function resolveConditionalFormulaComparable(
+@@ -5657,6 +5693,14 @@ function resolveConditionalFormulaComparable(
      return literal;
    }
  
@@ -382,7 +422,7 @@ index 20d313c..eaae09c 100644
    const splitReference = splitSheetFormulaReference(normalized);
    const targetSheetName = splitReference?.sheetName ?? null;
    if (targetSheetName && sheet?.name && targetSheetName !== sheet.name) {
-@@ -5674,7 +5717,7 @@ function resolveConditionalFormulaComparable(
+@@ -5674,7 +5718,7 @@ function resolveConditionalFormulaComparable(
      if (numeric !== null) {
        return numeric;
      }
@@ -391,7 +431,7 @@ index 20d313c..eaae09c 100644
    }
  
    if (batchedCells) {
-@@ -5699,17 +5742,130 @@ function normalizeConditionalTextOperand(value: string | number | null | undefin
+@@ -5699,17 +5743,130 @@ function normalizeConditionalTextOperand(value: string | number | null | undefin
    return String(value).trim().toLowerCase();
  }
  
@@ -524,7 +564,7 @@ index 20d313c..eaae09c 100644
  
    if (normalizedRuleType === "cellis") {
      return resolveConditionalCellIsMatch(rule.operator ?? "equal", left, right, numericValue, textValue);
-@@ -5720,6 +5876,17 @@ function resolveConditionalStyledRuleMatch(
+@@ -5720,6 +5877,17 @@ function resolveConditionalStyledRuleMatch(
      || normalizeConditionalTextOperand(left);
  
    switch (normalizedRuleType) {
@@ -542,7 +582,7 @@ index 20d313c..eaae09c 100644
      case "beginwith":
      case "beginswith":
        return normalizedOperand.length > 0 && normalizedCellText.startsWith(normalizedOperand);
-@@ -5789,7 +5956,7 @@ function resolveConditionalCellStyleForCell(
+@@ -5789,7 +5957,7 @@ function resolveConditionalCellStyleForCell(
      if (textValue === undefined) {
        textValue = readTextValue();
      }
@@ -551,7 +591,7 @@ index 20d313c..eaae09c 100644
        continue;
      }
  
-@@ -6711,9 +6878,9 @@ function GridRow({
+@@ -6711,9 +6879,9 @@ function GridRow({
              onPointerDown={(event) => onRowResizePointerDown(event, actualRow, rowHeight)}
              style={{
                backgroundColor: "transparent",
@@ -563,7 +603,7 @@ index 20d313c..eaae09c 100644
                left: 0,
                position: "absolute",
                width: "100%",
-@@ -6764,7 +6931,7 @@ function GridRow({
+@@ -6764,7 +6932,7 @@ function GridRow({
          if (cellData.conditionalColorScale) {
            cellStyle.backgroundColor = cellData.conditionalColorScale.color;
          }
@@ -572,16 +612,16 @@ index 20d313c..eaae09c 100644
            cellStyle.position = "relative";
          }
          if (cellData.chartHighlight) {
-@@ -6862,7 +7029,7 @@ function GridRow({
+@@ -6862,7 +7030,7 @@ function GridRow({
                width: "max-content"
              } satisfies React.CSSProperties
            : null;
 -        const title = [cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.value]
-+        const title = [cellData.errorTooltip, cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.errorTooltip ? undefined : cellData.value]
++        const title = cellData.errorTooltip ? undefined : [cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.value]
            .filter((value, index, values): value is string => typeof value === "string" && value.length > 0 && values.indexOf(value) === index)
            .join("\n");
  
-@@ -6884,6 +7051,16 @@ function GridRow({
+@@ -6884,6 +7052,16 @@ function GridRow({
              style={cellStyle}
              title={title}
            >
@@ -598,7 +638,7 @@ index 20d313c..eaae09c 100644
              {cellData.chartHighlight ? (
                <div
                  aria-hidden="true"
-@@ -7111,6 +7288,7 @@ function XlsxGrid({
+@@ -7111,6 +7289,7 @@ function XlsxGrid({
    errorState,
    fileTooLargeState,
    getCellStyle,
@@ -606,7 +646,7 @@ index 20d313c..eaae09c 100644
    loadingComponent,
    loadingState,
    onFormControlAction,
-@@ -7130,7 +7308,7 @@ function XlsxGrid({
+@@ -7130,7 +7309,7 @@ function XlsxGrid({
    showImages = true
  }: Pick<
    XlsxViewerProps,
@@ -615,7 +655,7 @@ index 20d313c..eaae09c 100644
  > & {
    controller: XlsxViewerController;
    palette: ViewerPalette;
-@@ -7190,6 +7368,7 @@ function XlsxGrid({
+@@ -7190,6 +7369,7 @@ function XlsxGrid({
      selectImage,
      selectRange,
      selection,
@@ -623,7 +663,7 @@ index 20d313c..eaae09c 100644
      setActiveSheetIndex,
      setChartRect,
      setImageRect,
-@@ -7213,10 +7392,50 @@ function XlsxGrid({
+@@ -7213,10 +7393,50 @@ function XlsxGrid({
      ))
    ), [formControls, getFormControlItems]);
    const canResizeHeaders = !readOnly || allowResizeInReadOnly;
@@ -674,7 +714,7 @@ index 20d313c..eaae09c 100644
    const gridKeyboardHandlerRef = React.useRef<((event: KeyboardEvent) => void) | null>(null);
    const axisSelectionRef = React.useRef<
      | { axis: "column"; endCol: number; startCol: number }
-@@ -9623,14 +9842,15 @@ function XlsxGrid({
+@@ -9623,14 +9843,15 @@ function XlsxGrid({
    const [, startBatchTransition] = React.useTransition();
    const [, startSelectionTransition] = React.useTransition();
    const [asyncViewportRowBatch, setAsyncViewportRowBatch] = React.useState<WorksheetBatchWindow | null>(null);
@@ -692,7 +732,7 @@ index 20d313c..eaae09c 100644
            const viewportStart = Math.max(0, drawingViewport.top - displayHeaderHeight - CANVAS_VIEWPORT_OVERSCAN_PX);
            const viewportEnd = Math.max(
              viewportStart,
-@@ -9666,11 +9886,29 @@ function XlsxGrid({
+@@ -9666,11 +9887,29 @@ function XlsxGrid({
      drawingViewport.height,
      drawingViewport.top,
      experimentalCanvas,
@@ -723,7 +763,7 @@ index 20d313c..eaae09c 100644
    const syncViewportRowBatch = React.useMemo<WorksheetBatchWindow | null>(() => {
      if (!shouldVirtualizeRows || !worksheet || getRowsBatchAsync || !viewportRequest) {
        return null;
-@@ -9745,10 +9983,52 @@ function XlsxGrid({
+@@ -9745,10 +9984,52 @@ function XlsxGrid({
      };
    }, [activeSheet, asyncViewportRowBatch, getRowsBatchAsync, shouldVirtualizeRows, startBatchTransition, viewportRequest]);
  
@@ -777,7 +817,7 @@ index 20d313c..eaae09c 100644
    }, [activeSheetIndex, revision]);
  
    const sparklinesByCell = React.useMemo(() => {
-@@ -9769,6 +10049,10 @@ function XlsxGrid({
+@@ -9769,6 +10050,10 @@ function XlsxGrid({
      [activeSheet, chartRangeHighlights]
    );
  
@@ -788,7 +828,7 @@ index 20d313c..eaae09c 100644
    const cellRenderCacheInvalidationKey = React.useMemo(
      () =>
        [
-@@ -9777,6 +10061,8 @@ function XlsxGrid({
+@@ -9777,6 +10062,8 @@ function XlsxGrid({
          displayColLimit,
          displayRowLimit,
          getCellStyle,
@@ -797,7 +837,7 @@ index 20d313c..eaae09c 100644
          palette,
          revision,
          selectedChartElement,
-@@ -9791,6 +10077,8 @@ function XlsxGrid({
+@@ -9791,6 +10078,8 @@ function XlsxGrid({
        displayColLimit,
        displayRowLimit,
        getCellStyle,
@@ -806,7 +846,7 @@ index 20d313c..eaae09c 100644
        palette,
        revision,
        selectedChartElement,
-@@ -9815,7 +10103,10 @@ function XlsxGrid({
+@@ -9815,7 +10104,10 @@ function XlsxGrid({
        return cached;
      }
  
@@ -818,7 +858,7 @@ index 20d313c..eaae09c 100644
      const batchedCell = batchCoversRow ? viewportRowBatch?.cells.get(cacheKey) : undefined;
      const worksheetMergedSecondary = worksheet?.isMergedSecondary(row, col) ?? false;
  
-@@ -9833,6 +10124,14 @@ function XlsxGrid({
+@@ -9833,6 +10125,14 @@ function XlsxGrid({
          }, zoomFactor),
          value: ""
        };
@@ -833,7 +873,7 @@ index 20d313c..eaae09c 100644
        cellRenderCacheRef.current.set(cacheKey, emptyData);
        return emptyData;
      }
-@@ -9906,7 +10205,7 @@ function XlsxGrid({
+@@ -9906,7 +10206,7 @@ function XlsxGrid({
        if (displayValue === null) {
          displayValue = batchCoversRow || !worksheet
            ? batchedCell?.value ?? ""
@@ -842,7 +882,7 @@ index 20d313c..eaae09c 100644
        }
        return displayValue;
      };
-@@ -9914,7 +10213,7 @@ function XlsxGrid({
+@@ -9914,7 +10214,7 @@ function XlsxGrid({
        row,
        col,
        activeSheet,
@@ -851,7 +891,7 @@ index 20d313c..eaae09c 100644
        readDisplayValue,
        worksheet,
        viewportRowBatch?.cells
-@@ -10005,6 +10304,23 @@ function XlsxGrid({
+@@ -10005,6 +10305,23 @@ function XlsxGrid({
            : readDisplayValue()
      };
  
@@ -875,7 +915,7 @@ index 20d313c..eaae09c 100644
      if (getCellStyle) {
        const styleOverrides = getCellStyle({
          cell: { row, col },
-@@ -10142,6 +10458,8 @@ function XlsxGrid({
+@@ -10142,6 +10459,8 @@ function XlsxGrid({
    }, [
      activeSheet,
      activeSheetChartHighlights,
@@ -884,7 +924,7 @@ index 20d313c..eaae09c 100644
      cellRenderCacheInvalidationKey,
      colIndexByActual,
      colPrefixSums,
-@@ -10161,25 +10479,15 @@ function XlsxGrid({
+@@ -10161,25 +10480,15 @@ function XlsxGrid({
      conditionalFormatMetricsCacheRef.current.clear();
    }, [activeSheet?.conditionalFormatRules, activeSheet?.workbookSheetIndex, revision]);
  
@@ -917,7 +957,7 @@ index 20d313c..eaae09c 100644
  
      return {
        height: sumPrefixRange(rowPrefixSums, startRowIndex, endRowIndex),
-@@ -10187,8 +10495,26 @@ function XlsxGrid({
+@@ -10187,8 +10496,26 @@ function XlsxGrid({
        top: displayHeaderHeight + sumPrefixRange(rowPrefixSums, 0, startRowIndex - 1),
        width: sumPrefixRange(colPrefixSums, startColIndex, endColIndex)
      };
@@ -945,7 +985,7 @@ index 20d313c..eaae09c 100644
    const { fill: selectionFill, header: selectionHeaderSurface, stroke: selectionStroke } = React.useMemo(() => resolveSelectionColors({
      palette,
      selectionColor,
-@@ -10608,19 +10934,13 @@ function XlsxGrid({
+@@ -10608,19 +10935,13 @@ function XlsxGrid({
            col: startCell.col + Math.max(1, merge?.colSpan ?? 1) - 1
          }
        : normalized.end;
@@ -970,7 +1010,7 @@ index 20d313c..eaae09c 100644
  
      let left = displayRowHeaderWidth + sumPrefixRange(colPrefixSums, 0, startColIndex - 1);
      let top = displayHeaderHeight + sumPrefixRange(rowPrefixSums, 0, startRowIndex - 1);
-@@ -10663,7 +10983,7 @@ function XlsxGrid({
+@@ -10663,7 +10984,7 @@ function XlsxGrid({
        top: Math.max(displayHeaderHeight, top),
        width: Math.max(0, width)
      };
@@ -979,7 +1019,7 @@ index 20d313c..eaae09c 100644
  
    const resolveMountedRangeOverlayRect = React.useCallback((range: XlsxCellRange, geometryRect: {
      height: number;
-@@ -11215,9 +11535,15 @@ function XlsxGrid({
+@@ -11215,9 +11536,15 @@ function XlsxGrid({
    function finishPendingSelectionDrag() {
      const pendingState = pendingSelectionDragRef.current;
      clearPendingSelectionDrag();
@@ -997,7 +1037,7 @@ index 20d313c..eaae09c 100644
    }
  
    function promotePendingSelectionDrag(clientX: number, clientY: number) {
-@@ -11383,7 +11709,13 @@ function XlsxGrid({
+@@ -11383,7 +11710,13 @@ function XlsxGrid({
          } else {
            axisSelectionRef.current = null;
          }
@@ -1012,7 +1052,7 @@ index 20d313c..eaae09c 100644
        } else if (!nextRange) {
          selectionPreviewRangeRef.current = null;
        }
-@@ -11525,6 +11857,10 @@ function XlsxGrid({
+@@ -11525,6 +11858,10 @@ function XlsxGrid({
        event.currentTarget.colSpan > 1 || event.currentTarget.rowSpan > 1
          ? resolvePointerCellFromGeometry(event.clientX, event.clientY) ?? cell
          : cell;
@@ -1023,7 +1063,7 @@ index 20d313c..eaae09c 100644
      const currentSelection = selectionRef.current;
      const anchor = event.shiftKey && currentSelection ? currentSelection.start : targetCell;
      const initialRange = normalizeRange({ start: anchor, end: targetCell });
-@@ -11575,7 +11911,8 @@ function XlsxGrid({
+@@ -11575,7 +11912,8 @@ function XlsxGrid({
      resolveCellPointerOriginFromClient,
      resolveMountedCellOverlayRect,
      resolveOverlayRect,
@@ -1033,7 +1073,7 @@ index 20d313c..eaae09c 100644
    ]);
  
    const handleRowPointerDown = React.useCallback((
-@@ -11588,6 +11925,7 @@ function XlsxGrid({
+@@ -11588,6 +11926,7 @@ function XlsxGrid({
  
      event.preventDefault();
      focusGrid();
@@ -1041,7 +1081,7 @@ index 20d313c..eaae09c 100644
      const currentSelection = selectionRef.current;
      const anchorRow = event.shiftKey && currentSelection ? currentSelection.start.row : actualRow;
      const initialRange = normalizeRange({
-@@ -11607,13 +11945,16 @@ function XlsxGrid({
+@@ -11607,13 +11946,16 @@ function XlsxGrid({
        { row: actualRow, col: firstVisibleCol },
        pointerOrigin,
        null,
@@ -1061,7 +1101,7 @@ index 20d313c..eaae09c 100644
    }, [commitSelectionRange, firstVisibleCol, focusGrid, lastVisibleCol, resolveRowPointerOrigin]);
  
    const handleColumnPointerDown = React.useCallback((
-@@ -11626,6 +11967,7 @@ function XlsxGrid({
+@@ -11626,6 +11968,7 @@ function XlsxGrid({
  
      event.preventDefault();
      focusGrid();
@@ -1069,7 +1109,7 @@ index 20d313c..eaae09c 100644
      const currentSelection = selectionRef.current;
      const anchorCol =
        event.shiftKey && currentSelection ? currentSelection.start.col : actualCol;
-@@ -11646,13 +11988,16 @@ function XlsxGrid({
+@@ -11646,13 +11989,16 @@ function XlsxGrid({
        { row: firstVisibleRow, col: actualCol },
        pointerOrigin,
        null,
@@ -1089,7 +1129,7 @@ index 20d313c..eaae09c 100644
    }, [commitSelectionRange, firstVisibleRow, focusGrid, lastVisibleRow, resolveColumnPointerOrigin]);
  
    const handleRowResizePointerDown = React.useCallback((
-@@ -11856,7 +12201,7 @@ function XlsxGrid({
+@@ -11856,7 +12202,7 @@ function XlsxGrid({
  
      const localX = clientX - scrollerRect.left;
      for (const column of canvasColumnHeaderCells) {
@@ -1098,7 +1138,7 @@ index 20d313c..eaae09c 100644
          return { actualCol: column.actualCol, width: column.width };
        }
      }
-@@ -11891,7 +12236,7 @@ function XlsxGrid({
+@@ -11891,7 +12237,7 @@ function XlsxGrid({
  
      const localY = clientY - scrollerRect.top;
      for (const row of canvasRowHeaderCells) {
@@ -1107,7 +1147,7 @@ index 20d313c..eaae09c 100644
          return { actualRow: row.actualRow, height: row.height };
        }
      }
-@@ -11951,6 +12296,35 @@ function XlsxGrid({
+@@ -11951,6 +12297,35 @@ function XlsxGrid({
      event.preventDefault();
      focusGrid();
      axisSelectionRef.current = null;
@@ -1143,23 +1183,40 @@ index 20d313c..eaae09c 100644
      const currentSelection = selectionRef.current;
      const anchor = event.shiftKey && currentSelection ? currentSelection.start : cell;
      const initialRange = normalizeRange({ start: anchor, end: cell });
-@@ -12000,6 +12374,15 @@ function XlsxGrid({
+@@ -12000,6 +12375,32 @@ function XlsxGrid({
      startCellSelection
    ]);
  
-+  const handleCanvasBodyPointerMove = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
++  const [formulaHover, setFormulaHover] = React.useState<{
++    text: string; x: number; y: number; cell: string;
++    calculation: typeof controller.calculation; sheet: string | undefined;
++  } | null>(null);
++  const clearFormulaHover = React.useCallback(() => setFormulaHover(null), []);
++  const handleFormulaPointerMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
++    const target = event.target;
++    if (event.buttons || event.pointerType === "touch" || !(target instanceof Element)
++      || !target.closest("[data-xlsx-cell], [data-xlsx-body-canvas]")) {
++      clearFormulaHover();
++      return;
++    }
 +    const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
-+    event.currentTarget.title = cell ? getCellData(cell.row, cell.col).errorTooltip ?? "" : "";
-+  }, [getCellData, resolvePointerCellFromClient]);
-+
-+  const handleCanvasBodyPointerLeave = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
-+    event.currentTarget.removeAttribute("title");
-+  }, []);
++    const address = cell ? cellAddressToA1(cell) : "";
++    if (!cell || !formulaErrors.has(address)) {
++      clearFormulaHover();
++      return;
++    }
++    const text = getCellData(cell.row, cell.col).errorTooltip;
++    if (!text) return;
++    const next = { text, x: event.clientX, y: event.clientY, cell: address,
++      calculation: controller.calculation, sheet: activeSheet?.name };
++    setFormulaHover(previous => previous?.cell === address && previous.calculation === next.calculation
++      && previous.sheet === next.sheet ? previous : next);
++  }, [activeSheet?.name, clearFormulaHover, controller.calculation, formulaErrors, getCellData, resolvePointerCellFromClient]);
 +
    const handleCanvasBodyClick = React.useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
      const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
      if (!cell) {
-@@ -12022,6 +12405,30 @@ function XlsxGrid({
+@@ -12022,6 +12423,30 @@ function XlsxGrid({
      startEditing(cell);
    }, [readOnly, resolvePointerCellFromClient, startEditing]);
  
@@ -1190,7 +1247,7 @@ index 20d313c..eaae09c 100644
    const handleCanvasColumnHeaderPointerDown = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
      if (event.button !== 0 || firstVisibleRow === undefined || lastVisibleRow === undefined) {
        return;
-@@ -12042,6 +12449,8 @@ function XlsxGrid({
+@@ -12042,6 +12467,8 @@ function XlsxGrid({
  
      event.preventDefault();
      focusGrid();
@@ -1199,7 +1256,7 @@ index 20d313c..eaae09c 100644
      const currentSelection = selectionRef.current;
      const anchorCol = event.shiftKey && currentSelection ? currentSelection.start.col : actualCol;
      const initialRange = normalizeRange({
-@@ -12066,13 +12475,16 @@ function XlsxGrid({
+@@ -12066,13 +12493,16 @@ function XlsxGrid({
          originContentY: rowPrefixSums[0] ?? 0
        },
        null,
@@ -1219,7 +1276,7 @@ index 20d313c..eaae09c 100644
    }, [
      colIndexByActual,
      colPrefixSums,
-@@ -12106,6 +12518,7 @@ function XlsxGrid({
+@@ -12106,6 +12536,7 @@ function XlsxGrid({
  
      event.preventDefault();
      focusGrid();
@@ -1227,7 +1284,7 @@ index 20d313c..eaae09c 100644
      const currentSelection = selectionRef.current;
      const anchorRow = event.shiftKey && currentSelection ? currentSelection.start.row : actualRow;
      const initialRange = normalizeRange({
-@@ -12130,13 +12543,16 @@ function XlsxGrid({
+@@ -12130,13 +12561,16 @@ function XlsxGrid({
          originContentY: rowPrefixSums[anchorRowIndex] ?? 0
        },
        null,
@@ -1247,7 +1304,7 @@ index 20d313c..eaae09c 100644
    }, [
      colPrefixSums,
      commitSelectionRange,
-@@ -13008,6 +13424,20 @@ function XlsxGrid({
+@@ -13008,6 +13442,20 @@ function XlsxGrid({
              }
            }
  
@@ -1268,7 +1325,7 @@ index 20d313c..eaae09c 100644
            const rawText = cellData.value ?? "";
            const shouldDrawCanvasContent = (
              cellData.checkboxState != null
-@@ -13917,16 +14347,14 @@ function XlsxGrid({
+@@ -13917,16 +14365,14 @@ function XlsxGrid({
      whiteSpace: "nowrap",
      zIndex: canvasHeaderOverlayZIndex
    }, zoomFactor);
@@ -1287,7 +1344,7 @@ index 20d313c..eaae09c 100644
    const canvasBodyViewportLayerStyle: React.CSSProperties = {
      height: 0,
      left: 0,
-@@ -14018,7 +14446,7 @@ function XlsxGrid({
+@@ -14018,7 +14464,7 @@ function XlsxGrid({
    const canvasCornerHeaderStyle: React.CSSProperties = {
      display: drawingViewport.width > 0 && drawingViewport.height > 0 ? "block" : "none",
      left: 0,
@@ -1296,7 +1353,7 @@ index 20d313c..eaae09c 100644
      position: "absolute",
      top: 0,
      transformOrigin: "0 0",
-@@ -15075,12 +15503,14 @@ function XlsxGrid({
+@@ -15075,12 +15521,14 @@ function XlsxGrid({
      committedOnPointerDown: boolean,
      initialRange: XlsxCellRange,
      startClientX: number,
@@ -1312,7 +1369,7 @@ index 20d313c..eaae09c 100644
        axis,
        contentScaleX: pointerOrigin.contentScaleX,
        contentScaleY: pointerOrigin.contentScaleY,
-@@ -15418,6 +15848,46 @@ function XlsxGrid({
+@@ -15418,6 +15866,46 @@ function XlsxGrid({
      syncDrawingViewport(scroller, { immediate: true });
    }
  
@@ -1359,7 +1416,7 @@ index 20d313c..eaae09c 100644
    function moveSelection(nextRowIndex: number, nextColIndex: number, extend: boolean) {
      const clampedRowIndex = Math.max(0, Math.min(nextRowIndex, visibleRows.length - 1));
      const clampedColIndex = Math.max(0, Math.min(nextColIndex, visibleCols.length - 1));
-@@ -15436,6 +15906,26 @@ function XlsxGrid({
+@@ -15436,6 +15924,26 @@ function XlsxGrid({
      ensureCellVisible(clampedRowIndex, clampedColIndex);
    }
  
@@ -1386,7 +1443,7 @@ index 20d313c..eaae09c 100644
    function resolvePageRowIndex(currentRowIndex: number, direction: 1 | -1) {
      const scroller = scrollRef.current;
      const viewportHeight = Math.max(
-@@ -15514,8 +16004,33 @@ function XlsxGrid({
+@@ -15514,8 +16022,33 @@ function XlsxGrid({
      return { colIndex, rowIndex };
    }
  
@@ -1421,7 +1478,7 @@ index 20d313c..eaae09c 100644
        return;
      }
  
-@@ -15548,6 +16063,14 @@ function XlsxGrid({
+@@ -15548,6 +16081,14 @@ function XlsxGrid({
      const currentRowIndex = rowIndexByActual.get(currentCell.row) ?? 0;
      const currentColIndex = colIndexByActual.get(currentCell.col) ?? 0;
      const isCommandNavigation = event.ctrlKey || event.metaKey;
@@ -1436,7 +1493,7 @@ index 20d313c..eaae09c 100644
  
      if (!readOnly && isPrintableKey(event)) {
        event.preventDefault();
-@@ -15566,9 +16089,7 @@ function XlsxGrid({
+@@ -15566,9 +16107,7 @@ function XlsxGrid({
            }
          }
          moveSelection(
@@ -1447,7 +1504,7 @@ index 20d313c..eaae09c 100644
            currentColIndex,
            event.shiftKey
          );
-@@ -15583,9 +16104,7 @@ function XlsxGrid({
+@@ -15583,9 +16122,7 @@ function XlsxGrid({
            }
          }
          moveSelection(
@@ -1458,7 +1515,7 @@ index 20d313c..eaae09c 100644
            currentColIndex,
            event.shiftKey
          );
-@@ -15601,9 +16120,7 @@ function XlsxGrid({
+@@ -15601,9 +16138,7 @@ function XlsxGrid({
          }
          moveSelection(
            currentRowIndex,
@@ -1469,7 +1526,7 @@ index 20d313c..eaae09c 100644
            event.shiftKey
          );
          break;
-@@ -15618,9 +16135,7 @@ function XlsxGrid({
+@@ -15618,9 +16153,7 @@ function XlsxGrid({
          }
          moveSelection(
            currentRowIndex,
@@ -1480,7 +1537,7 @@ index 20d313c..eaae09c 100644
            event.shiftKey
          );
          break;
-@@ -15710,7 +16225,7 @@ function XlsxGrid({
+@@ -15710,7 +16243,7 @@ function XlsxGrid({
    const scrollerViewportProps: XlsxScrollerRenderProps["viewportProps"] = {
      ref: scrollRef,
      "aria-colcount": Math.max(activeSheet?.colCount ?? 0, displayColLimit),
@@ -1489,43 +1546,39 @@ index 20d313c..eaae09c 100644
      "aria-label": activeSheet ? `${activeSheet.name} worksheet grid` : "Workbook grid",
      "aria-readonly": readOnly,
      "aria-rowcount": Math.max(activeSheet?.rowCount ?? 0, displayRowLimit),
-@@ -15848,6 +16363,8 @@ function XlsxGrid({
+@@ -15848,6 +16381,7 @@ function XlsxGrid({
                      onClick={handleCanvasBodyClick}
                      onDoubleClick={handleCanvasBodyDoubleClick}
                      onPointerDown={handleCanvasBodyPointerDown}
-+                    onPointerMove={handleCanvasBodyPointerMove}
-+                    onPointerLeave={handleCanvasBodyPointerLeave}
++                    data-xlsx-body-canvas="true"
                      style={canvasScrollBodyStyle}
                    />
                    <canvas
-@@ -15855,6 +16372,8 @@ function XlsxGrid({
+@@ -15855,6 +16389,7 @@ function XlsxGrid({
                      onClick={handleCanvasBodyClick}
                      onDoubleClick={handleCanvasBodyDoubleClick}
                      onPointerDown={handleCanvasBodyPointerDown}
-+                    onPointerMove={handleCanvasBodyPointerMove}
-+                    onPointerLeave={handleCanvasBodyPointerLeave}
++                    data-xlsx-body-canvas="true"
                      style={canvasTopBodyStyle}
                    />
                    <canvas
-@@ -15862,6 +16381,8 @@ function XlsxGrid({
+@@ -15862,6 +16397,7 @@ function XlsxGrid({
                      onClick={handleCanvasBodyClick}
                      onDoubleClick={handleCanvasBodyDoubleClick}
                      onPointerDown={handleCanvasBodyPointerDown}
-+                    onPointerMove={handleCanvasBodyPointerMove}
-+                    onPointerLeave={handleCanvasBodyPointerLeave}
++                    data-xlsx-body-canvas="true"
                      style={canvasLeftBodyStyle}
                    />
                    <canvas
-@@ -15869,6 +16390,8 @@ function XlsxGrid({
+@@ -15869,6 +16405,7 @@ function XlsxGrid({
                      onClick={handleCanvasBodyClick}
                      onDoubleClick={handleCanvasBodyDoubleClick}
                      onPointerDown={handleCanvasBodyPointerDown}
-+                    onPointerMove={handleCanvasBodyPointerMove}
-+                    onPointerLeave={handleCanvasBodyPointerLeave}
++                    data-xlsx-body-canvas="true"
                      style={canvasCornerBodyStyle}
                    />
                    {hasCanvasDomDrawingOverlays ? (
-@@ -15973,7 +16496,7 @@ function XlsxGrid({
+@@ -15973,7 +16510,7 @@ function XlsxGrid({
                      onPointerDown={handleCanvasRowHeaderPointerDown}
                      style={canvasLeftScrollHeaderStyle}
                    />
@@ -1534,7 +1587,7 @@ index 20d313c..eaae09c 100644
                  </div>
                  {editingCell && editingOverlayRect ? (() => {
                    const editingCellStyle = getCellData(editingCell.row, editingCell.col).style;
-@@ -16096,6 +16619,7 @@ function XlsxGrid({
+@@ -16096,6 +16633,7 @@ function XlsxGrid({
                  <thead style={{ position: "sticky", top: 0, zIndex: canvasHeaderOverlayZIndex }}>
                    <tr>
                      <th
@@ -1542,7 +1595,7 @@ index 20d313c..eaae09c 100644
                        style={{
                          ...headerCellStyle,
                          backgroundColor: palette.headerSurface,
-@@ -16144,7 +16668,11 @@ function XlsxGrid({
+@@ -16144,7 +16682,11 @@ function XlsxGrid({
                                  event.clientX
                                );
                              }}
@@ -1555,7 +1608,7 @@ index 20d313c..eaae09c 100644
                            />
                          </div>
                        </th>
-@@ -16233,6 +16761,25 @@ function XlsxGrid({
+@@ -16233,6 +16775,25 @@ function XlsxGrid({
                  zIndex: 24
                }}
              >
@@ -1581,7 +1634,23 @@ index 20d313c..eaae09c 100644
                <div
                  ref={selectionOverlayRef}
                  style={{
-@@ -16386,6 +16933,7 @@ function XlsxViewerInner({
+@@ -16367,10 +16928,14 @@ function XlsxGrid({
+   );
+ 
+   return (
+-    <div style={{ backgroundColor: palette.canvas, display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
++    <div onPointerMove={handleFormulaPointerMove} onPointerLeave={clearFormulaHover}
++      onPointerDownCapture={clearFormulaHover} onScrollCapture={clearFormulaHover}
++      style={{ backgroundColor: palette.canvas, display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
+       {renderScroller
+         ? renderScroller({ children: scrollerContent, viewportProps: scrollerViewportProps })
+         : <div key={activeTabIndex} {...scrollerViewportProps}>{scrollerContent}</div>}
++      {formulaHover && formulaHover.calculation === controller.calculation && formulaHover.sheet === activeSheet?.name
++        && <FormulaErrorPopover {...formulaHover} palette={palette} />}
+     </div>
+   );
+ }
+@@ -16386,6 +16951,7 @@ function XlsxViewerInner({
    experimentalCanvas = true,
    fileTooLargeState,
    getCellStyle,
@@ -1589,7 +1658,7 @@ index 20d313c..eaae09c 100644
    headerBackgroundColor,
    headerTextColor,
    height,
-@@ -16464,6 +17012,7 @@ function XlsxViewerInner({
+@@ -16464,6 +17030,7 @@ function XlsxViewerInner({
                  experimentalCanvas={experimentalCanvas}
                  fileTooLargeState={fileTooLargeState}
                  getCellStyle={getCellStyle}
@@ -1597,7 +1666,7 @@ index 20d313c..eaae09c 100644
                  loadingComponent={loadingComponent}
                  loadingState={loadingState}
                  onFormControlAction={onFormControlAction}
-@@ -16539,7 +17088,8 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
+@@ -16539,7 +17106,8 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
      selectedRangeAddress,
      selectCell,
      selectRange,
@@ -1607,7 +1676,7 @@ index 20d313c..eaae09c 100644
    } = useXlsxViewer();
  
    return React.useMemo(
-@@ -16550,9 +17100,10 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
+@@ -16550,9 +17118,10 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
        selectedRangeAddress,
        selectCell,
        selectRange,
@@ -1620,7 +1689,7 @@ index 20d313c..eaae09c 100644
    );
  }
  
-@@ -17369,7 +17920,7 @@ export function useXlsxViewerThumbnails(
+@@ -17369,7 +17938,7 @@ export function useXlsxViewerThumbnails(
              col,
              sheet,
              () => (worksheet ? getCellNumericValue(worksheet, row, col) : getBatchedCellNumericValue(batchedCell)),
@@ -1629,7 +1698,7 @@ index 20d313c..eaae09c 100644
              worksheet,
              workerRowBatch?.cells
            );
-@@ -17430,7 +17981,7 @@ export function useXlsxViewerThumbnails(
+@@ -17430,7 +17999,7 @@ export function useXlsxViewerThumbnails(
                : checkboxState !== null
                  ? ""
                  : worksheet

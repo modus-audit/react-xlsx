@@ -11718,6 +11718,46 @@ function formulaErrorTooltip(error, formula) {
   ].filter(Boolean).join("\n");
 }
 
+// src/FormulaErrorPopover.tsx
+import { useLayoutEffect, useRef as useRef2, useState as useState2 } from "react";
+import { createPortal } from "react-dom";
+import { jsx } from "react/jsx-runtime";
+function FormulaErrorPopover({ text, x, y, palette }) {
+  const ref = useRef2(null);
+  const [position, setPosition] = useState2({ left: x, top: y });
+  useLayoutEffect(() => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPosition({
+      left: Math.max(8, Math.min(x + 12, window.innerWidth - rect.width - 8)),
+      top: Math.max(8, y + 12 + rect.height < window.innerHeight - 8 ? y + 12 : y - rect.height - 12)
+    });
+  }, [x, y, text]);
+  return createPortal(
+    /* @__PURE__ */ jsx("div", { ref, role: "tooltip", "data-xlsx-formula-tooltip": "true", style: {
+      position: "fixed",
+      ...position,
+      zIndex: 1e3,
+      pointerEvents: "none",
+      maxWidth: "min(320px, calc(100vw - 16px))",
+      maxHeight: "calc(100vh - 16px)",
+      overflow: "hidden",
+      padding: "8px 10px",
+      borderRadius: 6,
+      border: `1px solid ${palette.border}`,
+      background: palette.surface,
+      color: palette.text,
+      boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+      fontFamily: "system-ui, sans-serif",
+      fontSize: 12,
+      lineHeight: 1.5,
+      whiteSpace: "pre-line",
+      overflowWrap: "anywhere"
+    }, children: text }),
+    document.body
+  );
+}
+
 // src/XlsxViewer.tsx
 import * as React4 from "react";
 import {
@@ -12352,7 +12392,7 @@ var countries_50m_default = /* @__PURE__ */ JSON.parse(`{"type":"Topology","obje
 // src/surface-regl.tsx
 import createREGL from "regl";
 import * as React2 from "react";
-import { jsx, jsxs } from "react/jsx-runtime";
+import { jsx as jsx2, jsxs } from "react/jsx-runtime";
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -13293,7 +13333,7 @@ var MemoSurfaceChartComposite = React2.memo(function MemoSurfaceChartComposite2(
         width: "100%"
       },
       children: [
-        /* @__PURE__ */ jsx(
+        /* @__PURE__ */ jsx2(
           "canvas",
           {
             ref: canvasRef,
@@ -13325,7 +13365,7 @@ var MemoSurfaceChartComposite = React2.memo(function MemoSurfaceChartComposite2(
 }, (prev, next) => prev.chart === next.chart && prev.palette === next.palette && prev.background === next.background && prev.borderColor === next.borderColor && prev.fontFamily === next.fontFamily && prev.onDoubleClick === next.onDoubleClick && prev.onPointerDown === next.onPointerDown && prev.layout.width === next.layout.width && prev.layout.height === next.layout.height && prev.layout.plot.left === next.layout.plot.left && prev.layout.plot.top === next.layout.plot.top && prev.layout.plot.width === next.layout.plot.width && prev.layout.plot.height === next.layout.plot.height && prev.overlay === next.overlay && prev.fallback === next.fallback);
 
 // src/chart-renderer.tsx
-import { Fragment as Fragment2, jsx as jsx2, jsxs as jsxs2 } from "react/jsx-runtime";
+import { Fragment as Fragment2, jsx as jsx3, jsxs as jsxs2 } from "react/jsx-runtime";
 import { createElement } from "react";
 function chartElementDataProps(seriesIndex, pointIndex, options) {
   return {
@@ -13405,7 +13445,7 @@ function renderSelectionRectHandles(key, left, top, width, height, color = "#647
 }
 function renderSelectionPointHandles(key, points, color = "#64748b") {
   const radius = 3;
-  return /* @__PURE__ */ jsx2("g", { pointerEvents: "none", children: points.map((point, index) => /* @__PURE__ */ jsx2(
+  return /* @__PURE__ */ jsx3("g", { pointerEvents: "none", children: points.map((point, index) => /* @__PURE__ */ jsx3(
     "circle",
     {
       cx: point.x,
@@ -14599,7 +14639,7 @@ function renderSurfaceAxes(chart, layout) {
   const columnPositions = categories.map((_, index) => plot.left + (columnCount <= 1 ? plot.width / 2 : index / (columnCount - 1) * plot.width));
   const rowPositions = seriesLabels.map((_, index) => plot.top + plot.height - (rowCount <= 1 ? plot.height / 2 : index / (rowCount - 1) * plot.height));
   return /* @__PURE__ */ jsxs2("g", { children: [
-    /* @__PURE__ */ jsx2(
+    /* @__PURE__ */ jsx3(
       "rect",
       {
         fill: "none",
@@ -14611,7 +14651,7 @@ function renderSurfaceAxes(chart, layout) {
         y: plot.top
       }
     ),
-    categories.map((label, index) => /* @__PURE__ */ jsx2(
+    categories.map((label, index) => /* @__PURE__ */ jsx3(
       "text",
       {
         fill: labelColor,
@@ -14623,7 +14663,7 @@ function renderSurfaceAxes(chart, layout) {
       },
       `surface-x-label-${index}`
     )),
-    seriesLabels.map((label, index) => /* @__PURE__ */ jsx2(
+    seriesLabels.map((label, index) => /* @__PURE__ */ jsx3(
       "text",
       {
         fill: labelColor,
@@ -15089,7 +15129,7 @@ function renderTitle(chart, layout, palette) {
   const fontSize = 12;
   const text = truncateSvgText(chart.title, Math.max(40, layout.width - 12), fontSize);
   const baselineY = layout.titleHeight >= 30 ? 19 : 16;
-  return /* @__PURE__ */ jsx2(
+  return /* @__PURE__ */ jsx3(
     "text",
     {
       fill: chart.titleColor ?? chart.textColor ?? DEFAULT_CHART_TEXT_COLOR,
@@ -15115,7 +15155,7 @@ function renderLegend(chart, layout, palette) {
   if (legendPos === "left" || legendPos === "right") {
     const x = legendPos === "right" ? layout.plot.left + layout.plot.width + 8 : 8;
     const startY = layout.plot.top + 6;
-    return /* @__PURE__ */ jsx2("g", { children: items.map((item, index) => {
+    return /* @__PURE__ */ jsx3("g", { children: items.map((item, index) => {
       const y = startY + index * 18;
       return /* @__PURE__ */ createElement(
         "g",
@@ -15125,15 +15165,15 @@ function renderLegend(chart, layout, palette) {
           key: `legend-${index}`,
           transform: `translate(${x}, ${y})`
         },
-        /* @__PURE__ */ jsx2("rect", { fill: item.color, height: swatchSize, rx: 1.2, ry: 1.2, width: swatchSize, x: 0, y: -7 }),
-        /* @__PURE__ */ jsx2("text", { fill: textColor, fontSize: 10, x: textOffset, y: 0, children: item.label })
+        /* @__PURE__ */ jsx3("rect", { fill: item.color, height: swatchSize, rx: 1.2, ry: 1.2, width: swatchSize, x: 0, y: -7 }),
+        /* @__PURE__ */ jsx3("text", { fill: textColor, fontSize: 10, x: textOffset, y: 0, children: item.label })
       );
     }) });
   }
   const rowY = legendPos === "top" ? layout.titleHeight + 12 : layout.height - 8;
   const totalWidth = items.reduce((sum, item) => sum + 24 + Math.min(96, item.label.length * 5.4), 0);
   let cursorX = Math.max(8, (layout.width - totalWidth) / 2);
-  return /* @__PURE__ */ jsx2("g", { children: items.map((item, index) => {
+  return /* @__PURE__ */ jsx3("g", { children: items.map((item, index) => {
     const labelWidth = Math.min(96, item.label.length * 5.4);
     const node = /* @__PURE__ */ createElement(
       "g",
@@ -15143,8 +15183,8 @@ function renderLegend(chart, layout, palette) {
         key: `legend-${index}`,
         transform: `translate(${cursorX}, ${rowY})`
       },
-      /* @__PURE__ */ jsx2("rect", { fill: item.color, height: swatchSize, rx: 1.2, ry: 1.2, width: swatchSize, x: 0, y: -7 }),
-      /* @__PURE__ */ jsx2("text", { fill: textColor, fontSize: 10, x: textOffset, y: 0, children: item.label })
+      /* @__PURE__ */ jsx3("rect", { fill: item.color, height: swatchSize, rx: 1.2, ry: 1.2, width: swatchSize, x: 0, y: -7 }),
+      /* @__PURE__ */ jsx3("text", { fill: textColor, fontSize: 10, x: textOffset, y: 0, children: item.label })
     );
     cursorX += 24 + labelWidth;
     return node;
@@ -15159,7 +15199,7 @@ function renderCartesianAxes(chart, palette, plot, isHorizontal, categoryLabels,
       const valuePosition = mapValue(tick);
       if (isHorizontal) {
         return /* @__PURE__ */ jsxs2("g", { children: [
-          /* @__PURE__ */ jsx2(
+          /* @__PURE__ */ jsx3(
             "line",
             {
               stroke: lightenColor2(axisColor, 0.7),
@@ -15170,7 +15210,7 @@ function renderCartesianAxes(chart, palette, plot, isHorizontal, categoryLabels,
               y2: plot.top + plot.height
             }
           ),
-          /* @__PURE__ */ jsx2(
+          /* @__PURE__ */ jsx3(
             "text",
             {
               fill: labelColor,
@@ -15184,7 +15224,7 @@ function renderCartesianAxes(chart, palette, plot, isHorizontal, categoryLabels,
         ] }, `grid-v-${tick}`);
       }
       return /* @__PURE__ */ jsxs2("g", { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: lightenColor2(axisColor, 0.7),
@@ -15195,7 +15235,7 @@ function renderCartesianAxes(chart, palette, plot, isHorizontal, categoryLabels,
             y2: valuePosition
           }
         ),
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "text",
           {
             fill: labelColor,
@@ -15211,7 +15251,7 @@ function renderCartesianAxes(chart, palette, plot, isHorizontal, categoryLabels,
     categoryPositions.map((position, index) => {
       const label = categoryLabels[index] ?? "";
       if (isHorizontal) {
-        return /* @__PURE__ */ jsx2(
+        return /* @__PURE__ */ jsx3(
           "text",
           {
             fill: labelColor,
@@ -15224,7 +15264,7 @@ function renderCartesianAxes(chart, palette, plot, isHorizontal, categoryLabels,
           `cat-y-${index}`
         );
       }
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "text",
         {
           fill: labelColor,
@@ -15238,7 +15278,7 @@ function renderCartesianAxes(chart, palette, plot, isHorizontal, categoryLabels,
       );
     }),
     isHorizontal ? /* @__PURE__ */ jsxs2(Fragment2, { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: axisColor,
@@ -15249,7 +15289,7 @@ function renderCartesianAxes(chart, palette, plot, isHorizontal, categoryLabels,
           y2: plot.top + plot.height
         }
       ),
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: axisColor,
@@ -15261,7 +15301,7 @@ function renderCartesianAxes(chart, palette, plot, isHorizontal, categoryLabels,
         }
       )
     ] }) : /* @__PURE__ */ jsxs2(Fragment2, { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: axisColor,
@@ -15272,7 +15312,7 @@ function renderCartesianAxes(chart, palette, plot, isHorizontal, categoryLabels,
           y2: plot.top + plot.height
         }
       ),
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: axisColor,
@@ -15343,10 +15383,10 @@ function renderRadialFrustum(bar, normalizedShape, frontFill, sideFill, topFill)
     const endCapPath2 = endScale > 0.018 ? buildLinearSvgPath(sampleProjectedEllipseArc(endCenter2, endAxisA2, endAxisB2, 0, Math.PI * 2), true) : "";
     const startCapPath = startScale > 0.028 ? buildLinearSvgPath(sampleProjectedEllipseArc(startCenter2, startAxisA2, startAxisB2, 0, Math.PI * 2), true) : "";
     return /* @__PURE__ */ jsxs2("g", { children: [
-      backWallPath2 ? /* @__PURE__ */ jsx2("path", { d: backWallPath2, fill: sideFill, stroke: bar.stroke, strokeWidth: secondaryStrokeWidth }) : null,
-      showEndCap && endCapPath2 ? /* @__PURE__ */ jsx2("path", { d: endCapPath2, fill: topFill, stroke: bar.stroke, strokeWidth: secondaryStrokeWidth }) : null,
-      frontWallPath2 ? /* @__PURE__ */ jsx2("path", { d: frontWallPath2, fill: frontFill, stroke: bar.stroke, strokeWidth: bar.strokeWidth }) : null,
-      showStartCap && startCapPath ? /* @__PURE__ */ jsx2("path", { d: startCapPath, fill: frontFill, stroke: bar.stroke, strokeWidth: secondaryStrokeWidth }) : null
+      backWallPath2 ? /* @__PURE__ */ jsx3("path", { d: backWallPath2, fill: sideFill, stroke: bar.stroke, strokeWidth: secondaryStrokeWidth }) : null,
+      showEndCap && endCapPath2 ? /* @__PURE__ */ jsx3("path", { d: endCapPath2, fill: topFill, stroke: bar.stroke, strokeWidth: secondaryStrokeWidth }) : null,
+      frontWallPath2 ? /* @__PURE__ */ jsx3("path", { d: frontWallPath2, fill: frontFill, stroke: bar.stroke, strokeWidth: bar.strokeWidth }) : null,
+      showStartCap && startCapPath ? /* @__PURE__ */ jsx3("path", { d: startCapPath, fill: frontFill, stroke: bar.stroke, strokeWidth: secondaryStrokeWidth }) : null
     ] }, `${bar.key}-3d-horizontal-${normalizedShape}`);
   }
   const startCenter = { x: centerX + depthAxis.x, y: frontY + frontH + depthAxis.y };
@@ -15363,9 +15403,9 @@ function renderRadialFrustum(bar, normalizedShape, frontFill, sideFill, topFill)
   const frontWallPath = buildRibbonSvgPath(frontEndArc, frontStartArc);
   const endCapPath = endScale > 0.018 ? buildLinearSvgPath(sampleProjectedEllipseArc(endCenter, endAxisA, endAxisB, 0, Math.PI * 2), true) : "";
   return /* @__PURE__ */ jsxs2("g", { children: [
-    backWallPath ? /* @__PURE__ */ jsx2("path", { d: backWallPath, fill: sideFill, stroke: bar.stroke, strokeWidth: secondaryStrokeWidth }) : null,
-    showEndCap && endCapPath ? /* @__PURE__ */ jsx2("path", { d: endCapPath, fill: topFill, stroke: bar.stroke, strokeWidth: secondaryStrokeWidth }) : null,
-    frontWallPath ? /* @__PURE__ */ jsx2("path", { d: frontWallPath, fill: frontFill, stroke: bar.stroke, strokeWidth: bar.strokeWidth }) : null
+    backWallPath ? /* @__PURE__ */ jsx3("path", { d: backWallPath, fill: sideFill, stroke: bar.stroke, strokeWidth: secondaryStrokeWidth }) : null,
+    showEndCap && endCapPath ? /* @__PURE__ */ jsx3("path", { d: endCapPath, fill: topFill, stroke: bar.stroke, strokeWidth: secondaryStrokeWidth }) : null,
+    frontWallPath ? /* @__PURE__ */ jsx3("path", { d: frontWallPath, fill: frontFill, stroke: bar.stroke, strokeWidth: bar.strokeWidth }) : null
   ] }, `${bar.key}-3d-${normalizedShape}`);
 }
 function renderExtrudedRect(bar) {
@@ -15414,9 +15454,9 @@ function renderExtrudedRect(bar) {
   }
   if (normalizedShape === "box") {
     return /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2("polygon", { fill: sideFill, points: sideFace, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }),
-      /* @__PURE__ */ jsx2("polygon", { fill: topFill, points: topFace, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }),
-      /* @__PURE__ */ jsx2("rect", { fill: frontFill, height: frontH, stroke: bar.stroke, strokeWidth: bar.strokeWidth, width: frontW, x: frontX, y: frontY })
+      /* @__PURE__ */ jsx3("polygon", { fill: sideFill, points: sideFace, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }),
+      /* @__PURE__ */ jsx3("polygon", { fill: topFill, points: topFace, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }),
+      /* @__PURE__ */ jsx3("rect", { fill: frontFill, height: frontH, stroke: bar.stroke, strokeWidth: bar.strokeWidth, width: frontW, x: frontX, y: frontY })
     ] }, `${bar.key}-3d`);
   }
   if (bar.isHorizontal) {
@@ -15432,18 +15472,18 @@ function renderExtrudedRect(bar) {
     const taperedFarFace = `${frontX2},${endTop} ${frontX2 + sideDepthX},${endTop + depthY} ${frontX2 + sideDepthX},${endBottom + depthY} ${frontX2},${endBottom}`;
     const frontPolygon = `${frontX},${startTop} ${frontX2},${endTop} ${frontX2},${endBottom} ${frontX},${startBottom}`;
     return /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2("polygon", { fill: sideFill, points: taperedFarFace, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }),
-      /* @__PURE__ */ jsx2("polygon", { fill: topFill, points: topFacePoints, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }),
-      /* @__PURE__ */ jsx2("polygon", { fill: frontFill, points: frontPolygon, stroke: bar.stroke, strokeWidth: bar.strokeWidth })
+      /* @__PURE__ */ jsx3("polygon", { fill: sideFill, points: taperedFarFace, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }),
+      /* @__PURE__ */ jsx3("polygon", { fill: topFill, points: topFacePoints, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }),
+      /* @__PURE__ */ jsx3("polygon", { fill: frontFill, points: frontPolygon, stroke: bar.stroke, strokeWidth: bar.strokeWidth })
     ] }, `${bar.key}-3d-horizontal-${normalizedShape}`);
   }
   const taperedTopFace = `${topLeft},${frontY} ${topRight},${frontY} ${topRight + sideDepthX},${frontY + depthY} ${topLeft + sideDepthX},${frontY + depthY}`;
   const taperedSideFace = `${topRight},${frontY} ${bottomRight},${frontY2} ${bottomRight + sideDepthX},${frontY2 + depthY} ${topRight + sideDepthX},${frontY + depthY}`;
   const pyramidFrontFace = `${topLeft},${frontY} ${topRight},${frontY} ${bottomRight},${frontY2} ${bottomLeft},${frontY2}`;
   return /* @__PURE__ */ jsxs2("g", { children: [
-    /* @__PURE__ */ jsx2("polygon", { fill: sideFill, points: taperedSideFace, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }),
-    showEndCap ? /* @__PURE__ */ jsx2("polygon", { fill: topFill, points: taperedTopFace, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }) : null,
-    /* @__PURE__ */ jsx2("polygon", { fill: frontFill, points: pyramidFrontFace, stroke: bar.stroke, strokeWidth: bar.strokeWidth })
+    /* @__PURE__ */ jsx3("polygon", { fill: sideFill, points: taperedSideFace, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }),
+    showEndCap ? /* @__PURE__ */ jsx3("polygon", { fill: topFill, points: taperedTopFace, stroke: bar.stroke, strokeWidth: Math.max(0.6, bar.strokeWidth * 0.65) }) : null,
+    /* @__PURE__ */ jsx3("polygon", { fill: frontFill, points: pyramidFrontFace, stroke: bar.stroke, strokeWidth: bar.strokeWidth })
   ] }, `${bar.key}-3d-${normalizedShape}`);
 }
 function buildLinearSvgPath(points, close = false) {
@@ -15631,14 +15671,14 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
       const rightBack = toScreenPoint(projectCartesian3dPoint2(1, yNorm, backZ, rotXRad, rotYRad, usePerspective, perspectiveStrength));
       const leftFront = toScreenPoint(projectCartesian3dPoint2(-1, yNorm, frontZ, rotXRad, rotYRad, usePerspective, perspectiveStrength));
       return /* @__PURE__ */ jsxs2("g", { children: [
-        /* @__PURE__ */ jsx2("line", { stroke: gridColor, strokeWidth: 1, x1: leftBack.x, x2: rightBack.x, y1: leftBack.y, y2: rightBack.y }),
-        /* @__PURE__ */ jsx2("line", { stroke: gridColor, strokeWidth: 0.9, x1: leftBack.x, x2: leftFront.x, y1: leftBack.y, y2: leftFront.y })
+        /* @__PURE__ */ jsx3("line", { stroke: gridColor, strokeWidth: 1, x1: leftBack.x, x2: rightBack.x, y1: leftBack.y, y2: rightBack.y }),
+        /* @__PURE__ */ jsx3("line", { stroke: gridColor, strokeWidth: 0.9, x1: leftBack.x, x2: leftFront.x, y1: leftBack.y, y2: leftFront.y })
       ] }, `line3d-grid-${tick}`);
     }),
     boxEdges.map(([startIndex, endIndex, emphasized], index) => {
       const start = screenCorners[startIndex];
       const end = screenCorners[endIndex];
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: emphasized ? edgeColor : lightenColor2(edgeColor, 0.34),
@@ -15677,7 +15717,7 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
         const topFace = buildLinearSvgPath([previous.top, point.top, point.topBack, previous.topBack], true);
         const bottomFace = buildLinearSvgPath([previous.bottom, point.bottom, point.bottomBack, previous.bottomBack], true);
         return /* @__PURE__ */ jsxs2(React3.Fragment, { children: [
-          /* @__PURE__ */ jsx2(
+          /* @__PURE__ */ jsx3(
             "path",
             {
               ...chartElementDataProps(seriesIndex),
@@ -15688,7 +15728,7 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
               strokeWidth: 0.8
             }
           ),
-          /* @__PURE__ */ jsx2(
+          /* @__PURE__ */ jsx3(
             "path",
             {
               ...chartElementDataProps(seriesIndex),
@@ -15716,7 +15756,7 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
         lastDefinedPoint.topBack
       ], true) : "";
       return /* @__PURE__ */ jsxs2("g", { children: [
-        isAreaChart && isStackedSeries && areaBackPoints.length >= 3 ? /* @__PURE__ */ jsx2(
+        isAreaChart && isStackedSeries && areaBackPoints.length >= 3 ? /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(seriesIndex),
@@ -15728,7 +15768,7 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
           }
         ) : null,
         slabFaces,
-        startCap ? /* @__PURE__ */ jsx2(
+        startCap ? /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(seriesIndex),
@@ -15739,7 +15779,7 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
             strokeWidth: 0.7
           }
         ) : null,
-        endCap ? /* @__PURE__ */ jsx2(
+        endCap ? /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(seriesIndex),
@@ -15750,7 +15790,7 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
             strokeWidth: 0.7
           }
         ) : null,
-        isAreaChart && areaPoints.length >= 3 ? /* @__PURE__ */ jsx2(
+        isAreaChart && areaPoints.length >= 3 ? /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(seriesIndex),
@@ -15761,7 +15801,7 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
             strokeWidth: 0.9
           }
         ) : null,
-        !isAreaChart ? definedPoints.map((point, pointIndex) => /* @__PURE__ */ jsx2(
+        !isAreaChart ? definedPoints.map((point, pointIndex) => /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: lightenColor2(strokeColor, 0.44),
@@ -15774,7 +15814,7 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
           },
           `line3d-drop-${seriesIndex}-${pointIndex}`
         )) : null,
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(seriesIndex),
@@ -15785,11 +15825,11 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
             strokeWidth: Math.max(1.8, chart.series[seriesIndex]?.lineWidthPx ?? 2)
           }
         ),
-        markerPath.length > 0 ? definedPoints.map((point, pointIndex) => /* @__PURE__ */ jsx2(
+        markerPath.length > 0 ? definedPoints.map((point, pointIndex) => /* @__PURE__ */ jsx3(
           "g",
           {
             transform: `translate(${toSvgNumber(point.top.x)}, ${toSvgNumber(point.top.y)})`,
-            children: /* @__PURE__ */ jsx2(
+            children: /* @__PURE__ */ jsx3(
               "path",
               {
                 ...chartElementDataProps(seriesIndex, point.categoryIndex),
@@ -15820,7 +15860,7 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
         ) : null)
       ] }, `line3d-series-${seriesIndex}`);
     }),
-    yLabelPoints.map(({ point, tick }) => /* @__PURE__ */ jsx2(
+    yLabelPoints.map(({ point, tick }) => /* @__PURE__ */ jsx3(
       "text",
       {
         fill: labelColor,
@@ -15832,7 +15872,7 @@ function renderLineOrAreaChart3d(chart, palette, layout, categories, stackedPoin
       },
       `line3d-y-label-${tick}`
     )),
-    xLabelPoints.map(({ label, point }, index) => /* @__PURE__ */ jsx2(
+    xLabelPoints.map(({ label, point }, index) => /* @__PURE__ */ jsx3(
       "text",
       {
         fill: labelColor,
@@ -16150,7 +16190,7 @@ function renderBarChart(chart, palette, layout, chartType, selectedChartElement)
   const depthAxisNode = usesSeriesDepthAxis && frameOffsets ? /* @__PURE__ */ jsxs2("g", { children: [
     Array.from({ length: categoryCount + 1 }, (_, boundaryIndex) => {
       const x = plot.left + boundaryIndex / Math.max(1, categoryCount) * plot.width;
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: depthGridColor,
@@ -16167,7 +16207,7 @@ function renderBarChart(chart, palette, layout, chartType, selectedChartElement)
       const ratio = boundaryIndex / Math.max(1, seriesCount);
       const offsetX = depthGridSpanX * ratio;
       const offsetY = depthGridSpanY * ratio;
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: depthGridColor,
@@ -16184,7 +16224,7 @@ function renderBarChart(chart, palette, layout, chartType, selectedChartElement)
       const ratio = (seriesIndex + 0.5) / Math.max(1, seriesCount);
       const x = plot.left + plot.width + depthGridSpanX * ratio;
       const y = plot.top + plot.height + depthGridSpanY * ratio;
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "text",
         {
           fill: resolveChartAxisTextColor(chart),
@@ -16199,7 +16239,7 @@ function renderBarChart(chart, palette, layout, chartType, selectedChartElement)
     })
   ] }) : null;
   const frameNode = chart.is3d && frameOffsets ? /* @__PURE__ */ jsxs2("g", { children: [
-    /* @__PURE__ */ jsx2(
+    /* @__PURE__ */ jsx3(
       "polygon",
       {
         fill: lightenColor2(chart.chartAreaFillColor ?? palette.surface, 0.05),
@@ -16208,7 +16248,7 @@ function renderBarChart(chart, palette, layout, chartType, selectedChartElement)
         strokeWidth: 1
       }
     ),
-    /* @__PURE__ */ jsx2(
+    /* @__PURE__ */ jsx3(
       "polygon",
       {
         fill: lightenColor2(chart.chartAreaFillColor ?? palette.surface, 0.12),
@@ -16219,15 +16259,15 @@ function renderBarChart(chart, palette, layout, chartType, selectedChartElement)
     )
   ] }) : null;
   return /* @__PURE__ */ jsxs2("g", { children: [
-    useVertical3dGradient && gradientByColor.size > 0 ? /* @__PURE__ */ jsx2("defs", { children: Array.from(gradientByColor.entries()).map(([color, id]) => /* @__PURE__ */ jsxs2("linearGradient", { id, x1: "0%", x2: "0%", y1: "0%", y2: "100%", children: [
-      /* @__PURE__ */ jsx2("stop", { offset: "0%", stopColor: lightenColor2(color, 0.28) }),
-      /* @__PURE__ */ jsx2("stop", { offset: "42%", stopColor: lightenColor2(color, 0.12) }),
-      /* @__PURE__ */ jsx2("stop", { offset: "100%", stopColor: darkenColor2(color, 0.1) })
+    useVertical3dGradient && gradientByColor.size > 0 ? /* @__PURE__ */ jsx3("defs", { children: Array.from(gradientByColor.entries()).map(([color, id]) => /* @__PURE__ */ jsxs2("linearGradient", { id, x1: "0%", x2: "0%", y1: "0%", y2: "100%", children: [
+      /* @__PURE__ */ jsx3("stop", { offset: "0%", stopColor: lightenColor2(color, 0.28) }),
+      /* @__PURE__ */ jsx3("stop", { offset: "42%", stopColor: lightenColor2(color, 0.12) }),
+      /* @__PURE__ */ jsx3("stop", { offset: "100%", stopColor: darkenColor2(color, 0.1) })
     ] }, id)) }) : null,
     axisNode,
     frameNode,
     depthAxisNode,
-    chart.is3d ? sortedBars.map((bar) => /* @__PURE__ */ jsx2("g", { ...barChartElementDataProps(bar.seriesIndex, bar.categoryIndex), children: renderExtrudedRect(bar) }, `bar-hit-${bar.key}`)) : renderedBars.map((bar) => /* @__PURE__ */ createElement(
+    chart.is3d ? sortedBars.map((bar) => /* @__PURE__ */ jsx3("g", { ...barChartElementDataProps(bar.seriesIndex, bar.categoryIndex), children: renderExtrudedRect(bar) }, `bar-hit-${bar.key}`)) : renderedBars.map((bar) => /* @__PURE__ */ createElement(
       "rect",
       {
         ...barChartElementDataProps(bar.seriesIndex, bar.categoryIndex),
@@ -16385,7 +16425,7 @@ function renderLineOrAreaChart(chart, palette, layout, chartType, selectedChartE
         return null;
       }
       const x = categoryPositions[categoryIndex] ?? plot.left;
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: highLowLineColor,
@@ -16408,7 +16448,7 @@ function renderLineOrAreaChart(chart, palette, layout, chartType, selectedChartE
       const bottom = yScale(Math.min(first.y, second.y));
       const isUpBar = second.y >= first.y;
       const fill = isUpBar ? darkenColor2(highLowLineColor, 0.12) : "#c0504d";
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "rect",
         {
           fill,
@@ -16430,7 +16470,7 @@ function renderLineOrAreaChart(chart, palette, layout, chartType, selectedChartE
       const areaPath = isAreaChart ? d3Area().defined((point) => isStackedSeries ? point.y0 != null && point.y1 != null : point.y != null).x((point) => point.x).y0((point) => isStackedSeries ? yScale(point.y0 ?? 0) : areaBaseline).y1((point) => yScale((isStackedSeries ? point.y1 : point.y) ?? 0)).curve(curve)(points) ?? "" : "";
       const seriesFillColor = typeof series.shapeProperties?.xmlFillColor === "string" ? series.shapeProperties.xmlFillColor : chartSeriesColor(chart, seriesIndex);
       return /* @__PURE__ */ jsxs2("g", { children: [
-        !isAreaChart && !isStackedSeries && dropLinesRecord ? points.map((point, pointIndex) => point.y == null ? null : /* @__PURE__ */ jsx2(
+        !isAreaChart && !isStackedSeries && dropLinesRecord ? points.map((point, pointIndex) => point.y == null ? null : /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: dropLineColor,
@@ -16442,7 +16482,7 @@ function renderLineOrAreaChart(chart, palette, layout, chartType, selectedChartE
           },
           `drop-line-${seriesIndex}-${pointIndex}`
         )) : null,
-        isAreaChart ? /* @__PURE__ */ jsx2(
+        isAreaChart ? /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(seriesIndex),
@@ -16452,7 +16492,7 @@ function renderLineOrAreaChart(chart, palette, layout, chartType, selectedChartE
             stroke: "none"
           }
         ) : null,
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(seriesIndex),
@@ -16553,7 +16593,7 @@ function renderComboChart(chart, palette, layout, selectedChartElement) {
     ),
     secondaryDomain.ticks.map((tick) => {
       const y = secondaryScale(tick);
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "text",
         {
           fill: labelColor,
@@ -16566,7 +16606,7 @@ function renderComboChart(chart, palette, layout, selectedChartElement) {
         `combo-secondary-tick-${tick}`
       );
     }),
-    /* @__PURE__ */ jsx2(
+    /* @__PURE__ */ jsx3(
       "line",
       {
         stroke: axisColor,
@@ -16588,7 +16628,7 @@ function renderComboChart(chart, palette, layout, selectedChartElement) {
       const height = Math.max(1, Math.abs(zeroY - primaryScale(value)));
       const selected = isSelectedChartPoint(selectedChartElement, chart.id, globalSeriesIndex, categoryIndex) || isSelectedChartSeries(selectedChartElement, chart.id, globalSeriesIndex) && selectedChartElement?.kind !== "point";
       return /* @__PURE__ */ jsxs2(React3.Fragment, { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "rect",
           {
             ...barChartElementDataProps(globalSeriesIndex, categoryIndex),
@@ -16619,7 +16659,7 @@ function renderComboChart(chart, palette, layout, selectedChartElement) {
       const lineStrokePoints = chart.displayBlanksAs === "span" ? points.filter((point) => point.y != null) : points;
       const path = d3Line().defined((point) => point.y != null).x((point) => point.x).y((point) => secondaryScale(point.y ?? 0)).curve(curveLinear)(lineStrokePoints) ?? "";
       return /* @__PURE__ */ jsxs2("g", { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(globalSeriesIndex),
@@ -16775,7 +16815,7 @@ function renderScatterChart(chart, palette, layout, smooth, selectedChartElement
   const hasZeroY = minY <= 0 && safeMaxY >= 0;
   return /* @__PURE__ */ jsxs2("g", { children: [
     xTicks.map((tick) => /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: lightenColor2(axisColor, 0.7),
@@ -16786,10 +16826,10 @@ function renderScatterChart(chart, palette, layout, smooth, selectedChartElement
           y2: plot.top + plot.height
         }
       ),
-      /* @__PURE__ */ jsx2("text", { fill: labelColor, fontSize: 10, textAnchor: "middle", x: xScale(tick), y: plot.top + plot.height + 14, children: formatTickValue(tick) })
+      /* @__PURE__ */ jsx3("text", { fill: labelColor, fontSize: 10, textAnchor: "middle", x: xScale(tick), y: plot.top + plot.height + 14, children: formatTickValue(tick) })
     ] }, `scatter-x-${tick}`)),
     yTicks.map((tick) => /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: lightenColor2(axisColor, 0.7),
@@ -16800,9 +16840,9 @@ function renderScatterChart(chart, palette, layout, smooth, selectedChartElement
           y2: yScale(tick)
         }
       ),
-      /* @__PURE__ */ jsx2("text", { fill: labelColor, fontSize: 10, textAnchor: "end", x: plot.left - 6, y: yScale(tick) + 3, children: formatTickValue(tick) })
+      /* @__PURE__ */ jsx3("text", { fill: labelColor, fontSize: 10, textAnchor: "end", x: plot.left - 6, y: yScale(tick) + 3, children: formatTickValue(tick) })
     ] }, `scatter-y-${tick}`)),
-    hasZeroY ? /* @__PURE__ */ jsx2(
+    hasZeroY ? /* @__PURE__ */ jsx3(
       "line",
       {
         stroke: axisColor,
@@ -16813,7 +16853,7 @@ function renderScatterChart(chart, palette, layout, smooth, selectedChartElement
         y2: yScale(0)
       }
     ) : null,
-    hasZeroX ? /* @__PURE__ */ jsx2(
+    hasZeroX ? /* @__PURE__ */ jsx3(
       "line",
       {
         stroke: axisColor,
@@ -16837,7 +16877,7 @@ function renderScatterChart(chart, palette, layout, smooth, selectedChartElement
       const lineCurve = smooth || styleUsesSmoothCurve || series.smooth === true ? curveCatmullRom.alpha(0.5) : curveLinear;
       const linePath = shouldDrawLine ? d3Line().x((point) => xScale(point.x)).y((point) => yScale(point.y)).curve(lineCurve)(seriesPoints.points) ?? "" : "";
       return /* @__PURE__ */ jsxs2("g", { children: [
-        shouldDrawLine && linePath.length > 0 ? /* @__PURE__ */ jsx2(
+        shouldDrawLine && linePath.length > 0 ? /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(seriesIndex),
@@ -16853,11 +16893,11 @@ function renderScatterChart(chart, palette, layout, smooth, selectedChartElement
           if (!shouldDrawMarkers) {
             return null;
           }
-          return /* @__PURE__ */ jsx2(
+          return /* @__PURE__ */ jsx3(
             "g",
             {
               transform: `translate(${xScale(point.x)}, ${yScale(point.y)})`,
-              children: /* @__PURE__ */ jsx2(
+              children: /* @__PURE__ */ jsx3(
                 "path",
                 {
                   ...chartElementDataProps(seriesIndex, pointIndex, { selectionMode: "seriesFirst" }),
@@ -16935,7 +16975,7 @@ function renderBubbleChart(chart, palette, layout, selectedChartElement) {
   const bubbleTotals = pointsBySeries.map((points) => points.reduce((sum, point) => sum + Math.abs(point.bubble), 0));
   return /* @__PURE__ */ jsxs2("g", { children: [
     xTicks.map((tick) => /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: lightenColor2(axisColor, 0.72),
@@ -16946,10 +16986,10 @@ function renderBubbleChart(chart, palette, layout, selectedChartElement) {
           y2: plot.top + plot.height
         }
       ),
-      /* @__PURE__ */ jsx2("text", { fill: labelColor, fontSize: 10, textAnchor: "middle", x: xScale(tick), y: plot.top + plot.height + 14, children: formatTickValue(tick) })
+      /* @__PURE__ */ jsx3("text", { fill: labelColor, fontSize: 10, textAnchor: "middle", x: xScale(tick), y: plot.top + plot.height + 14, children: formatTickValue(tick) })
     ] }, `bubble-x-${tick}`)),
     yTicks.map((tick) => /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: lightenColor2(axisColor, 0.72),
@@ -16960,15 +17000,15 @@ function renderBubbleChart(chart, palette, layout, selectedChartElement) {
           y2: yScale(tick)
         }
       ),
-      /* @__PURE__ */ jsx2("text", { fill: labelColor, fontSize: 10, textAnchor: "end", x: plot.left - 6, y: yScale(tick) + 3, children: formatTickValue(tick) })
+      /* @__PURE__ */ jsx3("text", { fill: labelColor, fontSize: 10, textAnchor: "end", x: plot.left - 6, y: yScale(tick) + 3, children: formatTickValue(tick) })
     ] }, `bubble-y-${tick}`)),
-    /* @__PURE__ */ jsx2("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left + plot.width, y1: plot.top + plot.height, y2: plot.top + plot.height }),
-    /* @__PURE__ */ jsx2("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left, y1: plot.top, y2: plot.top + plot.height }),
+    /* @__PURE__ */ jsx3("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left + plot.width, y1: plot.top + plot.height, y2: plot.top + plot.height }),
+    /* @__PURE__ */ jsx3("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left, y1: plot.top, y2: plot.top + plot.height }),
     pointsBySeries.map((points, seriesIndex) => /* @__PURE__ */ jsxs2("g", { children: [
-      isBubble3d ? /* @__PURE__ */ jsx2("defs", { children: /* @__PURE__ */ jsxs2("radialGradient", { id: `bubble3d-grad-${chart.id}-${seriesIndex}`, cx: "35%", cy: "30%", r: "70%", children: [
-        /* @__PURE__ */ jsx2("stop", { offset: "0%", stopColor: lightenColor2(chart.series[seriesIndex]?.color ?? chart.series[seriesIndex]?.lineColor ?? chartSeriesColor(chart, seriesIndex), 0.42) }),
-        /* @__PURE__ */ jsx2("stop", { offset: "58%", stopColor: chart.series[seriesIndex]?.color ?? chart.series[seriesIndex]?.lineColor ?? chartSeriesColor(chart, seriesIndex) }),
-        /* @__PURE__ */ jsx2("stop", { offset: "100%", stopColor: darkenColor2(chart.series[seriesIndex]?.color ?? chart.series[seriesIndex]?.lineColor ?? chartSeriesColor(chart, seriesIndex), 0.18) })
+      isBubble3d ? /* @__PURE__ */ jsx3("defs", { children: /* @__PURE__ */ jsxs2("radialGradient", { id: `bubble3d-grad-${chart.id}-${seriesIndex}`, cx: "35%", cy: "30%", r: "70%", children: [
+        /* @__PURE__ */ jsx3("stop", { offset: "0%", stopColor: lightenColor2(chart.series[seriesIndex]?.color ?? chart.series[seriesIndex]?.lineColor ?? chartSeriesColor(chart, seriesIndex), 0.42) }),
+        /* @__PURE__ */ jsx3("stop", { offset: "58%", stopColor: chart.series[seriesIndex]?.color ?? chart.series[seriesIndex]?.lineColor ?? chartSeriesColor(chart, seriesIndex) }),
+        /* @__PURE__ */ jsx3("stop", { offset: "100%", stopColor: darkenColor2(chart.series[seriesIndex]?.color ?? chart.series[seriesIndex]?.lineColor ?? chartSeriesColor(chart, seriesIndex), 0.18) })
       ] }) }) : null,
       [...points].sort((left, right) => {
         if (left.bubble !== right.bubble) {
@@ -16996,7 +17036,7 @@ function renderBubbleChart(chart, palette, layout, selectedChartElement) {
           pieces.push(`${Math.round(Math.abs(point.bubble) / Math.max(1, bubbleTotals[seriesIndex] ?? 1) * 100)}%`);
         }
         return /* @__PURE__ */ jsxs2("g", { children: [
-          /* @__PURE__ */ jsx2(
+          /* @__PURE__ */ jsx3(
             "circle",
             {
               ...chartElementDataProps(seriesIndex, point.index, { selectionMode: "seriesFirst" }),
@@ -17016,7 +17056,7 @@ function renderBubbleChart(chart, palette, layout, selectedChartElement) {
             radius * 2,
             radius * 2
           ) : null,
-          isBubble3d ? /* @__PURE__ */ jsx2(
+          isBubble3d ? /* @__PURE__ */ jsx3(
             "ellipse",
             {
               cx: xScale(point.x) - radius * 0.16,
@@ -17027,7 +17067,7 @@ function renderBubbleChart(chart, palette, layout, selectedChartElement) {
               ry: Math.max(1, radius * 0.2)
             }
           ) : null,
-          labelsEnabled && pieces.length > 0 ? /* @__PURE__ */ jsx2(
+          labelsEnabled && pieces.length > 0 ? /* @__PURE__ */ jsx3(
             "text",
             {
               fill: resolveChartTextColor(chart),
@@ -17087,7 +17127,7 @@ function renderRadarChart(chart, palette, layout, selectedChartElement) {
       const ringPoints = categories.map((_, categoryIndex) => radialPoint(categoryIndex, ratio));
       const ringPath = d3Line().x((point) => point.x).y((point) => point.y).curve(curveLinearClosed)(ringPoints) ?? "";
       return /* @__PURE__ */ jsxs2("g", { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "path",
           {
             d: ringPath,
@@ -17096,14 +17136,14 @@ function renderRadarChart(chart, palette, layout, selectedChartElement) {
             strokeWidth: 1
           }
         ),
-        /* @__PURE__ */ jsx2("text", { fill: labelColor, fontSize: 9, x: centerX + 4, y: centerY - radius * ratio + 3, children: formatTickValue(tick) })
+        /* @__PURE__ */ jsx3("text", { fill: labelColor, fontSize: 9, x: centerX + 4, y: centerY - radius * ratio + 3, children: formatTickValue(tick) })
       ] }, `radar-ring-${ringIndex}`);
     }),
     categories.map((category, categoryIndex) => {
       const edge = radialPoint(categoryIndex, 1);
       return /* @__PURE__ */ jsxs2("g", { children: [
-        showSpokes ? /* @__PURE__ */ jsx2("line", { stroke: lightenColor2(axisColor, 0.52), strokeWidth: 1, x1: centerX, x2: edge.x, y1: centerY, y2: edge.y }) : null,
-        /* @__PURE__ */ jsx2(
+        showSpokes ? /* @__PURE__ */ jsx3("line", { stroke: lightenColor2(axisColor, 0.52), strokeWidth: 1, x1: centerX, x2: edge.x, y1: centerY, y2: edge.y }) : null,
+        /* @__PURE__ */ jsx3(
           "text",
           {
             fill: labelColor,
@@ -17145,7 +17185,7 @@ function renderRadarChart(chart, palette, layout, selectedChartElement) {
       const markerPath = markerSymbolPath(markerSymbol, markerSize * 0.5);
       const showMarkers = markerSymbol !== "none" && markerPath.length > 0;
       return /* @__PURE__ */ jsxs2("g", { children: [
-        definedPoints.length >= 2 ? /* @__PURE__ */ jsx2(
+        definedPoints.length >= 2 ? /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(seriesIndex),
@@ -17156,11 +17196,11 @@ function renderRadarChart(chart, palette, layout, selectedChartElement) {
             strokeWidth: 1.8
           }
         ) : null,
-        showMarkers ? definedPoints.map((point) => /* @__PURE__ */ jsx2(
+        showMarkers ? definedPoints.map((point) => /* @__PURE__ */ jsx3(
           "g",
           {
             transform: `translate(${point.x}, ${point.y})`,
-            children: /* @__PURE__ */ jsx2(
+            children: /* @__PURE__ */ jsx3(
               "path",
               {
                 ...chartElementDataProps(seriesIndex, point.pointIndex),
@@ -17242,10 +17282,10 @@ function renderPieChart(chart, palette, layout, chartType, selectedChartElement)
   const sliceSeparatorWidth = hasExplodedSlices ? 2 : 1.2;
   return /* @__PURE__ */ jsxs2("g", { children: [
     isPie3d ? /* @__PURE__ */ jsxs2("defs", { children: [
-      /* @__PURE__ */ jsx2("filter", { id: shadowId, x: "-40%", y: "-40%", width: "180%", height: "200%", children: /* @__PURE__ */ jsx2("feDropShadow", { dx: "1.2", dy: "3.6", floodColor: "#000000", floodOpacity: "0.28", stdDeviation: "2.8" }) }),
-      /* @__PURE__ */ jsx2("filter", { id: baseShadowId, x: "-50%", y: "-50%", width: "220%", height: "220%", children: /* @__PURE__ */ jsx2("feGaussianBlur", { stdDeviation: "3.2" }) })
+      /* @__PURE__ */ jsx3("filter", { id: shadowId, x: "-40%", y: "-40%", width: "180%", height: "200%", children: /* @__PURE__ */ jsx3("feDropShadow", { dx: "1.2", dy: "3.6", floodColor: "#000000", floodOpacity: "0.28", stdDeviation: "2.8" }) }),
+      /* @__PURE__ */ jsx3("filter", { id: baseShadowId, x: "-50%", y: "-50%", width: "220%", height: "220%", children: /* @__PURE__ */ jsx3("feGaussianBlur", { stdDeviation: "3.2" }) })
     ] }) : null,
-    isPie3d ? /* @__PURE__ */ jsx2(
+    isPie3d ? /* @__PURE__ */ jsx3(
       "ellipse",
       {
         cx: centerX,
@@ -17276,7 +17316,7 @@ function renderPieChart(chart, palette, layout, chartType, selectedChartElement)
         return null;
       }
       return /* @__PURE__ */ jsxs2("g", { transform: `translate(${explodeX}, ${explodeY})`, children: [
-        sidePaths.map((sidePath, sideIndex) => /* @__PURE__ */ jsx2(
+        sidePaths.map((sidePath, sideIndex) => /* @__PURE__ */ jsx3(
           "path",
           {
             d: sidePath,
@@ -17306,7 +17346,7 @@ function renderPieChart(chart, palette, layout, chartType, selectedChartElement)
             true
           );
           return /* @__PURE__ */ jsxs2(Fragment2, { children: [
-            startWall ? /* @__PURE__ */ jsx2(
+            startWall ? /* @__PURE__ */ jsx3(
               "path",
               {
                 d: startWall,
@@ -17315,7 +17355,7 @@ function renderPieChart(chart, palette, layout, chartType, selectedChartElement)
                 strokeWidth: 0.8
               }
             ) : null,
-            endWall ? /* @__PURE__ */ jsx2(
+            endWall ? /* @__PURE__ */ jsx3(
               "path",
               {
                 d: endWall,
@@ -17373,7 +17413,7 @@ function renderPieChart(chart, palette, layout, chartType, selectedChartElement)
       resolvedLabelX = clamp2(resolvedLabelX, labelBounds.left, labelBounds.right);
       const resolvedLabelY = clamp2(labelY, labelBounds.top, labelBounds.bottom);
       return /* @__PURE__ */ jsxs2(React3.Fragment, { children: [
-        /* @__PURE__ */ jsx2("g", { transform: `translate(${explodeX}, ${explodeY})`, children: /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3("g", { transform: `translate(${explodeX}, ${explodeY})`, children: /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(pieSeriesIndex, arc.data.index),
@@ -17386,7 +17426,7 @@ function renderPieChart(chart, palette, layout, chartType, selectedChartElement)
           }
         ) }),
         isSliceSelected ? renderSelectionPointHandles(`pie-selection-${arc.data.index}`, sliceHandlePoints) : null,
-        dataLabelsEnabled && truncatedLabelText.length > 0 ? /* @__PURE__ */ jsx2(
+        dataLabelsEnabled && truncatedLabelText.length > 0 ? /* @__PURE__ */ jsx3(
           "text",
           {
             fill: resolveChartTextColor(chart),
@@ -17399,7 +17439,7 @@ function renderPieChart(chart, palette, layout, chartType, selectedChartElement)
         ) : null
       ] }, `pie-top-${arc.data.index}`);
     }),
-    shouldRenderCenterValue ? /* @__PURE__ */ jsx2(
+    shouldRenderCenterValue ? /* @__PURE__ */ jsx3(
       "text",
       {
         fill: chart.textColor ?? chart.titleColor ?? DEFAULT_CHART_TEXT_COLOR,
@@ -17470,7 +17510,7 @@ function renderBarOfPieChart(chart, palette, layout, selectedChartElement) {
       const midAngle = (entry.startAngle + entry.endAngle) / 2;
       const dot = pieEllipsePoint(pieCenterX, pieCenterY, pieRadius * 0.62, 1, midAngle);
       return /* @__PURE__ */ jsxs2(React3.Fragment, { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(pieSeriesIndex, entry.data.index),
@@ -17484,7 +17524,7 @@ function renderBarOfPieChart(chart, palette, layout, selectedChartElement) {
         selected ? renderSelectionPointHandles(`bar-of-pie-main-selection-${index}`, [dot]) : null
       ] }, `bar-of-pie-main-${index}`);
     }),
-    /* @__PURE__ */ jsx2(
+    /* @__PURE__ */ jsx3(
       "line",
       {
         stroke: chart.chartAreaBorderColor ?? palette.border,
@@ -17495,7 +17535,7 @@ function renderBarOfPieChart(chart, palette, layout, selectedChartElement) {
         y2: layout.plot.top + 10
       }
     ),
-    /* @__PURE__ */ jsx2(
+    /* @__PURE__ */ jsx3(
       "line",
       {
         stroke: chart.chartAreaBorderColor ?? palette.border,
@@ -17511,7 +17551,7 @@ function renderBarOfPieChart(chart, palette, layout, selectedChartElement) {
       const midAngle = (entry.startAngle + entry.endAngle) / 2;
       const dot = pieEllipsePoint(secondaryCenterX, secondaryCenterY, secondaryRadius * 0.62, 1, midAngle);
       return /* @__PURE__ */ jsxs2(React3.Fragment, { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(pieSeriesIndex, entry.data.index),
@@ -17530,7 +17570,7 @@ function renderBarOfPieChart(chart, palette, layout, selectedChartElement) {
       stackCursor += segmentHeight;
       const selected = isSelectedChartPointOrSeries(selectedChartElement, chart.id, pieSeriesIndex, entry.index);
       return /* @__PURE__ */ jsxs2("g", { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "rect",
           {
             ...chartElementDataProps(pieSeriesIndex, entry.index),
@@ -17550,7 +17590,7 @@ function renderBarOfPieChart(chart, palette, layout, selectedChartElement) {
           stackedBarWidth,
           segmentHeight
         ) : null,
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "text",
           {
             fill: resolveChartAxisTextColor(chart),
@@ -17638,10 +17678,10 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
           const splitLine = usePrimaryDiagonal ? { x1: x0, y1: y0, x2: x1, y2: y1 } : { x1, y1: y0, x2: x0, y2: y1 };
           const splitBands = triangles[0]?.bandIndex !== triangles[1]?.bandIndex;
           quads2.push(
-            /* @__PURE__ */ jsx2("g", { children: splitBands ? /* @__PURE__ */ jsxs2(Fragment2, { children: [
-              /* @__PURE__ */ jsx2("polygon", { fill: triangles[0]?.bandColor, points: triangles[0]?.points, stroke: "none" }),
-              /* @__PURE__ */ jsx2("polygon", { fill: triangles[1]?.bandColor, points: triangles[1]?.points, stroke: "none" }),
-              /* @__PURE__ */ jsx2(
+            /* @__PURE__ */ jsx3("g", { children: splitBands ? /* @__PURE__ */ jsxs2(Fragment2, { children: [
+              /* @__PURE__ */ jsx3("polygon", { fill: triangles[0]?.bandColor, points: triangles[0]?.points, stroke: "none" }),
+              /* @__PURE__ */ jsx3("polygon", { fill: triangles[1]?.bandColor, points: triangles[1]?.points, stroke: "none" }),
+              /* @__PURE__ */ jsx3(
                 "line",
                 {
                   stroke: darkenColor2(resolveSurfaceBandPaletteColor2(chart, palette, domain, averageValue), 0.22),
@@ -17652,7 +17692,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
                   y2: splitLine.y2
                 }
               )
-            ] }) : /* @__PURE__ */ jsx2(
+            ] }) : /* @__PURE__ */ jsx3(
               "rect",
               {
                 fill: resolveSurfaceBandColor2(chart, palette, domain, averageValue),
@@ -17726,7 +17766,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       if (!path) {
         return null;
       }
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "path",
         {
           d: path,
@@ -17754,7 +17794,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       return values.reduce((sum, value) => sum + value, 0) / values.length;
     });
     return /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "rect",
         {
           fill: wallFill,
@@ -17768,7 +17808,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       ),
       Array.from({ length: cols }, (_, columnIndex) => {
         const x = plot.left + (cols <= 1 ? plot.width / 2 : columnIndex / (cols - 1) * plot.width);
-        return /* @__PURE__ */ jsx2(
+        return /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: chart.wireframe ? resolveSurfaceWireframeColor2(chart, palette, domain, columnAverages[columnIndex] ?? domain.minValue) : lightenColor2(wallLineColor, 0.18),
@@ -17786,7 +17826,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       Array.from({ length: rows }, (_, rowIndex) => {
         const y = plot.top + plot.height - (rows <= 1 ? plot.height / 2 : rowIndex / (rows - 1) * plot.height);
         const rowStroke = chart.series[rowIndex]?.lineColor ?? chart.series[rowIndex]?.color ?? resolveSurfaceWireframeColor2(chart, palette, domain, rowAverages[rowIndex] ?? domain.minValue);
-        return /* @__PURE__ */ jsx2(
+        return /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: chart.wireframe ? rowStroke : lightenColor2(wallLineColor, 0.18),
@@ -17803,7 +17843,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       }),
       quads2,
       contourLines,
-      chart.wireframe ? null : /* @__PURE__ */ jsx2(
+      chart.wireframe ? null : /* @__PURE__ */ jsx3(
         "rect",
         {
           fill: "none",
@@ -17964,7 +18004,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       if (!path) {
         return null;
       }
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "path",
         {
           d: path,
@@ -17983,7 +18023,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
     if (!path) {
       return null;
     }
-    return /* @__PURE__ */ jsx2(
+    return /* @__PURE__ */ jsx3(
       "path",
       {
         d: path,
@@ -17998,7 +18038,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
   });
   return /* @__PURE__ */ jsxs2("g", { children: [
     isContour ? /* @__PURE__ */ jsxs2(Fragment2, { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "rect",
         {
           fill: wallFill,
@@ -18012,7 +18052,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       ),
       Array.from({ length: cols }, (_, columnIndex) => {
         const x = layout.plot.left + (cols <= 1 ? layout.plot.width / 2 : columnIndex / (cols - 1) * layout.plot.width);
-        return /* @__PURE__ */ jsx2(
+        return /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: lightenColor2(wallLineColor, 0.12),
@@ -18027,7 +18067,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       }),
       Array.from({ length: rows }, (_, rowIndex) => {
         const y = layout.plot.top + layout.plot.height - (rows <= 1 ? layout.plot.height / 2 : rowIndex / (rows - 1) * layout.plot.height);
-        return /* @__PURE__ */ jsx2(
+        return /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: lightenColor2(wallLineColor, 0.12),
@@ -18041,7 +18081,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
         );
       })
     ] }) : null,
-    chart.wireframe ? null : quads.map((quad) => /* @__PURE__ */ jsx2(
+    chart.wireframe ? null : quads.map((quad) => /* @__PURE__ */ jsx3(
       "polygon",
       {
         fill: quad.color,
@@ -18056,7 +18096,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       const rowPoints = points[rowIndex];
       const averageValue = matrix[rowIndex]?.filter((value) => value != null).reduce((sum, value, _2, values) => sum + value / Math.max(1, values.length), 0) ?? domain.minValue;
       const rowStroke = chart.wireframe ? chart.series[rowIndex]?.lineColor ?? chart.series[rowIndex]?.color ?? resolveSurfaceWireframeColor2(chart, palette, domain, averageValue) : darkenColor2(resolveSurfaceBandColor2(chart, palette, domain, averageValue), 0.1);
-      return /* @__PURE__ */ jsx2("g", { children: buildSurfacePathRuns(
+      return /* @__PURE__ */ jsx3("g", { children: buildSurfacePathRuns(
         rowPoints,
         `surface-row-${rowIndex}`,
         rowStroke,
@@ -18068,7 +18108,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       const columnValues = Array.from({ length: rows }, (_2, rowIndex) => matrix[rowIndex]?.[columnIndex]).filter((value) => value != null);
       const columnAverage = columnValues.length > 0 ? columnValues.reduce((sum, value) => sum + value, 0) / columnValues.length : domain.minValue;
       const columnStroke = chart.wireframe ? resolveSurfaceWireframeColor2(chart, palette, domain, columnAverage) : darkenColor2(resolveSurfaceBandColor2(chart, palette, domain, columnAverage), 0.1);
-      return /* @__PURE__ */ jsx2("g", { children: buildSurfacePathRuns(
+      return /* @__PURE__ */ jsx3("g", { children: buildSurfacePathRuns(
         columnPoints,
         `surface-column-${columnIndex}`,
         columnStroke,
@@ -18076,7 +18116,7 @@ function renderSurfaceChart(chart, palette, layout, selectedChartElement) {
       ) }, `surface-column-${columnIndex}`);
     }),
     surfaceContourLines,
-    chart.wireframe ? /* @__PURE__ */ jsx2(
+    chart.wireframe ? /* @__PURE__ */ jsx3(
       "rect",
       {
         fill: "none",
@@ -18103,12 +18143,12 @@ function renderSurfaceHitOverlay(chart, layout, selectedChartElement) {
   }
   const cellWidth = plot.width / cols;
   const cellHeight = plot.height / rows;
-  return /* @__PURE__ */ jsx2("g", { children: chart.series.flatMap((_, seriesIndex) => Array.from({ length: cols }, (_2, pointIndex) => {
+  return /* @__PURE__ */ jsx3("g", { children: chart.series.flatMap((_, seriesIndex) => Array.from({ length: cols }, (_2, pointIndex) => {
     const left = plot.left + pointIndex * cellWidth;
     const top = plot.top + seriesIndex * cellHeight;
     const selected = isSelectedChartPointOrSeries(selectedChartElement, chart.id, seriesIndex, pointIndex);
     return /* @__PURE__ */ jsxs2(React3.Fragment, { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "rect",
         {
           ...chartElementDataProps(seriesIndex, pointIndex),
@@ -18193,7 +18233,7 @@ function renderStockChart(chart, palette, layout, selectedChartElement) {
   const zeroY = yScale(Math.max(resolvedDomain.min, 0));
   return /* @__PURE__ */ jsxs2("g", { children: [
     ticks.map((tick) => /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: lightenColor2(axisColor, 0.72),
@@ -18204,14 +18244,14 @@ function renderStockChart(chart, palette, layout, selectedChartElement) {
           y2: yScale(tick)
         }
       ),
-      /* @__PURE__ */ jsx2("text", { fill: labelColor, fontSize: 10, textAnchor: "end", x: plot.left - 6, y: yScale(tick) + 3, children: formatTickValue(tick) })
+      /* @__PURE__ */ jsx3("text", { fill: labelColor, fontSize: 10, textAnchor: "end", x: plot.left - 6, y: yScale(tick) + 3, children: formatTickValue(tick) })
     ] }, `stock-tick-${tick}`)),
     categories.map((category, index) => {
       if (index % labelStep !== 0 && index !== categories.length - 1) {
         return null;
       }
       const x = (xScale(category) ?? plot.left) + xScale.bandwidth() * 0.5;
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "text",
         {
           fill: labelColor,
@@ -18224,8 +18264,8 @@ function renderStockChart(chart, palette, layout, selectedChartElement) {
         `stock-cat-${category}`
       );
     }),
-    /* @__PURE__ */ jsx2("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left, y1: plot.top, y2: plot.top + plot.height }),
-    /* @__PURE__ */ jsx2("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left + plot.width, y1: plot.top + plot.height, y2: plot.top + plot.height }),
+    /* @__PURE__ */ jsx3("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left, y1: plot.top, y2: plot.top + plot.height }),
+    /* @__PURE__ */ jsx3("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left + plot.width, y1: plot.top + plot.height, y2: plot.top + plot.height }),
     points.map((entry, index) => {
       const x = (xScale(entry.category) ?? plot.left) + xScale.bandwidth() * 0.5;
       const previousClose = index > 0 ? points[index - 1]?.close ?? entry.close : entry.close;
@@ -18244,7 +18284,7 @@ function renderStockChart(chart, palette, layout, selectedChartElement) {
           ...chartElementDataProps(closeIndex, index),
           key: `stock-point-${index}`
         },
-        hasVolume && entry.volume != null ? /* @__PURE__ */ jsx2(
+        hasVolume && entry.volume != null ? /* @__PURE__ */ jsx3(
           "rect",
           {
             fill: stockPalette.volumeFill,
@@ -18256,8 +18296,8 @@ function renderStockChart(chart, palette, layout, selectedChartElement) {
             y: yScale(entry.volume)
           }
         ) : null,
-        /* @__PURE__ */ jsx2("line", { stroke, strokeWidth: 1.6, x1: x, x2: x, y1: highY, y2: lowY }),
-        entry.open != null && openY != null ? Math.abs(openY - closeY) >= 1 ? /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3("line", { stroke, strokeWidth: 1.6, x1: x, x2: x, y1: highY, y2: lowY }),
+        entry.open != null && openY != null ? Math.abs(openY - closeY) >= 1 ? /* @__PURE__ */ jsx3(
           "rect",
           {
             fill: isUp ? stockPalette.upFill : stockPalette.downFill,
@@ -18268,8 +18308,8 @@ function renderStockChart(chart, palette, layout, selectedChartElement) {
             x: bodyLeft,
             y: Math.min(openY, closeY)
           }
-        ) : /* @__PURE__ */ jsx2("line", { stroke, strokeWidth: 1.6, x1: bodyLeft, x2: bodyLeft + candleWidth, y1: closeY, y2: closeY }) : /* @__PURE__ */ jsx2("line", { stroke: closeTickColor, strokeWidth: 1.8, x1: x, x2: x + 7, y1: closeY, y2: closeY }),
-        entry.open != null && openY != null ? /* @__PURE__ */ jsx2("line", { stroke: openTickColor, strokeWidth: 1.8, x1: x - 7, x2: x, y1: openY, y2: openY }) : null,
+        ) : /* @__PURE__ */ jsx3("line", { stroke, strokeWidth: 1.6, x1: bodyLeft, x2: bodyLeft + candleWidth, y1: closeY, y2: closeY }) : /* @__PURE__ */ jsx3("line", { stroke: closeTickColor, strokeWidth: 1.8, x1: x, x2: x + 7, y1: closeY, y2: closeY }),
+        entry.open != null && openY != null ? /* @__PURE__ */ jsx3("line", { stroke: openTickColor, strokeWidth: 1.8, x1: x - 7, x2: x, y1: openY, y2: openY }) : null,
         selected ? renderSelectionPointHandles(`stock-selection-${index}`, [{ x, y: closeY }]) : null
       );
     })
@@ -18305,7 +18345,7 @@ function renderWaterfallChart(chart, palette, layout, selectedChartElement) {
   const labelColor = resolveChartAxisTextColor(chart);
   return /* @__PURE__ */ jsxs2("g", { children: [
     ticks.map((tick) => /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: lightenColor2(axisColor, 0.72),
@@ -18316,10 +18356,10 @@ function renderWaterfallChart(chart, palette, layout, selectedChartElement) {
           y2: yScale(tick)
         }
       ),
-      /* @__PURE__ */ jsx2("text", { fill: labelColor, fontSize: 10, textAnchor: "end", x: plot.left - 6, y: yScale(tick) + 3, children: formatTickValue(tick) })
+      /* @__PURE__ */ jsx3("text", { fill: labelColor, fontSize: 10, textAnchor: "end", x: plot.left - 6, y: yScale(tick) + 3, children: formatTickValue(tick) })
     ] }, `waterfall-y-${tick}`)),
-    /* @__PURE__ */ jsx2("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left, y1: plot.top, y2: plot.top + plot.height }),
-    /* @__PURE__ */ jsx2("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left + plot.width, y1: yScale(0), y2: yScale(0) }),
+    /* @__PURE__ */ jsx3("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left, y1: plot.top, y2: plot.top + plot.height }),
+    /* @__PURE__ */ jsx3("line", { stroke: axisColor, strokeWidth: 1.2, x1: plot.left, x2: plot.left + plot.width, y1: yScale(0), y2: yScale(0) }),
     bars.map((bar, index) => {
       const bandLeft = xScale(bar.label) ?? plot.left;
       const bandWidth = xScale.bandwidth();
@@ -18332,7 +18372,7 @@ function renderWaterfallChart(chart, palette, layout, selectedChartElement) {
       const connectorY = connectorStart ? yScale(connectorStart.end) : 0;
       const selected = isSelectedChartPointOrSeries(selectedChartElement, chart.id, 0, index);
       return /* @__PURE__ */ jsxs2("g", { children: [
-        connectorStart ? /* @__PURE__ */ jsx2(
+        connectorStart ? /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: lightenColor2(axisColor, 0.35),
@@ -18344,7 +18384,7 @@ function renderWaterfallChart(chart, palette, layout, selectedChartElement) {
             y2: connectorY
           }
         ) : null,
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "rect",
           {
             ...chartElementDataProps(0, index),
@@ -18360,7 +18400,7 @@ function renderWaterfallChart(chart, palette, layout, selectedChartElement) {
           }
         ),
         selected ? renderSelectionRectHandles(`waterfall-selection-${index}`, bandLeft, top, bandWidth, height) : null,
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "text",
           {
             fill: labelColor,
@@ -18371,7 +18411,7 @@ function renderWaterfallChart(chart, palette, layout, selectedChartElement) {
             children: bar.label
           }
         ),
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "text",
           {
             fill: labelColor,
@@ -18396,7 +18436,7 @@ function renderFunnelChart(chart, palette, layout, selectedChartElement) {
   const sectionHeight = plot.height / stages.length;
   const centerX = plot.left + plot.width * 0.5;
   const labelColor = resolveChartTextColor(chart);
-  return /* @__PURE__ */ jsx2("g", { children: stages.map((stage, index) => {
+  return /* @__PURE__ */ jsx3("g", { children: stages.map((stage, index) => {
     const stageWidth = stage.value / maxValue * plot.width;
     const topY = plot.top + index * sectionHeight;
     const stageHeight = Math.max(6, sectionHeight - 2);
@@ -18405,7 +18445,7 @@ function renderFunnelChart(chart, palette, layout, selectedChartElement) {
     const labelFitsInside = stageWidth > 90;
     const selected = isSelectedChartPointOrSeries(selectedChartElement, chart.id, 0, index);
     return /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "rect",
         {
           ...chartElementDataProps(0, index),
@@ -18421,7 +18461,7 @@ function renderFunnelChart(chart, palette, layout, selectedChartElement) {
         }
       ),
       selected ? renderSelectionRectHandles(`funnel-selection-${index}`, left, topY, stageWidth, stageHeight) : null,
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "text",
         {
           fill: labelColor,
@@ -18464,7 +18504,7 @@ function renderSunburstChart(chart, palette, layout, selectedChartElement) {
       const fill = resolveHierarchyNodeColor(chart, node);
       const selected = isSelectedChartPointOrSeries(selectedChartElement, chart.id, 0, index);
       return /* @__PURE__ */ jsxs2("g", { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(0, index),
@@ -18475,7 +18515,7 @@ function renderSunburstChart(chart, palette, layout, selectedChartElement) {
           }
         ),
         selected ? renderSelectionPointHandles(`sunburst-selection-${index}`, [{ x: labelX, y: labelY }]) : null,
-        canShowLabel ? /* @__PURE__ */ jsx2(
+        canShowLabel ? /* @__PURE__ */ jsx3(
           "text",
           {
             fill: darkenColor2(fill, 0.65),
@@ -18487,7 +18527,7 @@ function renderSunburstChart(chart, palette, layout, selectedChartElement) {
         ) : null
       ] }, `sunburst-node-${index}`);
     }),
-    /* @__PURE__ */ jsx2("circle", { fill: chart.chartAreaFillColor ?? palette.surface, r: holeRadius - 2 })
+    /* @__PURE__ */ jsx3("circle", { fill: chart.chartAreaFillColor ?? palette.surface, r: holeRadius - 2 })
   ] });
 }
 function renderTreemapChart(chart, palette, layout, selectedChartElement) {
@@ -18497,14 +18537,14 @@ function renderTreemapChart(chart, palette, layout, selectedChartElement) {
   }
   const root = d3Hierarchy(hierarchyData).sum((node) => node.children && node.children.length > 0 ? 0 : Math.max(1e-4, node.value ?? 0)).sort((left, right) => (right.value ?? 0) - (left.value ?? 0));
   const treemapRoot = d3Treemap().size([layout.plot.width, layout.plot.height]).paddingInner(2).paddingOuter(1).round(true).tile(excelTreemapTile)(root);
-  return /* @__PURE__ */ jsx2("g", { transform: `translate(${layout.plot.left}, ${layout.plot.top})`, children: treemapRoot.leaves().map((leaf, index) => {
+  return /* @__PURE__ */ jsx3("g", { transform: `translate(${layout.plot.left}, ${layout.plot.top})`, children: treemapRoot.leaves().map((leaf, index) => {
     const fill = resolveTreemapNodeColor(chart, leaf);
     const width = Math.max(0, leaf.x1 - leaf.x0);
     const height = Math.max(0, leaf.y1 - leaf.y0);
     const canShowLabel = width > 48 && height > 22;
     const selected = isSelectedChartPointOrSeries(selectedChartElement, chart.id, 0, index);
     return /* @__PURE__ */ jsxs2("g", { children: [
-      /* @__PURE__ */ jsx2(
+      /* @__PURE__ */ jsx3(
         "rect",
         {
           ...chartElementDataProps(0, index),
@@ -18521,7 +18561,7 @@ function renderTreemapChart(chart, palette, layout, selectedChartElement) {
       ),
       selected ? renderSelectionRectHandles(`treemap-selection-${index}`, leaf.x0, leaf.y0, width, height) : null,
       canShowLabel ? /* @__PURE__ */ jsxs2(Fragment2, { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "text",
           {
             fill: darkenColor2(fill, 0.68),
@@ -18532,7 +18572,7 @@ function renderTreemapChart(chart, palette, layout, selectedChartElement) {
             children: leaf.data.name
           }
         ),
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "text",
           {
             fill: darkenColor2(fill, 0.54),
@@ -18586,7 +18626,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
     valueDomain.ticks.map((tick, index) => {
       const y = yScale(tick);
       return /* @__PURE__ */ jsxs2("g", { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: lightenColor2(axisColor, 0.22),
@@ -18597,7 +18637,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
             y2: y
           }
         ),
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "text",
           {
             fill: labelColor,
@@ -18610,7 +18650,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
         )
       ] }, `box-whisker-grid-${index}`);
     }),
-    /* @__PURE__ */ jsx2(
+    /* @__PURE__ */ jsx3(
       "line",
       {
         stroke: axisColor,
@@ -18621,7 +18661,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
         y2: layout.plot.top + layout.plot.height
       }
     ),
-    /* @__PURE__ */ jsx2(
+    /* @__PURE__ */ jsx3(
       "line",
       {
         stroke: axisColor,
@@ -18632,7 +18672,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
         y2: layout.plot.top + layout.plot.height
       }
     ),
-    meanLinePoints.length >= 2 ? /* @__PURE__ */ jsx2(
+    meanLinePoints.length >= 2 ? /* @__PURE__ */ jsx3(
       "polyline",
       {
         fill: "none",
@@ -18653,7 +18693,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
       const visiblePoints = entry.visibility.nonoutliers ? entry.stats.visiblePoints : [];
       const outliers = entry.visibility.outliers ? entry.stats.outliers : [];
       const selected = isSelectedChartPointOrSeries(selectedChartElement, chart.id, index, index);
-      return /* @__PURE__ */ createElement("g", { ...chartElementDataProps(index), key: `box-whisker-series-${index}` }, /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ createElement("g", { ...chartElementDataProps(index), key: `box-whisker-series-${index}` }, /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: entry.lineColor,
@@ -18663,7 +18703,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
           y1: upperWhiskerY,
           y2: boxTop
         }
-      ), /* @__PURE__ */ jsx2(
+      ), /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: entry.lineColor,
@@ -18673,7 +18713,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
           y1: boxBottom,
           y2: lowerWhiskerY
         }
-      ), /* @__PURE__ */ jsx2(
+      ), /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: entry.lineColor,
@@ -18683,7 +18723,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
           y1: upperWhiskerY,
           y2: upperWhiskerY
         }
-      ), /* @__PURE__ */ jsx2(
+      ), /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: entry.lineColor,
@@ -18693,7 +18733,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
           y1: lowerWhiskerY,
           y2: lowerWhiskerY
         }
-      ), /* @__PURE__ */ jsx2(
+      ), /* @__PURE__ */ jsx3(
         "rect",
         {
           ...chartElementDataProps(index, index),
@@ -18712,7 +18752,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
         boxTop,
         boxWidth,
         Math.max(1, boxBottom - boxTop)
-      ) : null, /* @__PURE__ */ jsx2(
+      ) : null, /* @__PURE__ */ jsx3(
         "line",
         {
           stroke: darkenColor2(entry.lineColor, 0.15),
@@ -18723,7 +18763,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
           y2: medianY
         }
       ), entry.visibility.meanMarker ? /* @__PURE__ */ jsxs2(Fragment2, { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: darkenColor2(entry.lineColor, 0.18),
@@ -18734,7 +18774,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
             y2: meanY + 4
           }
         ),
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "line",
           {
             stroke: darkenColor2(entry.lineColor, 0.18),
@@ -18776,7 +18816,7 @@ function renderBoxWhiskerChart(chart, palette, layout, selectedChartElement) {
             strokeWidth: 1.2
           }
         );
-      }), /* @__PURE__ */ jsx2(
+      }), /* @__PURE__ */ jsx3(
         "text",
         {
           fill: labelColor,
@@ -18849,7 +18889,7 @@ function renderRegionMapChart(chart, palette, layout, selectedChartElement) {
       if (!d) {
         return null;
       }
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "path",
         {
           d,
@@ -18874,7 +18914,7 @@ function renderRegionMapChart(chart, palette, layout, selectedChartElement) {
       const centroid = path.centroid(entry.feature);
       const canShowSelectionDot = Number.isFinite(centroid[0]) && Number.isFinite(centroid[1]);
       return /* @__PURE__ */ jsxs2(React3.Fragment, { children: [
-        /* @__PURE__ */ jsx2(
+        /* @__PURE__ */ jsx3(
           "path",
           {
             ...chartElementDataProps(primarySeriesIndex, index),
@@ -18900,7 +18940,7 @@ function renderRegionMapChart(chart, palette, layout, selectedChartElement) {
       if (!Number.isFinite(centroid[0]) || !Number.isFinite(centroid[1])) {
         return null;
       }
-      return /* @__PURE__ */ jsx2(
+      return /* @__PURE__ */ jsx3(
         "text",
         {
           fill: resolveChartTextColor(chart),
@@ -18918,7 +18958,7 @@ function renderRegionMapChart(chart, palette, layout, selectedChartElement) {
 }
 function renderUnsupported(chart, palette, layout, chartType) {
   return /* @__PURE__ */ jsxs2("g", { children: [
-    /* @__PURE__ */ jsx2(
+    /* @__PURE__ */ jsx3(
       "rect",
       {
         fill: lightenColor2(chart.chartAreaFillColor ?? palette.surface, 0.02),
@@ -18930,7 +18970,7 @@ function renderUnsupported(chart, palette, layout, chartType) {
         y: layout.plot.top
       }
     ),
-    /* @__PURE__ */ jsx2(
+    /* @__PURE__ */ jsx3(
       "text",
       {
         fill: resolveChartMutedTextColor(chart),
@@ -19040,7 +19080,7 @@ var MemoChartSvg = React3.memo(function MemoChartSvg2({
     onChartElementDoubleClick?.(selection, event);
   }, [chart, onChartElementDoubleClick, selectedChartElement]);
   if (renderChartType === "Surface") {
-    return /* @__PURE__ */ jsx2(
+    return /* @__PURE__ */ jsx3(
       MemoSurfaceChartComposite,
       {
         background,
@@ -19071,7 +19111,7 @@ var MemoChartSvg = React3.memo(function MemoChartSvg2({
       style: { display: "block", fontFamily, height: "100%", pointerEvents: "auto", width: "100%" },
       viewBox: `0 0 ${layout.width} ${layout.height}`,
       children: [
-        hideBackgroundRect ? null : /* @__PURE__ */ jsx2("rect", { fill: background, height: layout.height, stroke: borderColor, strokeWidth: 1, width: layout.width, x: 0, y: 0 }),
+        hideBackgroundRect ? null : /* @__PURE__ */ jsx3("rect", { fill: background, height: layout.height, stroke: borderColor, strokeWidth: 1, width: layout.width, x: 0, y: 0 }),
         renderTitle(chart, layout, palette),
         renderLegend(chart, layout, palette),
         renderChartPlot(chart, palette, layout, renderChartType, selectedChartElement)
@@ -19142,7 +19182,7 @@ function resolveViewerPalette(isDark = false, headerBackgroundColor, headerTextC
 }
 
 // src/XlsxViewer.tsx
-import { Fragment as Fragment4, jsx as jsx3, jsxs as jsxs3 } from "react/jsx-runtime";
+import { Fragment as Fragment4, jsx as jsx4, jsxs as jsxs3 } from "react/jsx-runtime";
 var DEFAULT_ROW_HEIGHT2 = 24;
 var DEFAULT_COL_WIDTH2 = 80;
 var HEADER_HEIGHT = 24;
@@ -21260,7 +21300,7 @@ function resolveShapeLineEndMarker(type, markerId, color, strokeWidth, rect, vie
   }
   const pxToUserSpace = (viewBox.width / Math.max(1, rect.width) + viewBox.height / Math.max(1, rect.height)) / 2;
   const markerSize = Math.max(pxToUserSpace * 8, pxToUserSpace * strokeWidth * 4);
-  return /* @__PURE__ */ jsx3(
+  return /* @__PURE__ */ jsx4(
     "marker",
     {
       id: markerId,
@@ -21272,13 +21312,13 @@ function resolveShapeLineEndMarker(type, markerId, color, strokeWidth, rect, vie
       refX: markerSize,
       refY: markerSize / 2,
       viewBox: `0 0 ${markerSize} ${markerSize}`,
-      children: /* @__PURE__ */ jsx3("path", { d: `M 0 0 L ${markerSize} ${markerSize / 2} L 0 ${markerSize} z`, fill: color })
+      children: /* @__PURE__ */ jsx4("path", { d: `M 0 0 L ${markerSize} ${markerSize / 2} L 0 ${markerSize} z`, fill: color })
     },
     markerId
   );
 }
 function renderShapeParagraph(paragraph, index, fallbackAlign = "left", textScale = 1) {
-  return /* @__PURE__ */ jsx3(
+  return /* @__PURE__ */ jsx4(
     "p",
     {
       style: {
@@ -21286,7 +21326,7 @@ function renderShapeParagraph(paragraph, index, fallbackAlign = "left", textScal
         textAlign: paragraph.align ?? fallbackAlign,
         whiteSpace: "pre-wrap"
       },
-      children: paragraph.runs.map((run, runIndex) => /* @__PURE__ */ jsx3(
+      children: paragraph.runs.map((run, runIndex) => /* @__PURE__ */ jsx4(
         "span",
         {
           style: {
@@ -22237,10 +22277,10 @@ function renderSparkline(sparkline, values, palette) {
     const gap = normalizedValues.length > 1 ? (innerWidth - segmentWidth * normalizedValues.length) / (normalizedValues.length - 1) : 0;
     const positiveY = 4.5;
     const negativeY = height - 4.5;
-    return /* @__PURE__ */ jsx3("svg", { "aria-hidden": "true", height, style: { display: "block", overflow: "visible", width: "100%" }, viewBox: `0 0 ${width} ${height}`, width: "100%", children: normalizedValues.map((entry, index) => {
+    return /* @__PURE__ */ jsx4("svg", { "aria-hidden": "true", height, style: { display: "block", overflow: "visible", width: "100%" }, viewBox: `0 0 ${width} ${height}`, width: "100%", children: normalizedValues.map((entry, index) => {
       const left = 1 + index * (segmentWidth + Math.max(0, gap));
       const y = entry.value >= 0 ? positiveY : negativeY;
-      return /* @__PURE__ */ jsx3(
+      return /* @__PURE__ */ jsx4(
         "line",
         {
           stroke: seriesColor,
@@ -22263,14 +22303,14 @@ function renderSparkline(sparkline, values, palette) {
     const barWidth = Math.max(2, innerWidth / Math.max(normalizedValues.length * 1.8, 1));
     const gap = normalizedValues.length > 1 ? (innerWidth - barWidth * normalizedValues.length) / (normalizedValues.length - 1) : 0;
     return /* @__PURE__ */ jsxs3("svg", { "aria-hidden": "true", height, style: { display: "block", overflow: "visible", width: "100%" }, viewBox: `0 0 ${width} ${height}`, width: "100%", children: [
-      /* @__PURE__ */ jsx3("line", { stroke: palette.border, strokeWidth: 1, x1: 1, x2: width - 1, y1: zeroY, y2: zeroY }),
+      /* @__PURE__ */ jsx4("line", { stroke: palette.border, strokeWidth: 1, x1: 1, x2: width - 1, y1: zeroY, y2: zeroY }),
       normalizedValues.map((entry, index) => {
         const left = 1 + index * (barWidth + Math.max(0, gap));
         const y = 2 + innerHeight - clampSparklineValue(entry.value, minValue2, maxValue2) * innerHeight;
         const top = Math.min(y, zeroY);
         const barHeight = Math.max(1, Math.abs(y - zeroY));
         const fill = entry.value < 0 ? negativeColor : seriesColor;
-        return /* @__PURE__ */ jsx3(
+        return /* @__PURE__ */ jsx4(
           "rect",
           {
             fill,
@@ -22297,7 +22337,7 @@ function renderSparkline(sparkline, values, palette) {
   const highValue = Math.max(...points.map((entry) => entry.value));
   const lowValue = Math.min(...points.map((entry) => entry.value));
   return /* @__PURE__ */ jsxs3("svg", { "aria-hidden": "true", height, style: { display: "block", overflow: "visible", width: "100%" }, viewBox: `0 0 ${width} ${height}`, width: "100%", children: [
-    /* @__PURE__ */ jsx3("path", { d: path, fill: "none", stroke: seriesColor, strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: 1.6 }),
+    /* @__PURE__ */ jsx4("path", { d: path, fill: "none", stroke: seriesColor, strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: 1.6 }),
     sparkline.markers ? points.map((entry, index) => {
       const x = 1 + index * xStep;
       const y = 2 + innerHeight - clampSparklineValue(entry.value, minValue, maxValue) * innerHeight;
@@ -22313,7 +22353,7 @@ function renderSparkline(sparkline, values, palette) {
       } else if (entry.value < 0 && sparkline.negative && sparkline.negativeColor) {
         fill = sparkline.negativeColor;
       }
-      return /* @__PURE__ */ jsx3("circle", { cx: x, cy: y, fill, r: 1.75 }, `spark-point-${index}`);
+      return /* @__PURE__ */ jsx4("circle", { cx: x, cy: y, fill, r: 1.75 }, `spark-point-${index}`);
     }) : null
   ] });
 }
@@ -22679,7 +22719,7 @@ function DefaultTableHeaderMenu({
         padding: 6
       },
       children: [
-        /* @__PURE__ */ jsx3(
+        /* @__PURE__ */ jsx4(
           "button",
           {
             onClick: sortAscending,
@@ -22697,7 +22737,7 @@ function DefaultTableHeaderMenu({
             children: "Sort A to Z"
           }
         ),
-        /* @__PURE__ */ jsx3(
+        /* @__PURE__ */ jsx4(
           "button",
           {
             onClick: sortDescending,
@@ -22744,7 +22784,7 @@ function SegmentedControl({
   palette,
   value
 }) {
-  return /* @__PURE__ */ jsx3(
+  return /* @__PURE__ */ jsx4(
     "div",
     {
       "aria-label": "Workbook sheets",
@@ -22762,7 +22802,7 @@ function SegmentedControl({
       children: items.map((item) => {
         const selected = item.id === value;
         const isHidden = item.visibility === "hidden" || item.visibility === "veryHidden";
-        return /* @__PURE__ */ jsx3(
+        return /* @__PURE__ */ jsx4(
           "button",
           {
             "aria-selected": selected,
@@ -22824,7 +22864,7 @@ function DefaultToolbar({ controller, palette }) {
           padding: "0 16px"
         },
         children: [
-          /* @__PURE__ */ jsx3("div", { style: { minWidth: 0 }, children: /* @__PURE__ */ jsx3(
+          /* @__PURE__ */ jsx4("div", { style: { minWidth: 0 }, children: /* @__PURE__ */ jsx4(
             "div",
             {
               style: {
@@ -22851,7 +22891,7 @@ function DefaultToolbar({ controller, palette }) {
                   overflow: "hidden"
                 },
                 children: [
-                  /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4(
                     "button",
                     {
                       disabled: !canZoomOut,
@@ -22869,7 +22909,7 @@ function DefaultToolbar({ controller, palette }) {
                       children: "-"
                     }
                   ),
-                  /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4(
                     "button",
                     {
                       onClick: resetZoom,
@@ -22889,7 +22929,7 @@ function DefaultToolbar({ controller, palette }) {
                       children: formatZoomScale(zoomScale)
                     }
                   ),
-                  /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4(
                     "button",
                     {
                       disabled: !canZoomIn,
@@ -22910,7 +22950,7 @@ function DefaultToolbar({ controller, palette }) {
                 ]
               }
             ),
-            canDownload ? /* @__PURE__ */ jsx3(
+            canDownload ? /* @__PURE__ */ jsx4(
               "button",
               {
                 "aria-label": "Download workbook",
@@ -22939,7 +22979,7 @@ function DefaultToolbar({ controller, palette }) {
         ]
       }
     ),
-    tabs.length > 1 ? /* @__PURE__ */ jsx3(
+    tabs.length > 1 ? /* @__PURE__ */ jsx4(
       "div",
       {
         style: {
@@ -22948,7 +22988,7 @@ function DefaultToolbar({ controller, palette }) {
           overflowX: "auto",
           padding: "8px 12px"
         },
-        children: /* @__PURE__ */ jsx3(
+        children: /* @__PURE__ */ jsx4(
           SegmentedControl,
           {
             items: tabs.map((tab, index) => ({
@@ -22976,7 +23016,7 @@ function resolveToolbar(toolbar, showDefaultToolbar, controller, palette) {
   if (!showDefaultToolbar) {
     return null;
   }
-  return /* @__PURE__ */ jsx3(DefaultToolbar, { controller, palette });
+  return /* @__PURE__ */ jsx4(DefaultToolbar, { controller, palette });
 }
 function renderError(errorState, error, palette) {
   if (typeof errorState === "function") {
@@ -22985,7 +23025,7 @@ function renderError(errorState, error, palette) {
   if (errorState !== void 0) {
     return errorState;
   }
-  return /* @__PURE__ */ jsx3(
+  return /* @__PURE__ */ jsx4(
     "div",
     {
       style: {
@@ -23009,7 +23049,7 @@ function renderLoading(loadingComponent, loadingState, palette) {
   if (loadingState !== void 0) {
     return loadingState;
   }
-  return /* @__PURE__ */ jsx3(
+  return /* @__PURE__ */ jsx4(
     "div",
     {
       style: {
@@ -23028,7 +23068,7 @@ function renderEmpty(emptyState, palette) {
   if (emptyState !== void 0) {
     return emptyState;
   }
-  return /* @__PURE__ */ jsx3(
+  return /* @__PURE__ */ jsx4(
     "div",
     {
       style: {
@@ -23075,7 +23115,7 @@ function renderFileTooLarge(fileTooLargeState, renderProps, palette) {
         textAlign: "center"
       },
       children: [
-        /* @__PURE__ */ jsx3("div", { style: { color: palette.text, fontWeight: 600 }, children: renderProps.displayFileName }),
+        /* @__PURE__ */ jsx4("div", { style: { color: palette.text, fontWeight: 600 }, children: renderProps.displayFileName }),
         /* @__PURE__ */ jsxs3("div", { children: [
           "File size ",
           formatBinaryBytes2(renderProps.fileSizeBytes),
@@ -23110,7 +23150,7 @@ function renderDefaultChartLoadingCard(rect) {
   const bars = [18, 32, 24];
   const barWidth = Math.max(8, Math.min(12, Math.round(rect.width * 0.018)));
   const barGap = 8;
-  return /* @__PURE__ */ jsx3(
+  return /* @__PURE__ */ jsx4(
     "div",
     {
       style: {
@@ -23124,7 +23164,7 @@ function renderDefaultChartLoadingCard(rect) {
         padding: 12,
         width: "100%"
       },
-      children: /* @__PURE__ */ jsx3(
+      children: /* @__PURE__ */ jsx4(
         "div",
         {
           style: {
@@ -23133,7 +23173,7 @@ function renderDefaultChartLoadingCard(rect) {
             gap: barGap,
             justifyContent: "center"
           },
-          children: bars.map((heightPx, index) => /* @__PURE__ */ jsx3(
+          children: bars.map((heightPx, index) => /* @__PURE__ */ jsx4(
             "div",
             {
               style: {
@@ -23175,7 +23215,7 @@ function formatBytes(value) {
   return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`;
 }
 function renderDeferredLoad(controller, palette) {
-  return /* @__PURE__ */ jsx3(
+  return /* @__PURE__ */ jsx4(
     "div",
     {
       style: {
@@ -23199,14 +23239,14 @@ function renderDeferredLoad(controller, palette) {
             width: "100%"
           },
           children: [
-            /* @__PURE__ */ jsx3("div", { style: { fontSize: 16, fontWeight: 600 }, children: "Large workbook detected" }),
+            /* @__PURE__ */ jsx4("div", { style: { fontSize: 16, fontWeight: 600 }, children: "Large workbook detected" }),
             /* @__PURE__ */ jsxs3("div", { style: { color: palette.mutedText, fontSize: 13, lineHeight: 1.5, marginTop: 8 }, children: [
               "This workbook is ",
               formatBytes(controller.deferredLoadFileSize ?? 0),
               ". Loading it immediately can block the main thread and freeze the page."
             ] }),
-            /* @__PURE__ */ jsx3("div", { style: { color: palette.mutedText, fontSize: 13, lineHeight: 1.5, marginTop: 8 }, children: "Best practice is to gate large files or move parsing into a worker. You can still load it manually below." }),
-            /* @__PURE__ */ jsx3("div", { style: { display: "flex", gap: 10, marginTop: 16 }, children: /* @__PURE__ */ jsx3(
+            /* @__PURE__ */ jsx4("div", { style: { color: palette.mutedText, fontSize: 13, lineHeight: 1.5, marginTop: 8 }, children: "Best practice is to gate large files or move parsing into a worker. You can still load it manually below." }),
+            /* @__PURE__ */ jsx4("div", { style: { display: "flex", gap: 10, marginTop: 16 }, children: /* @__PURE__ */ jsx4(
               "button",
               {
                 onClick: controller.continueDeferredLoad,
@@ -23748,7 +23788,7 @@ function renderConditionalIcon(icon, scale = 1) {
   if (icon.shape === "arrow") {
     const fill = icon.color ?? "#111827";
     const stroke = icon.borderColor ?? darkenColor3(fill, 0.32);
-    return /* @__PURE__ */ jsx3(
+    return /* @__PURE__ */ jsx4(
       "svg",
       {
         "aria-hidden": "true",
@@ -23756,7 +23796,7 @@ function renderConditionalIcon(icon, scale = 1) {
         style: { display: "block" },
         viewBox: "0 0 16 16",
         width: iconSize,
-        children: /* @__PURE__ */ jsx3("g", { transform: `rotate(${icon.rotationDeg ?? 0} 8 8)`, children: /* @__PURE__ */ jsx3(
+        children: /* @__PURE__ */ jsx4("g", { transform: `rotate(${icon.rotationDeg ?? 0} 8 8)`, children: /* @__PURE__ */ jsx4(
           "path",
           {
             d: "M2.5 8 L8.4 2.4 L8.4 5.2 L13.5 5.2 L13.5 10.8 L8.4 10.8 L8.4 13.6 Z",
@@ -23770,7 +23810,7 @@ function renderConditionalIcon(icon, scale = 1) {
     );
   }
   if (icon.glyph) {
-    return /* @__PURE__ */ jsx3(
+    return /* @__PURE__ */ jsx4(
       "span",
       {
         style: {
@@ -23788,7 +23828,7 @@ function renderConditionalIcon(icon, scale = 1) {
       }
     );
   }
-  return /* @__PURE__ */ jsx3(
+  return /* @__PURE__ */ jsx4(
     "span",
     {
       style: {
@@ -23883,8 +23923,8 @@ function renderCheckboxControl(checked, palette, scale = 1, mixed = false) {
   const fill = checked || mixed ? paletteIsDark(palette) ? "#60a5fa" : "#2563eb" : "transparent";
   const check = paletteIsDark(palette) ? "#020617" : "#ffffff";
   return /* @__PURE__ */ jsxs3("svg", { "aria-hidden": "true", height: 14 * scale, style: { display: "block" }, viewBox: "0 0 16 16", width: 14 * scale, children: [
-    /* @__PURE__ */ jsx3("rect", { fill, height: 11, rx: 2, ry: 2, stroke, strokeWidth: 1.2, width: 11, x: 2.5, y: 2.5 }),
-    mixed ? /* @__PURE__ */ jsx3("path", { d: "M5 8h6", fill: "none", stroke: check, strokeLinecap: "round", strokeWidth: 1.8 }) : checked ? /* @__PURE__ */ jsx3(
+    /* @__PURE__ */ jsx4("rect", { fill, height: 11, rx: 2, ry: 2, stroke, strokeWidth: 1.2, width: 11, x: 2.5, y: 2.5 }),
+    mixed ? /* @__PURE__ */ jsx4("path", { d: "M5 8h6", fill: "none", stroke: check, strokeLinecap: "round", strokeWidth: 1.8 }) : checked ? /* @__PURE__ */ jsx4(
       "path",
       {
         d: "M5 8.1 7.1 10.2 11.3 5.8",
@@ -23901,8 +23941,8 @@ function renderRadioControl(checked, palette, scale = 1) {
   const stroke = paletteIsDark(palette) ? "#cbd5e1" : "#475569";
   const dot = paletteIsDark(palette) ? "#60a5fa" : "#2563eb";
   return /* @__PURE__ */ jsxs3("svg", { "aria-hidden": "true", height: 14 * scale, style: { display: "block" }, viewBox: "0 0 16 16", width: 14 * scale, children: [
-    /* @__PURE__ */ jsx3("circle", { cx: 8, cy: 8, fill: "transparent", r: 5.5, stroke, strokeWidth: 1.2 }),
-    checked ? /* @__PURE__ */ jsx3("circle", { cx: 8, cy: 8, fill: dot, r: 2.75 }) : null
+    /* @__PURE__ */ jsx4("circle", { cx: 8, cy: 8, fill: "transparent", r: 5.5, stroke, strokeWidth: 1.2 }),
+    checked ? /* @__PURE__ */ jsx4("circle", { cx: 8, cy: 8, fill: dot, r: 2.75 }) : null
   ] });
 }
 function resolveFormControlLabel(control) {
@@ -24370,7 +24410,7 @@ function GridRow({
 }) {
   const gutterSeparatorShadow = `inset -1px 0 0 ${palette.border}, inset 0 -1px 0 ${palette.border}`;
   return /* @__PURE__ */ jsxs3("tr", { "data-xlsx-row": actualRow, style: { height: rowHeight }, children: [
-    /* @__PURE__ */ jsx3(
+    /* @__PURE__ */ jsx4(
       "td",
       {
         ref: (element) => onRowHeaderRef(actualRow, element),
@@ -24396,7 +24436,7 @@ function GridRow({
           zIndex: stickyTop !== void 0 ? frozenRowHeaderZIndex : rowHeaderZIndex
         },
         children: /* @__PURE__ */ jsxs3("div", { style: { position: "relative" }, children: [
-          /* @__PURE__ */ jsx3(
+          /* @__PURE__ */ jsx4(
             "span",
             {
               style: {
@@ -24407,7 +24447,7 @@ function GridRow({
               children: actualRow + 1
             }
           ),
-          /* @__PURE__ */ jsx3(
+          /* @__PURE__ */ jsx4(
             "div",
             {
               onPointerDown: (event) => onRowResizePointerDown(event, actualRow, rowHeight),
@@ -24426,7 +24466,7 @@ function GridRow({
         ] })
       }
     ),
-    leadingSpacerWidth > 0 ? /* @__PURE__ */ jsx3(
+    leadingSpacerWidth > 0 ? /* @__PURE__ */ jsx4(
       "td",
       {
         "aria-hidden": "true",
@@ -24559,7 +24599,7 @@ function GridRow({
         whiteSpace: "nowrap",
         width: "max-content"
       } : null;
-      const title = [cellData.errorTooltip, cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.errorTooltip ? void 0 : cellData.value].filter((value, index, values) => typeof value === "string" && value.length > 0 && values.indexOf(value) === index).join("\n");
+      const title = cellData.errorTooltip ? void 0 : [cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.value].filter((value, index, values) => typeof value === "string" && value.length > 0 && values.indexOf(value) === index).join("\n");
       return /* @__PURE__ */ jsxs3(
         "td",
         {
@@ -24577,17 +24617,17 @@ function GridRow({
           style: cellStyle,
           title,
           children: [
-            cellData.errorTooltip ? /* @__PURE__ */ jsx3(
+            cellData.errorTooltip ? /* @__PURE__ */ jsx4(
               "svg",
               {
                 "aria-hidden": "true",
                 "data-xlsx-formula-error": "true",
                 viewBox: "0 0 7 7",
                 style: { position: "absolute", top: 1, left: 1, width: 7 * zoomFactor, height: 7 * zoomFactor, pointerEvents: "none", zIndex: 3 },
-                children: /* @__PURE__ */ jsx3("path", { d: "M0 0H7L0 7Z", fill: "#facc15" })
+                children: /* @__PURE__ */ jsx4("path", { d: "M0 0H7L0 7Z", fill: "#facc15" })
               }
             ) : null,
-            cellData.chartHighlight ? /* @__PURE__ */ jsx3(
+            cellData.chartHighlight ? /* @__PURE__ */ jsx4(
               "div",
               {
                 "aria-hidden": "true",
@@ -24604,7 +24644,7 @@ function GridRow({
                 }
               }
             ) : null,
-            cellData.conditionalDataBar ? /* @__PURE__ */ jsx3(
+            cellData.conditionalDataBar ? /* @__PURE__ */ jsx4(
               "div",
               {
                 "aria-hidden": "true",
@@ -24619,7 +24659,7 @@ function GridRow({
                   top: 4 * zoomFactor,
                   zIndex: 0
                 },
-                children: /* @__PURE__ */ jsx3(
+                children: /* @__PURE__ */ jsx4(
                   "div",
                   {
                     style: {
@@ -24635,7 +24675,7 @@ function GridRow({
               }
             ) : null,
             adornment,
-            cellData.conditionalIcon ? /* @__PURE__ */ jsx3(
+            cellData.conditionalIcon ? /* @__PURE__ */ jsx4(
               "div",
               {
                 "aria-hidden": "true",
@@ -24653,7 +24693,7 @@ function GridRow({
                 children: renderConditionalIcon(cellData.conditionalIcon, zoomFactor)
               }
             ) : null,
-            isEditing ? /* @__PURE__ */ jsx3(
+            isEditing ? /* @__PURE__ */ jsx4(
               "input",
               {
                 autoFocus: true,
@@ -24689,7 +24729,7 @@ function GridRow({
                 },
                 value: editingValue
               }
-            ) : isSpilling ? /* @__PURE__ */ jsx3(
+            ) : isSpilling ? /* @__PURE__ */ jsx4(
               "div",
               {
                 style: {
@@ -24703,7 +24743,7 @@ function GridRow({
                 },
                 children: cellData.value
               }
-            ) : cellData.sparkline ? /* @__PURE__ */ jsx3(
+            ) : cellData.sparkline ? /* @__PURE__ */ jsx4(
               "div",
               {
                 style: {
@@ -24716,7 +24756,7 @@ function GridRow({
                 },
                 children: renderSparkline(cellData.sparkline.config, cellData.sparkline.values, palette)
               }
-            ) : cellData.checkboxState != null ? /* @__PURE__ */ jsx3(
+            ) : cellData.checkboxState != null ? /* @__PURE__ */ jsx4(
               "div",
               {
                 style: {
@@ -24729,13 +24769,13 @@ function GridRow({
                 },
                 children: renderCheckboxControl(cellData.checkboxState, palette, zoomFactor)
               }
-            ) : /* @__PURE__ */ jsx3("div", { style: cellContentStyle, children: rotatedTextStyle ? /* @__PURE__ */ jsx3("span", { style: rotatedTextStyle, children: cellData.value }) : wrappedTextStyle ? /* @__PURE__ */ jsx3("span", { style: wrappedTextStyle, children: cellData.value }) : cellData.value })
+            ) : /* @__PURE__ */ jsx4("div", { style: cellContentStyle, children: rotatedTextStyle ? /* @__PURE__ */ jsx4("span", { style: rotatedTextStyle, children: cellData.value }) : wrappedTextStyle ? /* @__PURE__ */ jsx4("span", { style: wrappedTextStyle, children: cellData.value }) : cellData.value })
           ]
         },
         key
       );
     }),
-    trailingSpacerWidth > 0 ? /* @__PURE__ */ jsx3(
+    trailingSpacerWidth > 0 ? /* @__PURE__ */ jsx4(
       "td",
       {
         "aria-hidden": "true",
@@ -28685,7 +28725,7 @@ function XlsxGrid({
         }
       });
     }
-    return /* @__PURE__ */ jsx3(
+    return /* @__PURE__ */ jsx4(
       "button",
       {
         onPointerDown: (event) => {
@@ -28977,13 +29017,32 @@ function XlsxGrid({
     rowPrefixSums,
     startCellSelection
   ]);
-  const handleCanvasBodyPointerMove = React4.useCallback((event) => {
+  const [formulaHover, setFormulaHover] = React4.useState(null);
+  const clearFormulaHover = React4.useCallback(() => setFormulaHover(null), []);
+  const handleFormulaPointerMove = React4.useCallback((event) => {
+    const target = event.target;
+    if (event.buttons || event.pointerType === "touch" || !(target instanceof Element) || !target.closest("[data-xlsx-cell], [data-xlsx-body-canvas]")) {
+      clearFormulaHover();
+      return;
+    }
     const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
-    event.currentTarget.title = cell ? getCellData(cell.row, cell.col).errorTooltip ?? "" : "";
-  }, [getCellData, resolvePointerCellFromClient]);
-  const handleCanvasBodyPointerLeave = React4.useCallback((event) => {
-    event.currentTarget.removeAttribute("title");
-  }, []);
+    const address = cell ? cellAddressToA12(cell) : "";
+    if (!cell || !formulaErrors.has(address)) {
+      clearFormulaHover();
+      return;
+    }
+    const text = getCellData(cell.row, cell.col).errorTooltip;
+    if (!text) return;
+    const next = {
+      text,
+      x: event.clientX,
+      y: event.clientY,
+      cell: address,
+      calculation: controller.calculation,
+      sheet: activeSheet?.name
+    };
+    setFormulaHover((previous) => previous?.cell === address && previous.calculation === next.calculation && previous.sheet === next.sheet ? previous : next);
+  }, [activeSheet?.name, clearFormulaHover, controller.calculation, formulaErrors, getCellData, resolvePointerCellFromClient]);
   const handleCanvasBodyClick = React4.useCallback((event) => {
     const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
     if (!cell) {
@@ -30410,14 +30469,14 @@ function XlsxGrid({
     selectChartElement(selection2);
   }, [selectChartElement]);
   if (isLoading) {
-    return /* @__PURE__ */ jsx3(Fragment4, { children: renderLoading(loadingComponent, loadingState, palette) });
+    return /* @__PURE__ */ jsx4(Fragment4, { children: renderLoading(loadingComponent, loadingState, palette) });
   }
   if (isLoadDeferred) {
-    return /* @__PURE__ */ jsx3(Fragment4, { children: renderDeferredLoad({ ...controller, canLoadDeferred, continueDeferredLoad, deferredLoadFileSize, isLoadDeferred }, palette) });
+    return /* @__PURE__ */ jsx4(Fragment4, { children: renderDeferredLoad({ ...controller, canLoadDeferred, continueDeferredLoad, deferredLoadFileSize, isLoadDeferred }, palette) });
   }
   if (error) {
     if (error instanceof XlsxFileSizeLimitExceededError) {
-      return /* @__PURE__ */ jsx3(Fragment4, { children: renderFileTooLarge(
+      return /* @__PURE__ */ jsx4(Fragment4, { children: renderFileTooLarge(
         fileTooLargeState,
         {
           displayFileName,
@@ -30427,10 +30486,10 @@ function XlsxGrid({
         palette
       ) });
     }
-    return /* @__PURE__ */ jsx3(Fragment4, { children: renderError(errorState, error, palette) });
+    return /* @__PURE__ */ jsx4(Fragment4, { children: renderError(errorState, error, palette) });
   }
   if (!activeSheet && activeTab?.kind === "chartsheet") {
-    return /* @__PURE__ */ jsx3(
+    return /* @__PURE__ */ jsx4(
       "div",
       {
         style: {
@@ -30443,7 +30502,7 @@ function XlsxGrid({
           minWidth: 0,
           padding: 16
         },
-        children: /* @__PURE__ */ jsx3(
+        children: /* @__PURE__ */ jsx4(
           "div",
           {
             style: {
@@ -30458,7 +30517,7 @@ function XlsxGrid({
             },
             children: charts.length > 0 ? charts.map((chart) => {
               const chartsheetRect = { height: 320, left: 0, top: 0, width: 640 };
-              return /* @__PURE__ */ jsx3("div", { style: { minHeight: 320, position: "relative" }, children: isChartsLoading ? renderChartLoadingNode(renderChartLoading, chart, chartsheetRect) : /* @__PURE__ */ jsx3(
+              return /* @__PURE__ */ jsx4("div", { style: { minHeight: 320, position: "relative" }, children: isChartsLoading ? renderChartLoadingNode(renderChartLoading, chart, chartsheetRect) : /* @__PURE__ */ jsx4(
                 MemoChartSvg,
                 {
                   chart,
@@ -30469,7 +30528,7 @@ function XlsxGrid({
                   selectedChartElement
                 }
               ) }, chart.id);
-            }) : /* @__PURE__ */ jsx3(
+            }) : /* @__PURE__ */ jsx4(
               "div",
               {
                 style: {
@@ -30489,7 +30548,7 @@ function XlsxGrid({
     );
   }
   if (!activeSheet) {
-    return /* @__PURE__ */ jsx3(Fragment4, { children: renderEmpty(emptyState, palette) });
+    return /* @__PURE__ */ jsx4(Fragment4, { children: renderEmpty(emptyState, palette) });
   }
   const virtualRows = domExpandedWindow.rowIndices.map((index) => {
     const virtualRow = rowVirtualItemByIndex.get(index);
@@ -30750,7 +30809,7 @@ function XlsxGrid({
                   headMarker,
                   tailMarker
                 ] }) : null,
-                /* @__PURE__ */ jsx3(
+                /* @__PURE__ */ jsx4(
                   "path",
                   {
                     d: vectorShape.path,
@@ -30767,7 +30826,7 @@ function XlsxGrid({
               ]
             }
           ) : null,
-          /* @__PURE__ */ jsx3(
+          /* @__PURE__ */ jsx4(
             "div",
             {
               style: {
@@ -30916,7 +30975,7 @@ function XlsxGrid({
       }
     };
     if (renderFormControl) {
-      return /* @__PURE__ */ jsx3(React4.Fragment, { children: renderFormControl({
+      return /* @__PURE__ */ jsx4(React4.Fragment, { children: renderFormControl({
         activate: activateControl,
         checked: isFormControlChecked(control),
         control,
@@ -30936,7 +30995,7 @@ function XlsxGrid({
     }
     if (control.kind === "group-box") {
       const hasLabel = controlLabel.length > 0;
-      return /* @__PURE__ */ jsx3(
+      return /* @__PURE__ */ jsx4(
         "div",
         {
           style: {
@@ -30944,7 +31003,7 @@ function XlsxGrid({
             padding: `${hasLabel ? Math.max(7, fontSizePx * 0.5) : 0}px 0 0`,
             position: "absolute"
           },
-          children: /* @__PURE__ */ jsx3(
+          children: /* @__PURE__ */ jsx4(
             "div",
             {
               style: {
@@ -30954,7 +31013,7 @@ function XlsxGrid({
                 position: "relative",
                 width: "100%"
               },
-              children: controlLabel ? /* @__PURE__ */ jsx3(
+              children: controlLabel ? /* @__PURE__ */ jsx4(
                 "span",
                 {
                   style: {
@@ -31002,7 +31061,7 @@ function XlsxGrid({
           type: "button",
           children: [
             renderRadioControl(checked, palette, zoomFactor),
-            controlLabel ? /* @__PURE__ */ jsx3("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: controlLabel }) : null
+            controlLabel ? /* @__PURE__ */ jsx4("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: controlLabel }) : null
           ]
         },
         `${pane}-${control.id}`
@@ -31035,14 +31094,14 @@ function XlsxGrid({
           type: "button",
           children: [
             renderCheckboxControl(checked, palette, zoomFactor, mixed),
-            controlLabel ? /* @__PURE__ */ jsx3("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: controlLabel }) : null
+            controlLabel ? /* @__PURE__ */ jsx4("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: controlLabel }) : null
           ]
         },
         `${pane}-${control.id}`
       );
     }
     if (control.kind === "button") {
-      return /* @__PURE__ */ jsx3(
+      return /* @__PURE__ */ jsx4(
         "button",
         {
           "aria-disabled": readOnly || !onFormControlAction,
@@ -31095,8 +31154,8 @@ function XlsxGrid({
           tabIndex: readOnly ? -1 : void 0,
           value: selected === void 0 ? "" : String(selected),
           children: [
-            selected === void 0 ? /* @__PURE__ */ jsx3("option", { value: "", children: controlLabel }) : null,
-            controlItems.map((item, index) => /* @__PURE__ */ jsx3("option", { value: index, children: item }, index))
+            selected === void 0 ? /* @__PURE__ */ jsx4("option", { value: "", children: controlLabel }) : null,
+            controlItems.map((item, index) => /* @__PURE__ */ jsx4("option", { value: index, children: item }, index))
           ]
         },
         `${pane}-${control.id}`
@@ -31105,7 +31164,7 @@ function XlsxGrid({
     if (control.kind === "listbox") {
       const selected = Array.isArray(control.selected) ? control.selected : control.selected === void 0 ? [] : [control.selected];
       const allowsMultipleSelection = (control.selection ?? "single") !== "single";
-      return /* @__PURE__ */ jsx3(
+      return /* @__PURE__ */ jsx4(
         "select",
         {
           "aria-disabled": readOnly || control.controlIndex === void 0 || controlItems.length === 0,
@@ -31132,7 +31191,7 @@ function XlsxGrid({
           },
           tabIndex: readOnly ? -1 : void 0,
           value: allowsMultipleSelection ? selected.map(String) : selected[0] === void 0 ? "" : String(selected[0]),
-          children: controlItems.map((item, index) => /* @__PURE__ */ jsx3("option", { value: index, children: item }, index))
+          children: controlItems.map((item, index) => /* @__PURE__ */ jsx4("option", { value: index, children: item }, index))
         },
         `${pane}-${control.id}`
       );
@@ -31140,7 +31199,7 @@ function XlsxGrid({
     if (control.kind === "scrollbar") {
       const min = control.min ?? 0;
       const max = Math.max(min, control.max ?? 100);
-      return /* @__PURE__ */ jsx3(
+      return /* @__PURE__ */ jsx4(
         "input",
         {
           "aria-disabled": readOnly || control.controlIndex === void 0,
@@ -31172,7 +31231,7 @@ function XlsxGrid({
     if (control.kind === "spinner") {
       const min = control.min ?? 0;
       const max = Math.max(min, control.max ?? 100);
-      return /* @__PURE__ */ jsx3(
+      return /* @__PURE__ */ jsx4(
         "input",
         {
           "aria-disabled": readOnly || control.controlIndex === void 0,
@@ -31202,7 +31261,7 @@ function XlsxGrid({
         `${pane}-${control.id}`
       );
     }
-    return /* @__PURE__ */ jsx3(
+    return /* @__PURE__ */ jsx4(
       "div",
       {
         style: {
@@ -31212,7 +31271,7 @@ function XlsxGrid({
           boxSizing: "border-box",
           padding: `0 ${Math.max(1, zoomFactor)}px`
         },
-        children: controlLabel ? /* @__PURE__ */ jsx3("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: controlLabel }) : null
+        children: controlLabel ? /* @__PURE__ */ jsx4("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: controlLabel }) : null
       },
       `${pane}-${control.id}`
     );
@@ -31240,7 +31299,7 @@ function XlsxGrid({
       width: rect.width,
       zIndex: isFrozenDrawing ? image.zIndex + 20 : image.zIndex
     };
-    const defaultNode = /* @__PURE__ */ jsx3(
+    const defaultNode = /* @__PURE__ */ jsx4(
       "img",
       {
         alt: image.description ?? image.name ?? "",
@@ -31255,7 +31314,7 @@ function XlsxGrid({
         }
       }
     );
-    const selectionNode = selectedImageId === image.id ? /* @__PURE__ */ jsx3(
+    const selectionNode = selectedImageId === image.id ? /* @__PURE__ */ jsx4(
       "div",
       {
         style: {
@@ -31266,7 +31325,7 @@ function XlsxGrid({
           zIndex: isFrozenDrawing ? image.zIndex + 22 : image.zIndex + 2
         },
         children: renderImageSelection ? renderImageSelection({
-          defaultNode: /* @__PURE__ */ jsx3(
+          defaultNode: /* @__PURE__ */ jsx4(
             "div",
             {
               style: {
@@ -31277,7 +31336,7 @@ function XlsxGrid({
                 pointerEvents: "none",
                 position: "absolute"
               },
-              children: canEditImage ? IMAGE_HANDLE_POSITIONS.map((position) => /* @__PURE__ */ jsx3(
+              children: canEditImage ? IMAGE_HANDLE_POSITIONS.map((position) => /* @__PURE__ */ jsx4(
                 "div",
                 {
                   onPointerDown: (event) => startImageResize(event, image, rect, position),
@@ -31297,7 +31356,7 @@ function XlsxGrid({
           }),
           image,
           rect
-        }) : /* @__PURE__ */ jsx3(
+        }) : /* @__PURE__ */ jsx4(
           "div",
           {
             style: {
@@ -31308,7 +31367,7 @@ function XlsxGrid({
               pointerEvents: "none",
               position: "absolute"
             },
-            children: canEditImage ? IMAGE_HANDLE_POSITIONS.map((position) => /* @__PURE__ */ jsx3(
+            children: canEditImage ? IMAGE_HANDLE_POSITIONS.map((position) => /* @__PURE__ */ jsx4(
               "div",
               {
                 onPointerDown: (event) => startImageResize(event, image, rect, position),
@@ -31321,8 +31380,8 @@ function XlsxGrid({
       }
     ) : null;
     return /* @__PURE__ */ jsxs3(React4.Fragment, { children: [
-      renderImage ? /* @__PURE__ */ jsx3("div", { style, children: renderImage({ defaultNode, image, rect, style }) }) : /* @__PURE__ */ jsx3("div", { style, children: defaultNode }),
-      /* @__PURE__ */ jsx3(
+      renderImage ? /* @__PURE__ */ jsx4("div", { style, children: renderImage({ defaultNode, image, rect, style }) }) : /* @__PURE__ */ jsx4("div", { style, children: defaultNode }),
+      /* @__PURE__ */ jsx4(
         "div",
         {
           onClick: () => handleImageClick(image),
@@ -31362,7 +31421,7 @@ function XlsxGrid({
       width: rect.width,
       zIndex: isFrozenDrawing ? chart.zIndex + 20 : chart.zIndex
     };
-    const selectionNode = selectedChartId === chart.id ? /* @__PURE__ */ jsx3(
+    const selectionNode = selectedChartId === chart.id ? /* @__PURE__ */ jsx4(
       "div",
       {
         style: {
@@ -31372,7 +31431,7 @@ function XlsxGrid({
           pointerEvents: "none",
           zIndex: isFrozenDrawing ? chart.zIndex + 22 : chart.zIndex + 2
         },
-        children: /* @__PURE__ */ jsx3(
+        children: /* @__PURE__ */ jsx4(
           "div",
           {
             style: {
@@ -31383,7 +31442,7 @@ function XlsxGrid({
               pointerEvents: "none",
               position: "absolute"
             },
-            children: canEditChart ? IMAGE_HANDLE_POSITIONS.map((position) => /* @__PURE__ */ jsx3(
+            children: canEditChart ? IMAGE_HANDLE_POSITIONS.map((position) => /* @__PURE__ */ jsx4(
               "div",
               {
                 onPointerDown: (event) => startChartResize(event, chart, rect, position),
@@ -31396,7 +31455,7 @@ function XlsxGrid({
       }
     ) : null;
     return /* @__PURE__ */ jsxs3(React4.Fragment, { children: [
-      /* @__PURE__ */ jsx3(
+      /* @__PURE__ */ jsx4(
         "div",
         {
           onClick: () => handleChartClick(chart),
@@ -31406,7 +31465,7 @@ function XlsxGrid({
             cursor: canEditChart && selectedChartId === chart.id ? "move" : "cell",
             pointerEvents: "auto"
           },
-          children: isChartsLoading ? renderChartLoadingNode(renderChartLoading, chart, rect) : /* @__PURE__ */ jsx3(
+          children: isChartsLoading ? renderChartLoadingNode(renderChartLoading, chart, rect) : /* @__PURE__ */ jsx4(
             MemoChartSvg,
             {
               chart,
@@ -32305,7 +32364,7 @@ function XlsxGrid({
       width: "100%"
     }
   };
-  const scrollerContent = /* @__PURE__ */ jsx3(
+  const scrollerContent = /* @__PURE__ */ jsx4(
     "div",
     {
       style: {
@@ -32333,63 +32392,59 @@ function XlsxGrid({
           },
           children: [
             showImages && !experimentalCanvas ? /* @__PURE__ */ jsxs3(Fragment4, { children: [
-              /* @__PURE__ */ jsx3("div", { style: topOverlayStyle, children: paneDrawingNodes.top }),
-              /* @__PURE__ */ jsx3("div", { style: leftOverlayStyle, children: paneDrawingNodes.left }),
-              /* @__PURE__ */ jsx3("div", { style: cornerOverlayStyle, children: paneDrawingNodes.corner }),
-              /* @__PURE__ */ jsx3("div", { style: scrollOverlayStyle, children: paneDrawingNodes.scroll })
+              /* @__PURE__ */ jsx4("div", { style: topOverlayStyle, children: paneDrawingNodes.top }),
+              /* @__PURE__ */ jsx4("div", { style: leftOverlayStyle, children: paneDrawingNodes.left }),
+              /* @__PURE__ */ jsx4("div", { style: cornerOverlayStyle, children: paneDrawingNodes.corner }),
+              /* @__PURE__ */ jsx4("div", { style: scrollOverlayStyle, children: paneDrawingNodes.scroll })
             ] }) : null,
             experimentalCanvas ? /* @__PURE__ */ jsxs3(Fragment4, { children: [
               /* @__PURE__ */ jsxs3("div", { style: canvasBodyViewportLayerStyle, children: [
-                /* @__PURE__ */ jsx3(
+                /* @__PURE__ */ jsx4(
                   "canvas",
                   {
                     ref: scrollBodyCanvasRef,
                     onClick: handleCanvasBodyClick,
                     onDoubleClick: handleCanvasBodyDoubleClick,
                     onPointerDown: handleCanvasBodyPointerDown,
-                    onPointerMove: handleCanvasBodyPointerMove,
-                    onPointerLeave: handleCanvasBodyPointerLeave,
+                    "data-xlsx-body-canvas": "true",
                     style: canvasScrollBodyStyle
                   }
                 ),
-                /* @__PURE__ */ jsx3(
+                /* @__PURE__ */ jsx4(
                   "canvas",
                   {
                     ref: topBodyCanvasRef,
                     onClick: handleCanvasBodyClick,
                     onDoubleClick: handleCanvasBodyDoubleClick,
                     onPointerDown: handleCanvasBodyPointerDown,
-                    onPointerMove: handleCanvasBodyPointerMove,
-                    onPointerLeave: handleCanvasBodyPointerLeave,
+                    "data-xlsx-body-canvas": "true",
                     style: canvasTopBodyStyle
                   }
                 ),
-                /* @__PURE__ */ jsx3(
+                /* @__PURE__ */ jsx4(
                   "canvas",
                   {
                     ref: leftBodyCanvasRef,
                     onClick: handleCanvasBodyClick,
                     onDoubleClick: handleCanvasBodyDoubleClick,
                     onPointerDown: handleCanvasBodyPointerDown,
-                    onPointerMove: handleCanvasBodyPointerMove,
-                    onPointerLeave: handleCanvasBodyPointerLeave,
+                    "data-xlsx-body-canvas": "true",
                     style: canvasLeftBodyStyle
                   }
                 ),
-                /* @__PURE__ */ jsx3(
+                /* @__PURE__ */ jsx4(
                   "canvas",
                   {
                     ref: cornerBodyCanvasRef,
                     onClick: handleCanvasBodyClick,
                     onDoubleClick: handleCanvasBodyDoubleClick,
                     onPointerDown: handleCanvasBodyPointerDown,
-                    onPointerMove: handleCanvasBodyPointerMove,
-                    onPointerLeave: handleCanvasBodyPointerLeave,
+                    "data-xlsx-body-canvas": "true",
                     style: canvasCornerBodyStyle
                   }
                 ),
                 hasCanvasDomDrawingOverlays ? /* @__PURE__ */ jsxs3(Fragment4, { children: [
-                  /* @__PURE__ */ jsx3("div", { style: canvasScrollOverlayPaneStyle, children: /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4("div", { style: canvasScrollOverlayPaneStyle, children: /* @__PURE__ */ jsx4(
                     "div",
                     {
                       ref: canvasScrollOverlayContentRef,
@@ -32406,7 +32461,7 @@ function XlsxGrid({
                       children: paneDrawingNodes.scroll
                     }
                   ) }),
-                  /* @__PURE__ */ jsx3("div", { style: canvasTopOverlayPaneStyle, children: /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4("div", { style: canvasTopOverlayPaneStyle, children: /* @__PURE__ */ jsx4(
                     "div",
                     {
                       ref: canvasTopOverlayContentRef,
@@ -32423,7 +32478,7 @@ function XlsxGrid({
                       children: paneDrawingNodes.top
                     }
                   ) }),
-                  /* @__PURE__ */ jsx3("div", { style: canvasLeftOverlayPaneStyle, children: /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4("div", { style: canvasLeftOverlayPaneStyle, children: /* @__PURE__ */ jsx4(
                     "div",
                     {
                       ref: canvasLeftOverlayContentRef,
@@ -32440,7 +32495,7 @@ function XlsxGrid({
                       children: paneDrawingNodes.left
                     }
                   ) }),
-                  /* @__PURE__ */ jsx3("div", { style: canvasCornerOverlayPaneStyle, children: /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4("div", { style: canvasCornerOverlayPaneStyle, children: /* @__PURE__ */ jsx4(
                     "div",
                     {
                       ref: canvasCornerOverlayContentRef,
@@ -32460,7 +32515,7 @@ function XlsxGrid({
                 ] }) : null
               ] }),
               /* @__PURE__ */ jsxs3("div", { style: canvasHeaderViewportLayerStyle, children: [
-                /* @__PURE__ */ jsx3(
+                /* @__PURE__ */ jsx4(
                   "canvas",
                   {
                     ref: topFrozenHeaderCanvasRef,
@@ -32470,7 +32525,7 @@ function XlsxGrid({
                     style: canvasTopFrozenHeaderStyle
                   }
                 ),
-                /* @__PURE__ */ jsx3(
+                /* @__PURE__ */ jsx4(
                   "canvas",
                   {
                     ref: topScrollHeaderCanvasRef,
@@ -32480,7 +32535,7 @@ function XlsxGrid({
                     style: canvasTopScrollHeaderStyle
                   }
                 ),
-                /* @__PURE__ */ jsx3(
+                /* @__PURE__ */ jsx4(
                   "canvas",
                   {
                     ref: leftFrozenHeaderCanvasRef,
@@ -32490,7 +32545,7 @@ function XlsxGrid({
                     style: canvasLeftFrozenHeaderStyle
                   }
                 ),
-                /* @__PURE__ */ jsx3(
+                /* @__PURE__ */ jsx4(
                   "canvas",
                   {
                     ref: leftScrollHeaderCanvasRef,
@@ -32500,13 +32555,13 @@ function XlsxGrid({
                     style: canvasLeftScrollHeaderStyle
                   }
                 ),
-                /* @__PURE__ */ jsx3("canvas", { ref: cornerHeaderCanvasRef, onPointerDown: handleCornerPointerDown, style: canvasCornerHeaderStyle })
+                /* @__PURE__ */ jsx4("canvas", { ref: cornerHeaderCanvasRef, onPointerDown: handleCornerPointerDown, style: canvasCornerHeaderStyle })
               ] }),
               editingCell && editingOverlayRect ? (() => {
                 const editingCellStyle = getCellData(editingCell.row, editingCell.col).style;
                 const editingBackground = typeof editingCellStyle.backgroundColor === "string" ? editingCellStyle.backgroundColor : resolveSheetSurface(activeSheet, palette);
                 const editingColor = typeof editingCellStyle.color === "string" ? editingCellStyle.color : resolveReadableTextColor(null, editingBackground, palette);
-                return /* @__PURE__ */ jsx3(
+                return /* @__PURE__ */ jsx4(
                   "div",
                   {
                     style: {
@@ -32517,7 +32572,7 @@ function XlsxGrid({
                       height: editingOverlayRect.height,
                       zIndex: 28
                     },
-                    children: /* @__PURE__ */ jsx3(
+                    children: /* @__PURE__ */ jsx4(
                       "input",
                       {
                         ref: editingInputRef,
@@ -32563,7 +32618,7 @@ function XlsxGrid({
                   }
                 );
               })() : null,
-              activeCellAdornment && activeCellAdornmentRect ? /* @__PURE__ */ jsx3(
+              activeCellAdornment && activeCellAdornmentRect ? /* @__PURE__ */ jsx4(
                 "div",
                 {
                   style: {
@@ -32575,7 +32630,7 @@ function XlsxGrid({
                     width: activeCellAdornmentRect.width,
                     zIndex: 27
                   },
-                  children: /* @__PURE__ */ jsx3("div", { style: { height: "100%", pointerEvents: "auto", position: "relative", width: "100%" }, children: activeCellAdornment })
+                  children: /* @__PURE__ */ jsx4("div", { style: { height: "100%", pointerEvents: "auto", position: "relative", width: "100%" }, children: activeCellAdornment })
                 }
               ) : null
             ] }) : /* @__PURE__ */ jsxs3(
@@ -32591,9 +32646,9 @@ function XlsxGrid({
                 },
                 children: [
                   /* @__PURE__ */ jsxs3("colgroup", { children: [
-                    /* @__PURE__ */ jsx3("col", { style: { width: displayRowHeaderWidth } }),
-                    leadingColumnSpacerWidth > 0 ? /* @__PURE__ */ jsx3("col", { style: { width: leadingColumnSpacerWidth } }) : null,
-                    renderedCols.map((column) => /* @__PURE__ */ jsx3(
+                    /* @__PURE__ */ jsx4("col", { style: { width: displayRowHeaderWidth } }),
+                    leadingColumnSpacerWidth > 0 ? /* @__PURE__ */ jsx4("col", { style: { width: leadingColumnSpacerWidth } }) : null,
+                    renderedCols.map((column) => /* @__PURE__ */ jsx4(
                       "col",
                       {
                         ref: (element) => {
@@ -32607,10 +32662,10 @@ function XlsxGrid({
                       },
                       column.key
                     )),
-                    trailingColumnSpacerWidth > 0 ? /* @__PURE__ */ jsx3("col", { style: { width: trailingColumnSpacerWidth } }) : null
+                    trailingColumnSpacerWidth > 0 ? /* @__PURE__ */ jsx4("col", { style: { width: trailingColumnSpacerWidth } }) : null
                   ] }),
-                  /* @__PURE__ */ jsx3("thead", { style: { position: "sticky", top: 0, zIndex: canvasHeaderOverlayZIndex }, children: /* @__PURE__ */ jsxs3("tr", { children: [
-                    /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4("thead", { style: { position: "sticky", top: 0, zIndex: canvasHeaderOverlayZIndex }, children: /* @__PURE__ */ jsxs3("tr", { children: [
+                    /* @__PURE__ */ jsx4(
                       "th",
                       {
                         onPointerDown: handleCornerPointerDown,
@@ -32623,8 +32678,8 @@ function XlsxGrid({
                         }
                       }
                     ),
-                    leadingColumnSpacerWidth > 0 ? /* @__PURE__ */ jsx3("th", { "aria-hidden": "true", style: { ...headerCellStyle, padding: 0, width: leadingColumnSpacerWidth } }) : null,
-                    renderedCols.map((column) => /* @__PURE__ */ jsx3(
+                    leadingColumnSpacerWidth > 0 ? /* @__PURE__ */ jsx4("th", { "aria-hidden": "true", style: { ...headerCellStyle, padding: 0, width: leadingColumnSpacerWidth } }) : null,
+                    renderedCols.map((column) => /* @__PURE__ */ jsx4(
                       "th",
                       {
                         "data-xlsx-col-header": column.actualCol,
@@ -32636,7 +32691,7 @@ function XlsxGrid({
                           zIndex: stickyLeftByCol.has(column.actualCol) ? stickyHeaderOverlayZIndex : headerCellStyle.zIndex
                         },
                         children: /* @__PURE__ */ jsxs3("div", { style: { position: "relative" }, children: [
-                          /* @__PURE__ */ jsx3(
+                          /* @__PURE__ */ jsx4(
                             "span",
                             {
                               style: {
@@ -32647,7 +32702,7 @@ function XlsxGrid({
                               children: columnLabel2(column.actualCol)
                             }
                           ),
-                          /* @__PURE__ */ jsx3(
+                          /* @__PURE__ */ jsx4(
                             "div",
                             {
                               onPointerDown: (event) => {
@@ -32674,7 +32729,7 @@ function XlsxGrid({
                       },
                       column.key
                     )),
-                    trailingColumnSpacerWidth > 0 ? /* @__PURE__ */ jsx3("th", { "aria-hidden": "true", style: { ...headerCellStyle, padding: 0, width: trailingColumnSpacerWidth } }) : null
+                    trailingColumnSpacerWidth > 0 ? /* @__PURE__ */ jsx4("th", { "aria-hidden": "true", style: { ...headerCellStyle, padding: 0, width: trailingColumnSpacerWidth } }) : null
                   ] }) }),
                   /* @__PURE__ */ jsxs3("tbody", { children: [
                     virtualRows.map((virtualRow, index) => {
@@ -32685,8 +32740,8 @@ function XlsxGrid({
                       const previousEnd = index === 0 ? 0 : virtualRows[index - 1]?.end ?? 0;
                       const gapHeight = Math.max(0, virtualRow.start - previousEnd);
                       return /* @__PURE__ */ jsxs3(React4.Fragment, { children: [
-                        gapHeight > 0 ? /* @__PURE__ */ jsx3("tr", { "aria-hidden": "true", style: { height: gapHeight }, children: /* @__PURE__ */ jsx3("td", { colSpan: rowColSpan }) }) : null,
-                        /* @__PURE__ */ jsx3(
+                        gapHeight > 0 ? /* @__PURE__ */ jsx4("tr", { "aria-hidden": "true", style: { height: gapHeight }, children: /* @__PURE__ */ jsx4("td", { colSpan: rowColSpan }) }) : null,
+                        /* @__PURE__ */ jsx4(
                           MemoGridRow,
                           {
                             actualRow,
@@ -32723,13 +32778,13 @@ function XlsxGrid({
                         )
                       ] }, `row-fragment-${virtualRow.key}`);
                     }),
-                    virtualRows.length > 0 && totalHeight - (virtualRows[virtualRows.length - 1]?.end ?? totalHeight) > 0 ? /* @__PURE__ */ jsx3(
+                    virtualRows.length > 0 && totalHeight - (virtualRows[virtualRows.length - 1]?.end ?? totalHeight) > 0 ? /* @__PURE__ */ jsx4(
                       "tr",
                       {
                         style: {
                           height: totalHeight - (virtualRows[virtualRows.length - 1]?.end ?? totalHeight)
                         },
-                        children: /* @__PURE__ */ jsx3("td", { colSpan: rowColSpan })
+                        children: /* @__PURE__ */ jsx4("td", { colSpan: rowColSpan })
                       }
                     ) : null
                   ] })
@@ -32753,7 +32808,7 @@ function XlsxGrid({
                   zIndex: 24
                 },
                 children: [
-                  additionalSelectionOverlays.map((rect, index) => /* @__PURE__ */ jsx3(
+                  additionalSelectionOverlays.map((rect, index) => /* @__PURE__ */ jsx4(
                     "div",
                     {
                       "aria-hidden": "true",
@@ -32773,7 +32828,7 @@ function XlsxGrid({
                     },
                     `sel-region-${index}`
                   )),
-                  /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4(
                     "div",
                     {
                       ref: selectionOverlayRef,
@@ -32796,7 +32851,7 @@ function XlsxGrid({
                       }
                     }
                   ),
-                  /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4(
                     "div",
                     {
                       ref: activeValidationOverlayRef,
@@ -32820,7 +32875,7 @@ function XlsxGrid({
                       children: "\u25BE"
                     }
                   ),
-                  /* @__PURE__ */ jsx3(
+                  /* @__PURE__ */ jsx4(
                     "div",
                     {
                       ref: fillHandleRef,
@@ -32853,7 +32908,7 @@ function XlsxGrid({
                 ]
               }
             ),
-            resizeGuide ? /* @__PURE__ */ jsx3(
+            resizeGuide ? /* @__PURE__ */ jsx4(
               "div",
               {
                 "aria-hidden": "true",
@@ -32871,7 +32926,7 @@ function XlsxGrid({
                 }
               }
             ) : null,
-            !renderTableHeaderMenu && openTableMenuState ? /* @__PURE__ */ jsx3(
+            !renderTableHeaderMenu && openTableMenuState ? /* @__PURE__ */ jsx4(
               "div",
               {
                 ref: tableMenuRef,
@@ -32882,7 +32937,7 @@ function XlsxGrid({
                   top: openTableMenuState.top,
                   zIndex: 50
                 },
-                children: /* @__PURE__ */ jsx3(
+                children: /* @__PURE__ */ jsx4(
                   DefaultTableHeaderMenu,
                   {
                     cell: { col: openTableMenuState.column.index + openTableMenuState.table.start.col, row: openTableMenuState.table.start.row },
@@ -32908,7 +32963,20 @@ function XlsxGrid({
       )
     }
   );
-  return /* @__PURE__ */ jsx3("div", { style: { backgroundColor: palette.canvas, display: "flex", flex: 1, minHeight: 0, minWidth: 0 }, children: renderScroller ? renderScroller({ children: scrollerContent, viewportProps: scrollerViewportProps }) : /* @__PURE__ */ jsx3("div", { ...scrollerViewportProps, children: scrollerContent }, activeTabIndex) });
+  return /* @__PURE__ */ jsxs3(
+    "div",
+    {
+      onPointerMove: handleFormulaPointerMove,
+      onPointerLeave: clearFormulaHover,
+      onPointerDownCapture: clearFormulaHover,
+      onScrollCapture: clearFormulaHover,
+      style: { backgroundColor: palette.canvas, display: "flex", flex: 1, minHeight: 0, minWidth: 0 },
+      children: [
+        renderScroller ? renderScroller({ children: scrollerContent, viewportProps: scrollerViewportProps }) : /* @__PURE__ */ jsx4("div", { ...scrollerViewportProps, children: scrollerContent }, activeTabIndex),
+        formulaHover && formulaHover.calculation === controller.calculation && formulaHover.sheet === activeSheet?.name && /* @__PURE__ */ jsx4(FormulaErrorPopover, { ...formulaHover, palette })
+      ]
+    }
+  );
 }
 function XlsxViewerInner({
   allowResizeInReadOnly = false,
@@ -32955,7 +33023,7 @@ function XlsxViewerInner({
     },
     palette
   ) : void 0;
-  return /* @__PURE__ */ jsx3(ViewerAppearanceContext.Provider, { value: { headerBackgroundColor, headerTextColor, isDark }, children: /* @__PURE__ */ jsx3(ViewerContext.Provider, { value: controller, children: customFileTooLarge !== void 0 ? customFileTooLarge : /* @__PURE__ */ jsxs3(
+  return /* @__PURE__ */ jsx4(ViewerAppearanceContext.Provider, { value: { headerBackgroundColor, headerTextColor, isDark }, children: /* @__PURE__ */ jsx4(ViewerContext.Provider, { value: controller, children: customFileTooLarge !== void 0 ? customFileTooLarge : /* @__PURE__ */ jsxs3(
     "div",
     {
       className: classNames("react-xlsx-viewer", className),
@@ -32979,7 +33047,7 @@ function XlsxViewerInner({
       },
       children: [
         resolveToolbar(toolbar, showDefaultToolbar, controller, palette),
-        /* @__PURE__ */ jsx3("div", { style: { display: "flex", flex: 1, minHeight: 0, minWidth: 0 }, children: /* @__PURE__ */ jsx3(
+        /* @__PURE__ */ jsx4("div", { style: { display: "flex", flex: 1, minHeight: 0, minWidth: 0 }, children: /* @__PURE__ */ jsx4(
           XlsxGrid,
           {
             allowResizeInReadOnly,
@@ -33015,7 +33083,7 @@ function XlsxViewerInner({
 }
 function XlsxViewerWithInlineController(props) {
   const controller = useXlsxViewerController(props);
-  return /* @__PURE__ */ jsx3(XlsxViewerInner, { ...props, controller });
+  return /* @__PURE__ */ jsx4(XlsxViewerInner, { ...props, controller });
 }
 function XlsxViewerProviderWithInlineController({
   children,
@@ -33023,13 +33091,13 @@ function XlsxViewerProviderWithInlineController({
   ...options
 }) {
   const controller = useXlsxViewerController(options);
-  return /* @__PURE__ */ jsx3(ViewerAppearanceContext.Provider, { value: { isDark }, children: /* @__PURE__ */ jsx3(ViewerContext.Provider, { value: controller, children }) });
+  return /* @__PURE__ */ jsx4(ViewerAppearanceContext.Provider, { value: { isDark }, children: /* @__PURE__ */ jsx4(ViewerContext.Provider, { value: controller, children }) });
 }
 function XlsxViewerProvider({ children, controller, isDark = false, ...options }) {
   if (controller) {
-    return /* @__PURE__ */ jsx3(ViewerAppearanceContext.Provider, { value: { isDark }, children: /* @__PURE__ */ jsx3(ViewerContext.Provider, { value: controller, children }) });
+    return /* @__PURE__ */ jsx4(ViewerAppearanceContext.Provider, { value: { isDark }, children: /* @__PURE__ */ jsx4(ViewerContext.Provider, { value: controller, children }) });
   }
-  return /* @__PURE__ */ jsx3(XlsxViewerProviderWithInlineController, { ...options, isDark, children });
+  return /* @__PURE__ */ jsx4(XlsxViewerProviderWithInlineController, { ...options, isDark, children });
 }
 function useXlsxViewer() {
   const context = React4.useContext(ViewerContext);
@@ -34130,18 +34198,18 @@ function useXlsxViewerThumbnails(options = {}) {
 function XlsxViewer(props) {
   const contextController = React4.useContext(ViewerContext);
   if (props.controller) {
-    return /* @__PURE__ */ jsx3(XlsxViewerInner, { ...props, controller: props.controller });
+    return /* @__PURE__ */ jsx4(XlsxViewerInner, { ...props, controller: props.controller });
   }
   if (contextController) {
-    return /* @__PURE__ */ jsx3(XlsxViewerInner, { ...props, controller: contextController });
+    return /* @__PURE__ */ jsx4(XlsxViewerInner, { ...props, controller: contextController });
   }
-  return /* @__PURE__ */ jsx3(XlsxViewerWithInlineController, { ...props });
+  return /* @__PURE__ */ jsx4(XlsxViewerWithInlineController, { ...props });
 }
 function DefaultXlsxToolbar() {
   const controller = useXlsxViewer();
   const { headerBackgroundColor, headerTextColor, isDark } = React4.useContext(ViewerAppearanceContext);
   const palette = useViewerPalette(isDark, headerBackgroundColor, headerTextColor);
-  return /* @__PURE__ */ jsx3(DefaultToolbar, { controller, palette });
+  return /* @__PURE__ */ jsx4(DefaultToolbar, { controller, palette });
 }
 export {
   DefaultXlsxToolbar,
