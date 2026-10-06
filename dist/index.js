@@ -24466,7 +24466,7 @@ function GridRow({
       if (cellData.conditionalColorScale) {
         cellStyle.backgroundColor = cellData.conditionalColorScale.color;
       }
-      if (cellData.conditionalColorScale || cellData.conditionalDataBar || cellData.conditionalIcon) {
+      if (cellData.errorTooltip || cellData.conditionalColorScale || cellData.conditionalDataBar || cellData.conditionalIcon) {
         cellStyle.position = "relative";
       }
       if (cellData.chartHighlight) {
@@ -24577,6 +24577,16 @@ function GridRow({
           style: cellStyle,
           title,
           children: [
+            cellData.errorTooltip ? /* @__PURE__ */ jsx3(
+              "svg",
+              {
+                "aria-hidden": "true",
+                "data-xlsx-formula-error": "true",
+                viewBox: "0 0 7 7",
+                style: { position: "absolute", top: 1, left: 1, width: 7 * zoomFactor, height: 7 * zoomFactor, pointerEvents: "none", zIndex: 3 },
+                children: /* @__PURE__ */ jsx3("path", { d: "M0 0H7L0 7Z", fill: "#facc15" })
+              }
+            ) : null,
             cellData.chartHighlight ? /* @__PURE__ */ jsx3(
               "div",
               {
@@ -29746,6 +29756,19 @@ function XlsxGrid({
               if (cellData.chartHighlight.borderLeft) {
                 strokeCanvasBorderSide(paneContext, "left", localRect, highlightBorder);
               }
+            }
+            if (cellData.errorTooltip) {
+              const size = Math.max(0, Math.min(7 * zoomFactor, localRect.width - 2, localRect.height - 2));
+              flushPendingGridlines();
+              paneContext.save();
+              paneContext.fillStyle = "#facc15";
+              paneContext.beginPath();
+              paneContext.moveTo(localRect.left + 1, localRect.top + 1);
+              paneContext.lineTo(localRect.left + 1 + size, localRect.top + 1);
+              paneContext.lineTo(localRect.left + 1, localRect.top + 1 + size);
+              paneContext.closePath();
+              paneContext.fill();
+              paneContext.restore();
             }
             const rawText = cellData.value ?? "";
             const shouldDrawCanvasContent = cellData.checkboxState != null || cellData.sparkline || rawText.length > 0 || cellData.conditionalIcon || cellData.isTableHeader;
