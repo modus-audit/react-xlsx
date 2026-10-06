@@ -1,4 +1,5 @@
 import { formulaErrorTooltip } from "./formula-error";
+import { FormulaErrorPopover } from "./FormulaErrorPopover";
 import type { DataDirection } from "./data-navigation";
 import * as React from "react";
 import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
@@ -7029,7 +7030,7 @@ function GridRow({
               width: "max-content"
             } satisfies React.CSSProperties
           : null;
-        const title = [cellData.errorTooltip, cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.errorTooltip ? undefined : cellData.value]
+        const title = cellData.errorTooltip ? undefined : [cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.value]
           .filter((value, index, values): value is string => typeof value === "string" && value.length > 0 && values.indexOf(value) === index)
           .join("\n");
 
@@ -12374,14 +12375,31 @@ function XlsxGrid({
     startCellSelection
   ]);
 
-  const handleCanvasBodyPointerMove = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+  const [formulaHover, setFormulaHover] = React.useState<{
+    text: string; x: number; y: number; cell: string;
+    calculation: typeof controller.calculation; sheet: string | undefined;
+  } | null>(null);
+  const clearFormulaHover = React.useCallback(() => setFormulaHover(null), []);
+  const handleFormulaPointerMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (event.buttons || event.pointerType === "touch" || !(target instanceof Element)
+      || !target.closest("[data-xlsx-cell], [data-xlsx-body-canvas]")) {
+      clearFormulaHover();
+      return;
+    }
     const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
-    event.currentTarget.title = cell ? getCellData(cell.row, cell.col).errorTooltip ?? "" : "";
-  }, [getCellData, resolvePointerCellFromClient]);
-
-  const handleCanvasBodyPointerLeave = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
-    event.currentTarget.removeAttribute("title");
-  }, []);
+    const address = cell ? cellAddressToA1(cell) : "";
+    if (!cell || !formulaErrors.has(address)) {
+      clearFormulaHover();
+      return;
+    }
+    const text = getCellData(cell.row, cell.col).errorTooltip;
+    if (!text) return;
+    const next = { text, x: event.clientX, y: event.clientY, cell: address,
+      calculation: controller.calculation, sheet: activeSheet?.name };
+    setFormulaHover(previous => previous?.cell === address && previous.calculation === next.calculation
+      && previous.sheet === next.sheet ? previous : next);
+  }, [activeSheet?.name, clearFormulaHover, controller.calculation, formulaErrors, getCellData, resolvePointerCellFromClient]);
 
   const handleCanvasBodyClick = React.useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
@@ -16363,8 +16381,7 @@ function XlsxGrid({
                     onClick={handleCanvasBodyClick}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
-                    onPointerMove={handleCanvasBodyPointerMove}
-                    onPointerLeave={handleCanvasBodyPointerLeave}
+                    data-xlsx-body-canvas="true"
                     style={canvasScrollBodyStyle}
                   />
                   <canvas
@@ -16372,8 +16389,7 @@ function XlsxGrid({
                     onClick={handleCanvasBodyClick}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
-                    onPointerMove={handleCanvasBodyPointerMove}
-                    onPointerLeave={handleCanvasBodyPointerLeave}
+                    data-xlsx-body-canvas="true"
                     style={canvasTopBodyStyle}
                   />
                   <canvas
@@ -16381,8 +16397,7 @@ function XlsxGrid({
                     onClick={handleCanvasBodyClick}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
-                    onPointerMove={handleCanvasBodyPointerMove}
-                    onPointerLeave={handleCanvasBodyPointerLeave}
+                    data-xlsx-body-canvas="true"
                     style={canvasLeftBodyStyle}
                   />
                   <canvas
@@ -16390,8 +16405,7 @@ function XlsxGrid({
                     onClick={handleCanvasBodyClick}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
-                    onPointerMove={handleCanvasBodyPointerMove}
-                    onPointerLeave={handleCanvasBodyPointerLeave}
+                    data-xlsx-body-canvas="true"
                     style={canvasCornerBodyStyle}
                   />
                   {hasCanvasDomDrawingOverlays ? (
@@ -16914,10 +16928,14 @@ function XlsxGrid({
   );
 
   return (
-    <div style={{ backgroundColor: palette.canvas, display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
+    <div onPointerMove={handleFormulaPointerMove} onPointerLeave={clearFormulaHover}
+      onPointerDownCapture={clearFormulaHover} onScrollCapture={clearFormulaHover}
+      style={{ backgroundColor: palette.canvas, display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
       {renderScroller
         ? renderScroller({ children: scrollerContent, viewportProps: scrollerViewportProps })
         : <div key={activeTabIndex} {...scrollerViewportProps}>{scrollerContent}</div>}
+      {formulaHover && formulaHover.calculation === controller.calculation && formulaHover.sheet === activeSheet?.name
+        && <FormulaErrorPopover {...formulaHover} palette={palette} />}
     </div>
   );
 }
