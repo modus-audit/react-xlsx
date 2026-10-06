@@ -3154,17 +3154,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return "";
     }
 
-    const formula = worksheet.getFormulaAt(cell.row, cell.col);
-    const cachedFormulaValue = formula ? activeSheet?.cachedFormulaValues?.[cellAddressToA1(cell)] : undefined;
     const formatted = worksheet.getFormattedValueAt(cell.row, cell.col);
-    if (formatted && !(formula && cachedFormulaValue !== undefined && formatted.startsWith("#"))) {
+    if (formatted && !formatted.startsWith("#")) {
       return decodeHtmlEntities(formatted);
     }
 
     const calculated = worksheet.getCalculatedValueAt(cell.row, cell.col);
-    if (formula && cachedFormulaValue !== undefined && calculated.is_error) {
-      return cachedFormulaValue;
-    }
     if (calculated.is_error) {
       return calculated.asError() ?? "";
     }

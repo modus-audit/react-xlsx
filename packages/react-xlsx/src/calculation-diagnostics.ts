@@ -23,7 +23,7 @@ export interface XlsxCalculationReport {
 }
 
 export interface XlsxCellCalculationDiagnostic {
-  source: "literal" | "calculated" | "saved" | "saved-fallback" | "unknown";
+  source: "literal" | "calculated" | "saved" | "unknown";
   error: string | null;
 }
 
@@ -136,7 +136,7 @@ export function inspectCalculation(
         inspected += 1;
         if (value.is_error) {
           resultErrors += 1;
-          if (issues.length < 20) issues.push({
+          issues.push({
             sheet: workbook.sheetNames[index] ?? String(index),
             cell: cellAddress(cell.row, cell.col),
             error: value.asError() ?? "Unknown formula error"
@@ -178,7 +178,7 @@ export function cellCalculationDiagnostic(
   const value = worksheet.getCalculatedValueAt(row, col);
   const error = value.is_error ? value.asError() ?? "Unknown formula error" : null;
   value.free();
-  if (error && cachedValue !== undefined) return { source: "saved-fallback", error };
+  if (error && hasCalculatedValues) return { source: "calculated", error };
   // Aggregate partial coverage cannot establish whether this particular cell was evaluated.
   const source = report.status === "complete" ? "calculated"
     : report.status === "partial" || report.status === "calculating" ? "unknown"

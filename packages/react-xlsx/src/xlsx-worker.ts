@@ -779,18 +779,13 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
-function getCellDisplayValue(worksheet: ReturnType<Workbook["getSheet"]>, row: number, col: number, activeSheet?: XlsxSheetData | null) {
-  const formula = worksheet.getFormulaAt(row, col);
-  const cachedFormulaValue = formula ? activeSheet?.cachedFormulaValues?.[cellAddressToA1({ row, col })] : undefined;
+function getCellDisplayValue(worksheet: ReturnType<Workbook["getSheet"]>, row: number, col: number) {
   const formatted = worksheet.getFormattedValueAt(row, col);
-  if (formatted && !(formula && cachedFormulaValue !== undefined && formatted.startsWith("#"))) {
+  if (formatted && !formatted.startsWith("#")) {
     return decodeHtmlEntities(formatted);
   }
 
   const cellValue = worksheet.getCalculatedValueAt(row, col);
-  if (formula && cachedFormulaValue !== undefined && cellValue.is_error) {
-    return cachedFormulaValue;
-  }
   if (cellValue.is_error) {
     return cellValue.asError() ?? "";
   }
@@ -982,7 +977,7 @@ async function handleMessage(message: WorkerRequest) {
       const targetSheet = sheets.find((sheet) => sheet.workbookSheetIndex === message.payload.workbookSheetIndex) ?? null;
       const worksheet = workbook.getSheet(message.payload.workbookSheetIndex);
       return {
-        displayValue: getCellDisplayValue(worksheet, message.payload.row, message.payload.col, targetSheet),
+        displayValue: getCellDisplayValue(worksheet, message.payload.row, message.payload.col),
         formula: worksheet.getFormulaAt(message.payload.row, message.payload.col) ?? "",
         diagnostic: cellCalculationDiagnostic(worksheet, message.payload.row, message.payload.col, targetSheet?.cachedFormulaValues?.[cellAddressToA1(message.payload)], calculation, hasCalculatedValues)
       };

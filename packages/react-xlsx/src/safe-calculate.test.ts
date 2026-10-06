@@ -1,3 +1,4 @@
+import { formulaErrorTooltip } from "./formula-error.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { before, test } from "node:test";
@@ -67,7 +68,7 @@ test("reports typed formula errors even when the engine errors statistic is zero
   assert.equal(result.calculation.errorCount, 1);
   assert.deepEqual(result.calculation.issues, [{ sheet: workbook.sheetNames[0], cell: "B2", error: "#DIV/0!" }]);
   assert.deepEqual(cellCalculationDiagnostic(workbook.getSheet(0), 1, 1, "971,835", result.calculation), {
-    source: "saved-fallback", error: "#DIV/0!"
+    source: "calculated", error: "#DIV/0!"
   });
   workbook.free();
 });
@@ -248,5 +249,18 @@ test("real engine repeated calculation uses changed external add-in inputs", () 
     assert.equal(value.asNumber(), externalValue + 2);
     value.free();
   }
+  workbook.free();
+});
+
+test("keeps every calculator error and supports unfamiliar error codes", () => {
+  const workbook = new Workbook();
+  workbook.addSheet("Errors");
+  for (let row = 1; row <= 25; row += 1) workbook.getSheet(0).setFormula(`B${row}`, "1/0");
+  const report = safeCalculate(workbook, { sourceFormulaCount: 25 }).calculation;
+  assert.equal(report.errorCount, 25);
+  assert.equal(report.issues.length, 25);
+  assert.deepEqual(report.issues.map(issue => issue.cell).sort(), Array.from({ length: 25 }, (_, index) => `B${index + 1}`).sort());
+  assert.match(formulaErrorTooltip(report.issues[0].error, "1/0"), /divides by zero/);
+  assert.equal(formulaErrorTooltip("#FUTURE!", "NEWFUNCTION()"), "#FUTURE!\nThe calculator returned an error for this formula.\n=NEWFUNCTION()");
   workbook.free();
 });

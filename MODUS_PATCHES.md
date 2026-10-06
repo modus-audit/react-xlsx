@@ -10,8 +10,9 @@ Preserved behavior:
 - `controller.calculation` reports execution coverage on initial, deferred, and explicit recalculation.
   It compares the source OOXML formula inventory with the imported inventory, retains the engine
   statistics, and inspects typed formula results because engine `errors` misses some cell errors.
-  Failed or skipped calculations retain cache display behavior. Reports and cell snapshots expose
-  errors even when the displayed value uses a saved fallback; stale async results are ignored.
+  Failed or skipped calculations retain saved values where no result is available. Calculated errors
+  replace saved numbers in cells, with formula-specific hover details in DOM and canvas renderers;
+  stale async results are ignored.
 - `revealCell` selects and centers off-screen search results.
 - `selections`, append/toggle operations, and canvas Ctrl/Cmd drag support non-contiguous selections. Re-adding an existing range preserves the other regions.
 - Conditional formatting retains relative references, negated references (`lessThan -$H$13`, the plus-or-minus flux threshold), comparison/ABS/AND expressions, text and blank rules, and cached numeric fallback. These extend upstream's styled rules and retain its priority handling.
@@ -35,7 +36,7 @@ The app configures `initWasm` with a bundler-resolved asset URL and explicitly c
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.10`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.11`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 
@@ -57,14 +58,15 @@ inputs, or financial correctness. `partial`, `skipped`, and `failed` give a reas
 counts are `null` rather than assumed zero. Legacy XLS source inventories are unavailable.
 
 `errorCount` counts typed error-valued formula cells; `engineErrorCount` preserves the engine's
-separate statistic, which can include parsing failures without a typed error cell. `issues` samples
-up to 20 typed errors as `{ sheet, cell, error }`. The application owns presentation, telemetry,
+separate statistic, which can include parsing failures without a typed error cell. `issues` contains
+all typed formula errors as `{ sheet, cell, error }`. The application owns presentation, telemetry,
 external-input readiness, and issue navigation.
 
 `getCellCalculationDiagnostic` describes the selected main-thread cell or an available worker
 snapshot. Worker `getCellSnapshotAsync` responses include the same `diagnostic`: `source` is
-`literal`, `calculated`, `saved`, `saved-fallback`, or `unknown`, with the typed `error` if present.
-Saved display fallbacks are retained wherever the viewer already has parsed cache metadata.
+`literal`, `calculated`, `saved`, or `unknown`, with the typed `error` if present.
+Typed formula errors remain visible instead of using saved numeric fallbacks. Unknown error codes
+retain their original code and receive a generic explanation.
 
 The source inventory counts only SpreadsheetML formula children of worksheet cells, including
 shared formula entries; sparkline, validation, and conditional-format extension references do not
