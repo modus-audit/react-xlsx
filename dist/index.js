@@ -100,7 +100,7 @@ function inspectCalculation(workbook, rawStats, parsedFormulaCount, sourceFormul
         inspected += 1;
         if (value.is_error) {
           resultErrors += 1;
-          if (issues.length < 20) issues.push({
+          issues.push({
             sheet: workbook.sheetNames[index] ?? String(index),
             cell: cellAddress(cell.row, cell.col),
             error: value.asError() ?? "Unknown formula error"
@@ -137,7 +137,7 @@ function cellCalculationDiagnostic(worksheet, row, col, cachedValue, report, has
   const value = worksheet.getCalculatedValueAt(row, col);
   const error = value.is_error ? value.asError() ?? "Unknown formula error" : null;
   value.free();
-  if (error && cachedValue !== void 0) return { source: "saved-fallback", error };
+  if (error && hasCalculatedValues) return { source: "calculated", error };
   const source = report.status === "complete" ? "calculated" : report.status === "partial" || report.status === "calculating" ? "unknown" : !hasCalculatedValues && cachedValue !== void 0 ? "saved" : "unknown";
   return { source, error };
 }
@@ -9812,16 +9812,11 @@ function useXlsxViewerController(options) {
     if (!worksheet || !cell) {
       return "";
     }
-    const formula = worksheet.getFormulaAt(cell.row, cell.col);
-    const cachedFormulaValue = formula ? activeSheet?.cachedFormulaValues?.[cellAddressToA1(cell)] : void 0;
     const formatted = worksheet.getFormattedValueAt(cell.row, cell.col);
-    if (formatted && !(formula && cachedFormulaValue !== void 0 && formatted.startsWith("#"))) {
+    if (formatted && !formatted.startsWith("#")) {
       return decodeHtmlEntities(formatted);
     }
     const calculated = worksheet.getCalculatedValueAt(cell.row, cell.col);
-    if (formula && cachedFormulaValue !== void 0 && calculated.is_error) {
-      return cachedFormulaValue;
-    }
     if (calculated.is_error) {
       return calculated.asError() ?? "";
     }
@@ -11701,6 +11696,26 @@ function useXlsxViewerController(options) {
       zoomScale
     ]
   );
+}
+
+// src/formula-error.ts
+var descriptions = {
+  "#DIV/0!": "The formula divides by zero or an empty cell.",
+  "#REF!": "The formula refers to a cell or range that is unavailable.",
+  "#VALUE!": "A value has the wrong type for this formula.",
+  "#NAME?": "A name or function could not be recognized.",
+  "#N/A": "A value needed by this formula is unavailable.",
+  "#NUM!": "The formula could not calculate a valid number.",
+  "#NULL!": "The referenced ranges do not intersect.",
+  "#SPILL!": "The formula cannot place its results in the required cells.",
+  "#CALC!": "The formula could not be calculated."
+};
+function formulaErrorTooltip(error, formula) {
+  return [
+    error,
+    Object.hasOwn(descriptions, error) ? descriptions[error] : "The calculator returned an error for this formula.",
+    formula ? `=${formula.replace(/^=/, "")}` : null
+  ].filter(Boolean).join("\n");
 }
 
 // src/XlsxViewer.tsx
@@ -21951,17 +21966,12 @@ function canCellTextOverflow(data) {
 function canReceiveOverflowText(data) {
   return !data.isMergedSecondary && !data.colSpan && data.value.length === 0;
 }
-function getCellDisplayValue(worksheet, row, col, activeSheet) {
-  const formula = worksheet.getFormulaAt(row, col);
-  const cachedFormulaValue = formula ? activeSheet?.cachedFormulaValues?.[cellAddressToA12({ row, col })] : void 0;
+function getCellDisplayValue(worksheet, row, col) {
   const formatted = worksheet.getFormattedValueAt(row, col);
-  if (formatted && !(formula && cachedFormulaValue !== void 0 && formatted.startsWith("#"))) {
+  if (formatted && !formatted.startsWith("#")) {
     return decodeHtmlEntities2(formatted);
   }
   const cellValue = worksheet.getCalculatedValueAt(row, col);
-  if (formula && cachedFormulaValue !== void 0 && cellValue.is_error) {
-    return cachedFormulaValue;
-  }
   if (cellValue.is_error) {
     return cellValue.asError() ?? "";
   }
@@ -23481,7 +23491,7 @@ function resolveConditionalFormulaComparable(formula, worksheet, sheet, batchedC
     if (numeric !== null) {
       return numeric;
     }
-    return getCellDisplayValue(worksheet, cell.row, cell.col, sheet);
+    return getCellDisplayValue(worksheet, cell.row, cell.col);
   }
   if (batchedCells) {
     const batched = batchedCells.get(`${cell.row}:${cell.col}`);
@@ -23548,7 +23558,7 @@ function resolveConditionalOperand(token, worksheet, cell, anchor, activeSheet) 
   }
   return {
     number: getCellNumericValue(worksheet, targetRow, targetCol, activeSheet),
-    text: getCellDisplayValue(worksheet, targetRow, targetCol, activeSheet)
+    text: getCellDisplayValue(worksheet, targetRow, targetCol)
   };
 }
 function compareConditionalOperands(left, right, operator) {
@@ -24549,7 +24559,7 @@ function GridRow({
         whiteSpace: "nowrap",
         width: "max-content"
       } : null;
-      const title = [cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.value].filter((value, index, values) => typeof value === "string" && value.length > 0 && values.indexOf(value) === index).join("\n");
+      const title = [cellData.errorTooltip, cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.errorTooltip ? void 0 : cellData.value].filter((value, index, values) => typeof value === "string" && value.length > 0 && values.indexOf(value) === index).join("\n");
       return /* @__PURE__ */ jsxs3(
         "td",
         {
@@ -27011,6 +27021,7 @@ function XlsxGrid({
     () => activeSheet ? chartRangeHighlights.filter((highlight) => highlight.workbookSheetIndex === activeSheet.workbookSheetIndex) : [],
     [activeSheet, chartRangeHighlights]
   );
+  const formulaErrors = React4.useMemo(() => new Map(controller.calculation.issues.filter((issue) => issue.sheet === activeSheet?.name).map((issue) => [issue.cell, issue.error])), [controller.calculation, activeSheet?.name]);
   const cellRenderCacheInvalidationKey = React4.useMemo(
     () => [
       activeSheetChartHighlights,
@@ -27019,6 +27030,7 @@ function XlsxGrid({
       displayRowLimit,
       getCellStyle,
       showFormulas,
+      formulaErrors,
       palette,
       revision,
       selectedChartElement,
@@ -27034,6 +27046,7 @@ function XlsxGrid({
       displayRowLimit,
       getCellStyle,
       showFormulas,
+      formulaErrors,
       palette,
       revision,
       selectedChartElement,
@@ -27144,7 +27157,7 @@ function XlsxGrid({
     let displayValue = null;
     const readDisplayValue = () => {
       if (displayValue === null) {
-        displayValue = batchCoversRow || !worksheet ? batchedCell?.value ?? "" : getCellDisplayValue(worksheet, row, col, activeSheet);
+        displayValue = batchCoversRow || !worksheet ? batchedCell?.value ?? "" : getCellDisplayValue(worksheet, row, col);
       }
       return displayValue;
     };
@@ -27220,6 +27233,11 @@ function XlsxGrid({
       value: sparkline ? "" : checkboxState !== null ? "" : readDisplayValue()
     };
     const formula = batchedCell?.formula ?? worksheet?.getFormulaAt(row, col);
+    const formulaError = formulaErrors.get(cellAddressToA12({ row, col }));
+    if (formulaError) {
+      nextData.value = formulaError;
+      nextData.errorTooltip = formulaErrorTooltip(formulaError, formula);
+    }
     if (showFormulas && formula) {
       nextData.value = `=${formula.replace(/^=/, "")}`;
       nextData.style = { ...nextData.style, textAlign: "left", whiteSpace: "nowrap" };
@@ -27341,6 +27359,7 @@ function XlsxGrid({
     activeSheet,
     activeSheetChartHighlights,
     showFormulas,
+    formulaErrors,
     cellRenderCacheInvalidationKey,
     colIndexByActual,
     colPrefixSums,
@@ -28948,6 +28967,13 @@ function XlsxGrid({
     rowPrefixSums,
     startCellSelection
   ]);
+  const handleCanvasBodyPointerMove = React4.useCallback((event) => {
+    const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
+    event.currentTarget.title = cell ? getCellData(cell.row, cell.col).errorTooltip ?? "" : "";
+  }, [getCellData, resolvePointerCellFromClient]);
+  const handleCanvasBodyPointerLeave = React4.useCallback((event) => {
+    event.currentTarget.removeAttribute("title");
+  }, []);
   const handleCanvasBodyClick = React4.useCallback((event) => {
     const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
     if (!cell) {
@@ -32298,6 +32324,8 @@ function XlsxGrid({
                     onClick: handleCanvasBodyClick,
                     onDoubleClick: handleCanvasBodyDoubleClick,
                     onPointerDown: handleCanvasBodyPointerDown,
+                    onPointerMove: handleCanvasBodyPointerMove,
+                    onPointerLeave: handleCanvasBodyPointerLeave,
                     style: canvasScrollBodyStyle
                   }
                 ),
@@ -32308,6 +32336,8 @@ function XlsxGrid({
                     onClick: handleCanvasBodyClick,
                     onDoubleClick: handleCanvasBodyDoubleClick,
                     onPointerDown: handleCanvasBodyPointerDown,
+                    onPointerMove: handleCanvasBodyPointerMove,
+                    onPointerLeave: handleCanvasBodyPointerLeave,
                     style: canvasTopBodyStyle
                   }
                 ),
@@ -32318,6 +32348,8 @@ function XlsxGrid({
                     onClick: handleCanvasBodyClick,
                     onDoubleClick: handleCanvasBodyDoubleClick,
                     onPointerDown: handleCanvasBodyPointerDown,
+                    onPointerMove: handleCanvasBodyPointerMove,
+                    onPointerLeave: handleCanvasBodyPointerLeave,
                     style: canvasLeftBodyStyle
                   }
                 ),
@@ -32328,6 +32360,8 @@ function XlsxGrid({
                     onClick: handleCanvasBodyClick,
                     onDoubleClick: handleCanvasBodyDoubleClick,
                     onPointerDown: handleCanvasBodyPointerDown,
+                    onPointerMove: handleCanvasBodyPointerMove,
+                    onPointerLeave: handleCanvasBodyPointerLeave,
                     style: canvasCornerBodyStyle
                   }
                 ),
@@ -33738,7 +33772,7 @@ function useXlsxViewerThumbnails(options = {}) {
             col,
             sheet,
             () => worksheet ? getCellNumericValue(worksheet, row, col) : getBatchedCellNumericValue(batchedCell),
-            () => worksheet ? getCellDisplayValue(worksheet, row, col, sheet) : batchedCell?.value ?? "",
+            () => worksheet ? getCellDisplayValue(worksheet, row, col) : batchedCell?.value ?? "",
             worksheet,
             workerRowBatch?.cells
           );
@@ -33774,7 +33808,7 @@ function useXlsxViewerThumbnails(options = {}) {
               showGridLines
             }),
             textRotationDeg: resolveSpreadsheetTextRotation(alignment?.textRotation),
-            value: sparkline ? "" : checkboxState !== null ? "" : worksheet ? getCellDisplayValue(worksheet, row, col, sheet) : batchedCell?.value ?? ""
+            value: sparkline ? "" : checkboxState !== null ? "" : worksheet ? getCellDisplayValue(worksheet, row, col) : batchedCell?.value ?? ""
           };
           nextData.canvas = buildCanvasCellStyleCache(nextData.style);
           cellRenderCache.set(cacheKey, nextData);

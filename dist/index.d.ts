@@ -23,7 +23,7 @@ interface XlsxCalculationReport {
     issues: XlsxCalculationIssue[];
 }
 interface XlsxCellCalculationDiagnostic {
-    source: "literal" | "calculated" | "saved" | "saved-fallback" | "unknown";
+    source: "literal" | "calculated" | "saved" | "unknown";
     error: string | null;
 }
 

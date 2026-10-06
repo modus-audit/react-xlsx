@@ -100,7 +100,7 @@ function inspectCalculation(workbook2, rawStats, parsedFormulaCount, sourceFormu
         inspected += 1;
         if (value.is_error) {
           resultErrors += 1;
-          if (issues.length < 20) issues.push({
+          issues.push({
             sheet: workbook2.sheetNames[index] ?? String(index),
             cell: cellAddress(cell.row, cell.col),
             error: value.asError() ?? "Unknown formula error"
@@ -137,7 +137,7 @@ function cellCalculationDiagnostic(worksheet, row, col, cachedValue, report, has
   const value = worksheet.getCalculatedValueAt(row, col);
   const error = value.is_error ? value.asError() ?? "Unknown formula error" : null;
   value.free();
-  if (error && cachedValue !== void 0) return { source: "saved-fallback", error };
+  if (error && hasCalculatedValues2) return { source: "calculated", error };
   const source = report.status === "complete" ? "calculated" : report.status === "partial" || report.status === "calculating" ? "unknown" : !hasCalculatedValues2 && cachedValue !== void 0 ? "saved" : "unknown";
   return { source, error };
 }
@@ -5478,17 +5478,12 @@ function resolveWorkbookTableBoolean(value) {
 function decodeHtmlEntities(value) {
   return value.replace(/&quot;/g, '"').replace(/&#34;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
-function getCellDisplayValue(worksheet, row, col, activeSheet) {
-  const formula = worksheet.getFormulaAt(row, col);
-  const cachedFormulaValue = formula ? activeSheet?.cachedFormulaValues?.[cellAddressToA1({ row, col })] : void 0;
+function getCellDisplayValue(worksheet, row, col) {
   const formatted = worksheet.getFormattedValueAt(row, col);
-  if (formatted && !(formula && cachedFormulaValue !== void 0 && formatted.startsWith("#"))) {
+  if (formatted && !formatted.startsWith("#")) {
     return decodeHtmlEntities(formatted);
   }
   const cellValue = worksheet.getCalculatedValueAt(row, col);
-  if (formula && cachedFormulaValue !== void 0 && cellValue.is_error) {
-    return cachedFormulaValue;
-  }
   if (cellValue.is_error) {
     return cellValue.asError() ?? "";
   }
@@ -5657,7 +5652,7 @@ async function handleMessage(message) {
       const targetSheet = sheets.find((sheet) => sheet.workbookSheetIndex === message.payload.workbookSheetIndex) ?? null;
       const worksheet = workbook.getSheet(message.payload.workbookSheetIndex);
       return {
-        displayValue: getCellDisplayValue(worksheet, message.payload.row, message.payload.col, targetSheet),
+        displayValue: getCellDisplayValue(worksheet, message.payload.row, message.payload.col),
         formula: worksheet.getFormulaAt(message.payload.row, message.payload.col) ?? "",
         diagnostic: cellCalculationDiagnostic(worksheet, message.payload.row, message.payload.col, targetSheet?.cachedFormulaValues?.[cellAddressToA1(message.payload)], calculation, hasCalculatedValues)
       };
