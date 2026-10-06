@@ -106,6 +106,20 @@ test("a copied formula carries its calculated value for pasting values only", ()
   assert.equal(copied.raw, 6);
 });
 
+test("copying a formula relocates relative references and preserves absolute references", () => {
+  const workbook = newWorkbook();
+  const sheet = workbook.getSheet(0);
+  sheet.setCell("A1", 2);
+  sheet.setCell("B2", 5);
+  sheet.setFormula("A2", "=A1+$A$1");
+  workbook.calculate();
+  copyPaste(sheet, [1, 0], [2, 1], "B3");
+  workbook.calculate();
+  assert.equal(sheet.getFormulaAt(2, 1), "=B2+$A$1");
+  assert.equal(sheet.getCalculatedValueAt(2, 1).toJs(), 7);
+  assert.equal(sheet.getFormulaAt(1, 0), "=A1+$A$1");
+});
+
 test("a payload copied before values and styles travelled still pastes its text", () => {
   const worksheet = newWorkbook().getSheet(0);
   const legacy: ClipboardMatrixCell = { ...origin, formula: null, value: "Cash" };

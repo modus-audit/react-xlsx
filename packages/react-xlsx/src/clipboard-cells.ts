@@ -1,4 +1,5 @@
 import type { StyleInput, Workbook } from "@dukelib/sheets-wasm";
+import { copyFormula } from "./formula-copy.ts";
 
 type Worksheet = ReturnType<Workbook["getSheet"]>;
 type CellPrimitive = string | number | boolean;
@@ -18,6 +19,8 @@ export type ClipboardMatrixCell = {
   /** A merged block's covered cell: only its style travels (Excel keeps a merge's edge borders on
    *  the edge cells). */
   styleOnly?: boolean;
+  /** Original zero-based address, used to relocate formulas on copy. */
+  source?: { row: number; col: number };
 };
 
 /** A cell with no style of its own reads back as `null`, and the engine has no call that clears a
@@ -103,6 +106,7 @@ export function copiedCell(
   return {
     ...offset,
     formula,
+    source: { row, col },
     value: displayValue,
     ...(raw === undefined ? {} : { raw }),
     styleIndex: styles.add(style)
@@ -122,7 +126,10 @@ export function writePastedCell(
 ) {
   if (!cell.styleOnly) {
     if (cell.formula) {
-      worksheet.setFormula(a1, cell.formula);
+      const source = cell.source;
+      const validSource = source && Number.isInteger(source.row) && Number.isInteger(source.col) &&
+        source.row >= 0 && source.row < 1_048_576 && source.col >= 0 && source.col < 16_384;
+      worksheet.setFormula(a1, validSource ? copyFormula(cell.formula, row - source.row, col - source.col) : cell.formula);
     } else {
       worksheet.setCell(a1, cell.raw ?? cell.value);
     }
