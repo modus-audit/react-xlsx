@@ -37,7 +37,8 @@ export interface XlsxEdit {
   /** The cells the edit writes (for a paste, from the active cell to the copied extent). */
   range?: EditRange;
   /** The net change in the workbook's formula count, counting replaced formulas once. Computed on
-   *  call, so a host that refuses on `range` first never pays for it. */
+   *  call, so a host that refuses on `range` first never pays for it. Absent when the edit can't
+   *  add formulas (a clear, a typed value). */
   formulaDelta?: () => number;
   /** A single formula entry, normalized to one leading `=`. */
   formula?: string;
@@ -144,11 +145,5 @@ export function* fillWrites(source: EditRange, target: EditRange, hasFormula: Ha
       if (inSource) continue;
       yield { row, col, formula: hasFormula(wrap(row, source.start.row, height), wrap(col, source.start.col, width)) };
     }
-  }
-}
-
-export function* clearedWrites(range: EditRange) {
-  for (let row = range.start.row; row <= range.end.row; row += 1) {
-    for (let col = range.start.col; col <= range.end.col; col += 1) yield { row, col, formula: false };
   }
 }

@@ -92,3 +92,5 @@ export type {
   UseXlsxViewerThumbnailsOptions,
   XlsxViewerTables
 } from "./types";
+export { isMerged } from "./auto-fit";
+export { mergesTouching } from "./merge-regions";

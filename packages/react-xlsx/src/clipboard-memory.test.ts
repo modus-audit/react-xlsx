@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { forgetCopy, rememberCopy, rememberedCells, valuesOnly, withoutCopyOrigins } from "./clipboard-memory.ts";
+import { cutPayload, forgetCopy, rememberCopy, rememberedCells, valuesOnly, withoutCopyOrigins } from "./clipboard-memory.ts";
 
 const copied = JSON.stringify({
   rows: 1,
@@ -39,4 +39,9 @@ test("the remembered copy is used only while the clipboard text is that copy", (
   assert.equal(rememberedCells("something else"), null);
   forgetCopy();
   assert.equal(rememberedCells("29,081.00"), null);
+});
+
+test("a cut whose clear is refused copies instead, so pasting it still relocates formulas", () => {
+  assert.equal(cutPayload(copied, false), copied);
+  assert.equal(JSON.parse(cutPayload(copied, true)).cells[0].source, undefined);
 });

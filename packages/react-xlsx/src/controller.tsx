@@ -59,7 +59,6 @@ import { XlsxWorkerClient } from "./worker-client";
 import { mergesTouching, mergeTarget } from "./merge-regions";
 import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
 import {
-  clearedWrites,
   clipboardTextGrid,
   fillWrites,
   formulaDelta,
@@ -70,7 +69,8 @@ import {
   textWrites,
   type XlsxEdit
 } from "./edit-guard";
-import { INTERNAL_CLIPBOARD_MIME, rememberCopy, rememberedCells, valuesOnly, withoutCopyOrigins } from "./clipboard-memory";
+import { cutPayload, INTERNAL_CLIPBOARD_MIME, rememberCopy, rememberedCells, valuesOnly } from "./clipboard-memory";
+import { needsMainThreadReload } from "./load-mode";
 import { autoFitSizes } from "./auto-fit";
 import type {
   UseXlsxViewerControllerOptions,
@@ -1972,6 +1972,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const [isWorkerBacked, setIsWorkerBacked] = React.useState(false);
   const [sortState, setSortState] = React.useState<XlsxTableSortState | null>(null);
   const [forcedReadOnly, setForcedReadOnly] = React.useState(false);
+  /** Bumped to load the same file again, e.g. onto the main thread when editing turns on. */
+  const [loadGeneration, setLoadGeneration] = React.useState(0);
   const deferredBufferRef = React.useRef<ArrayBuffer | null>(null);
   const [deferredLoadFileSize, setDeferredLoadFileSize] = React.useState<number | null>(null);
   const imageAssetsRef = React.useRef<WorkbookImageAssets | null>(null);
@@ -2519,8 +2521,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     shouldForceReadOnlyForBuffer,
     shouldUseWorkerForReadOnlyLoad,
     src,
-    showHiddenSheets
+    showHiddenSheets,
+    loadGeneration
   ]);
+
+  // The worker can't edit: turning read-only off reloads a worker-backed workbook on the main thread.
+  React.useEffect(() => {
+    if (needsMainThreadReload({ isWorkerBacked, isLoading, requestedReadOnly, forcedReadOnly })) {
+      setLoadGeneration((generation) => generation + 1);
+    }
+  }, [forcedReadOnly, isLoading, isWorkerBacked, requestedReadOnly]);
 
   const activeTab = tabs[activeTabIndex] ?? null;
   const activeSheet = activeTab?.kind === "sheet"
@@ -4492,18 +4502,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setSelectedImageId(null);
   }, []);
 
-  const clearSelectedCells = React.useCallback(() => {
+  /** Authorizes clearing the selection; returns the clear to run, or null when refused. */
+  const prepareClear = React.useCallback((): (() => void) | null => {
     const worksheet = getActiveWorksheet();
     const targetRange = selection ?? (activeCell ? { start: activeCell, end: activeCell } : null);
     if (readOnly || !worksheet || !workbook || !targetRange) {
-      return;
+      return null;
     }
 
     const normalized = normalizeRange(targetRange);
-    const hasFormula = (row: number, col: number) => Boolean(worksheet.getFormulaAt(row, col));
-    if (!allowEdit({ kind: "content", range: normalized, formulaDelta: () => formulaDelta(clearedWrites(normalized), hasFormula) })) {
-      return;
+    // A clear can't add formulas, so it carries no formula forecast.
+    if (!allowEdit({ kind: "content", range: normalized })) {
+      return null;
     }
+    return () => {
     const mutations: RangeCellMutation[] = [];
     for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
       for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
@@ -4533,6 +4545,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
     recordRangeEditHistory(mutations, normalized, activeCell ?? normalized.start);
+    };
   }, [
     activeCell,
     allowEdit,
@@ -4545,6 +4558,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     selection,
     workbook
   ]);
+
+  const clearSelectedCells = React.useCallback(() => {
+    const clear = prepareClear();
+    clear?.();
+    return clear !== null;
+  }, [prepareClear]);
 
   const setCellFormula = React.useCallback((cell: XlsxCellAddress, formula: string) => {
     const worksheet = getActiveWorksheet();
@@ -4595,8 +4614,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
-    const hadFormula = Boolean(worksheet.getFormulaAt(cell.row, cell.col));
-    if (!allowEdit({ kind: "content", range: { start: cell, end: cell }, formulaDelta: () => -Number(hadFormula) })) {
+    if (!allowEdit({ kind: "content", range: { start: cell, end: cell } })) {
       return;
     }
     const before = captureCellMutationState(cell);
@@ -5142,19 +5160,27 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     return writeClipboard(clipboardData);
   }, [getClipboardData, writeClipboard]);
 
-  const cutSelection = React.useCallback(async () => {
+  /** Excel's cut: copy, then clear. Pasting a cut moves formulas unchanged; when the clear is
+   *  refused the cells stay, so it is an ordinary copy. Writes to `clipboard` (a cut event's)
+   *  synchronously when given, else to the system clipboard. Resolves whether the cells were cut. */
+  const cutSelection = React.useCallback(async (clipboard?: DataTransfer) => {
     const clipboardData = readOnly ? null : getClipboardData();
-    const structured = clipboardData && withoutCopyOrigins(clipboardData.structured);
-    if (!clipboardData || !structured) {
+    if (!clipboardData) {
       return false;
     }
+    const clear = prepareClear();
+    const structured = cutPayload(clipboardData.structured, clear !== null);
     rememberCopy(clipboardData.text, structured);
-    if (!(await writeClipboard(clipboardData))) {
+    if (clipboard) {
+      clipboard.setData("text/plain", clipboardData.text);
+      clipboard.setData("text/html", clipboardData.html);
+      clipboard.setData(INTERNAL_CLIPBOARD_MIME, structured);
+    } else if (!(await writeClipboard(clipboardData))) {
       return false;
     }
-    clearSelectedCells();
-    return true;
-  }, [clearSelectedCells, getClipboardData, readOnly, writeClipboard]);
+    clear?.();
+    return clear !== null;
+  }, [getClipboardData, prepareClear, readOnly, writeClipboard]);
 
   const paste = React.useCallback(async (options?: { valuesOnly?: boolean }) => {
     if (readOnly || typeof navigator === "undefined" || !navigator.clipboard) {

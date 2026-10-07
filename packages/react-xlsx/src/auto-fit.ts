@@ -44,7 +44,7 @@ function usedEnd(sheet: FitSheet, index: 2 | 3): number {
 }
 
 /** A cell that covers more than one row or column; AutoFit skips those, as Excel does. */
-function isMerged(sheet: FitSheet, row: number, col: number): boolean {
+export function isMerged(sheet: Pick<FitSheet, "getMergeSpan" | "isMergedSecondary">, row: number, col: number): boolean {
   if (sheet.isMergedSecondary(row, col)) return true;
   const span = sheet.getMergeSpan(row, col);
   return (
@@ -82,10 +82,10 @@ export function fittedColumnWidth(sheet: FitSheet, col: number, measure: Measure
   let widest = 0;
   const lastRow = usedEnd(sheet, 2);
   for (let row = 0; row <= lastRow; row += 1) {
-    if (isMerged(sheet, row, col)) continue;
     // Untrimmed: accounting formats pad with spaces (`_(` and `_)`) that the grid draws too.
     const text = sheet.getFormattedValueAt(row, col);
-    const style = text.trim() ? sheet.getCellStyleAt(row, col) : null;
+    if (!text.trim() || isMerged(sheet, row, col)) continue;
+    const style = sheet.getCellStyleAt(row, col);
     if (!style || wraps(style)) continue;
     widest = Math.max(widest, measure(text, cssFont(style)));
   }
@@ -105,9 +105,8 @@ export function fittedRowHeight(
   let tallest = 0;
   const lastCol = usedEnd(sheet, 3);
   for (let col = 0; col <= lastCol; col += 1) {
-    if (isMerged(sheet, row, col)) continue;
     const text = sheet.getFormattedValueAt(row, col).trim();
-    if (!text) continue;
+    if (!text || isMerged(sheet, row, col)) continue;
     const style = sheet.getCellStyleAt(row, col);
     const lines = wraps(style)
       ? wrappedLines(text, cssFont(style), columnWidthPx(col) - CELL_PADDING_PX, measure)
@@ -118,11 +117,16 @@ export function fittedRowHeight(
 }
 
 let context: CanvasRenderingContext2D | null | undefined;
+let contextFont = "";
 
 export function measureText(text: string, font: string): number {
   context ??= typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
   if (!context) return text.length * 7;
-  context.font = font;
+  // Setting the canvas font parses it each time; cells in a column mostly share one.
+  if (font !== contextFont) {
+    context.font = font;
+    contextFont = font;
+  }
   return context.measureText(text).width;
 }
 

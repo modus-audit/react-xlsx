@@ -62,6 +62,11 @@ export function withoutCopyOrigins(structured: string): string | null {
   return JSON.stringify({ ...parsed.payload, cells });
 }
 
+/** What a cut puts on the clipboard: the move payload when its clear goes ahead, else the copy. */
+export function cutPayload(structured: string, clearAllowed: boolean): string {
+  return (clearAllowed && withoutCopyOrigins(structured)) || structured;
+}
+
 /** Excel's Paste Values: values only, no formulas, formatting or merges. */
 export function valuesOnly(structured: string): string | null {
   const parsed = payloadCells(structured);

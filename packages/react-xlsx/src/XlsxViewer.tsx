@@ -12,14 +12,7 @@ import { resolveCellTextClipOverscan } from "./cell-text-clip";
 import { resizeHitSlopPx } from "./resize-hit-slop";
 import { visibleSpan } from "./visible-axis";
 import { formulaText } from "./edit-guard";
-import {
-  GRID_SURFACE_ATTRIBUTE,
-  INTERNAL_CLIPBOARD_MIME,
-  rememberCopy,
-  rememberedCells,
-  valuesOnly,
-  withoutCopyOrigins
-} from "./clipboard-memory";
+import { GRID_SURFACE_ATTRIBUTE, INTERNAL_CLIPBOARD_MIME, rememberCopy, rememberedCells, valuesOnly } from "./clipboard-memory";
 import { resolveWorkbookColor, resolveWorkbookFillStyle } from "./colors";
 import { useXlsxViewerController, XlsxFileSizeLimitExceededError } from "./controller";
 import { MemoChartSvg } from "./chart-renderer";
@@ -7369,6 +7362,7 @@ function XlsxGrid({
     minZoomScale,
     autoFit,
     copySelectionToClipboard,
+    cutSelection,
     paste,
     pasteFromClipboard,
     pasteStructuredClipboardData,
@@ -16374,22 +16368,12 @@ function XlsxGrid({
     },
     // Excel's cut: copy, then clear. Pasting it moves formulas unchanged.
     onCut: (event) => {
-      if (editingCell || readOnly || !event.clipboardData) {
-        return;
-      }
-
-      const clipboardData = getClipboardData();
-      const structured = clipboardData && withoutCopyOrigins(clipboardData.structured);
-      if (!clipboardData || !structured) {
+      if (editingCell || readOnly || !event.clipboardData || !getClipboardData()) {
         return;
       }
 
       event.preventDefault();
-      event.clipboardData.setData("text/plain", clipboardData.text);
-      event.clipboardData.setData("text/html", clipboardData.html);
-      event.clipboardData.setData(INTERNAL_CLIPBOARD_MIME, structured);
-      rememberCopy(clipboardData.text, structured);
-      clearSelectedCells();
+      void cutSelection(event.clipboardData);
     },
     onPointerDownCapture: (event) => {
       if (event.button !== 0) {

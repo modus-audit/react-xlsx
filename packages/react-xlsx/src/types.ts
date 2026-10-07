@@ -1086,7 +1086,8 @@ export interface XlsxViewerController {
   canZoomOut: boolean;
   /** Adds a Duke-supported form control to a visible worksheet and returns its worksheet-local index. */
   addFormControl: (input: XlsxFormControlInput, sheetIndex?: number) => number | null;
-  clearSelectedCells: () => void;
+  /** Clears the selection's contents; false when nothing was cleared (read-only or refused). */
+  clearSelectedCells: () => boolean;
   clearSelection: () => void;
   continueDeferredLoad: () => void;
   copySelectionToClipboard: () => Promise<boolean>;
@@ -1171,9 +1172,10 @@ export interface XlsxViewerController {
    * the destination's formatting. Rejects when the browser refuses the clipboard.
    */
   paste: (options?: { valuesOnly?: boolean }) => Promise<boolean>;
-  /** Copies the selection to the system clipboard, then clears it. Pasting it moves formulas
-   *  unchanged. Rejects when the browser refuses the clipboard. */
-  cutSelection: () => Promise<boolean>;
+  /** Copies the selection, then clears it; pasting it moves formulas unchanged. A refused clear
+   *  leaves an ordinary copy. Writes to `clipboard` (a cut event's) when given, else the system
+   *  clipboard. Resolves whether the cells were cut; rejects when the browser refuses the clipboard. */
+  cutSelection: (clipboard?: DataTransfer) => Promise<boolean>;
   /**
    * Fits columns or rows to their text, as Excel's AutoFit, in one undo step: by default every
    * selected one. Hidden ones are left alone; an empty row returns to the default height and an
@@ -1316,7 +1318,8 @@ export interface XlsxViewerEditing {
   addFormControl: (input: XlsxFormControlInput, sheetIndex?: number) => number | null;
   canRedo: boolean;
   canUndo: boolean;
-  clearSelectedCells: () => void;
+  /** Clears the selection's contents; false when nothing was cleared (read-only or refused). */
+  clearSelectedCells: () => boolean;
   copySelectionToClipboard: () => Promise<boolean>;
   defineNamedRange: (name: string, range?: XlsxCellRange | null) => void;
   fillSelection: (targetRange: XlsxCellRange) => void;
@@ -1331,7 +1334,7 @@ export interface XlsxViewerEditing {
   pasteStructuredClipboardData: (payload: string) => boolean;
   pasteText: (text: string) => boolean;
   paste: (options?: { valuesOnly?: boolean }) => Promise<boolean>;
-  cutSelection: () => Promise<boolean>;
+  cutSelection: (clipboard?: DataTransfer) => Promise<boolean>;
   autoFit: (axis: "column" | "row", indices?: Iterable<number>) => void;
   removeActiveSheet: () => void;
   removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
