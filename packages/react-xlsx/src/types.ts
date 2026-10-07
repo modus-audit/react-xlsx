@@ -1059,6 +1059,9 @@ export interface UseXlsxViewerControllerOptions {
 }
 
 export interface XlsxViewerController {
+  /** Calculation execution coverage; complete does not establish Excel equivalence. */
+  calculation: import("./calculation-diagnostics").XlsxCalculationReport;
+  getCellCalculationDiagnostic: (cell?: XlsxCellAddress | null) => import("./calculation-diagnostics").XlsxCellCalculationDiagnostic | null;
   activeCell: XlsxCellAddress | null;
   activeCellAddress: string | null;
   activeSheet: XlsxSheetData | null;
@@ -1110,6 +1113,7 @@ export interface XlsxViewerController {
   getCellSnapshotAsync?: (workbookSheetIndex: number, row: number, col: number) => Promise<{
     displayValue: string;
     formula: string;
+    diagnostic: import("./calculation-diagnostics").XlsxCellCalculationDiagnostic;
   }>;
   isLoadDeferred: boolean;
   isLoading: boolean;
@@ -1579,6 +1583,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
    * ```
    */
   experimentalCanvas?: boolean;
+  /** Theme classes for the explanation opened by clicking a formula error corner. */
+  formulaErrorTooltipClassName?: string;
   /** Content shown for non-size load errors, or a function that receives the thrown error. */
   errorState?: React.ReactNode | ((error: Error) => React.ReactNode);
   /** Content shown when `maxFileSizeBytes` rejects a file. */

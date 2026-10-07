@@ -1,3 +1,5 @@
+import { formulaErrorTooltip } from "./formula-error";
+import { FormulaErrorPopover } from "./FormulaErrorPopover";
 import type { DataDirection } from "./data-navigation";
 import * as React from "react";
 import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
@@ -3752,18 +3754,13 @@ function canReceiveOverflowText(data: CellRenderData) {
   return !data.isMergedSecondary && !data.colSpan && data.value.length === 0;
 }
 
-function getCellDisplayValue(worksheet: Worksheet, row: number, col: number, activeSheet?: XlsxSheetData | null): string {
-  const formula = worksheet.getFormulaAt(row, col);
-  const cachedFormulaValue = formula ? activeSheet?.cachedFormulaValues?.[cellAddressToA1({ row, col })] : undefined;
+function getCellDisplayValue(worksheet: Worksheet, row: number, col: number): string {
   const formatted = worksheet.getFormattedValueAt(row, col);
-  if (formatted && !(formula && cachedFormulaValue !== undefined && formatted.startsWith("#"))) {
+  if (formatted && !formatted.startsWith("#")) {
     return decodeHtmlEntities(formatted);
   }
 
   const cellValue = worksheet.getCalculatedValueAt(row, col);
-  if (formula && cachedFormulaValue !== undefined && cellValue.is_error) {
-    return cachedFormulaValue;
-  }
   if (cellValue.is_error) {
     return cellValue.asError() ?? "";
   }
@@ -5286,6 +5283,7 @@ function resolveSelectionColors({
 }
 
 type CellRenderData = {
+  errorTooltip?: string;
   canvas?: CanvasCellStyleCache;
   chartHighlight?: CellChartHighlight | null;
   checkboxState?: boolean | null;
@@ -5720,7 +5718,7 @@ function resolveConditionalFormulaComparable(
     if (numeric !== null) {
       return numeric;
     }
-    return getCellDisplayValue(worksheet, cell.row, cell.col, sheet);
+    return getCellDisplayValue(worksheet, cell.row, cell.col);
   }
 
   if (batchedCells) {
@@ -5810,7 +5808,7 @@ function resolveConditionalOperand(
 
   return {
     number: getCellNumericValue(worksheet, targetRow, targetCol, activeSheet),
-    text: getCellDisplayValue(worksheet, targetRow, targetCol, activeSheet)
+    text: getCellDisplayValue(worksheet, targetRow, targetCol)
   };
 }
 
@@ -6934,7 +6932,7 @@ function GridRow({
         if (cellData.conditionalColorScale) {
           cellStyle.backgroundColor = cellData.conditionalColorScale.color;
         }
-        if (cellData.conditionalColorScale || cellData.conditionalDataBar || cellData.conditionalIcon) {
+        if (cellData.errorTooltip || cellData.conditionalColorScale || cellData.conditionalDataBar || cellData.conditionalIcon) {
           cellStyle.position = "relative";
         }
         if (cellData.chartHighlight) {
@@ -7032,7 +7030,7 @@ function GridRow({
               width: "max-content"
             } satisfies React.CSSProperties
           : null;
-        const title = [cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.value]
+        const title = cellData.errorTooltip ? undefined : [cellData.hyperlink?.tooltip, cellData.validation?.message, cellData.value]
           .filter((value, index, values): value is string => typeof value === "string" && value.length > 0 && values.indexOf(value) === index)
           .join("\n");
 
@@ -7054,6 +7052,16 @@ function GridRow({
             style={cellStyle}
             title={title}
           >
+            {cellData.errorTooltip ? (
+              <svg
+                aria-hidden="true"
+                data-xlsx-formula-error="true"
+                viewBox="0 0 7 7"
+                style={{ position: "absolute", top: 1, left: 1, width: 7 * zoomFactor, height: 7 * zoomFactor, pointerEvents: "none", zIndex: 3 }}
+              >
+                <path d="M0 0H7L0 7Z" fill="#facc15" />
+              </svg>
+            ) : null}
             {cellData.chartHighlight ? (
               <div
                 aria-hidden="true"
@@ -7280,6 +7288,7 @@ function XlsxGrid({
   enableCanvasSelectionAnimation = true,
   errorState,
   fileTooLargeState,
+  formulaErrorTooltipClassName,
   getCellStyle,
   showFormulas = false,
   loadingComponent,
@@ -7301,7 +7310,7 @@ function XlsxGrid({
   showImages = true
 }: Pick<
   XlsxViewerProps,
-  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "getCellStyle" | "showFormulas" | "loadingComponent" | "loadingState" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
+  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "formulaErrorTooltipClassName" | "getCellStyle" | "showFormulas" | "loadingComponent" | "loadingState" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
 > & {
   controller: XlsxViewerController;
   palette: ViewerPalette;
@@ -10042,6 +10051,10 @@ function XlsxGrid({
     [activeSheet, chartRangeHighlights]
   );
 
+  const formulaErrors = React.useMemo(() => new Map(controller.calculation.issues
+    .filter((issue) => issue.sheet === activeSheet?.name)
+    .map((issue) => [issue.cell, issue.error])), [controller.calculation, activeSheet?.name]);
+
   const cellRenderCacheInvalidationKey = React.useMemo(
     () =>
       [
@@ -10051,6 +10064,7 @@ function XlsxGrid({
         displayRowLimit,
         getCellStyle,
         showFormulas,
+        formulaErrors,
         palette,
         revision,
         selectedChartElement,
@@ -10066,6 +10080,7 @@ function XlsxGrid({
       displayRowLimit,
       getCellStyle,
       showFormulas,
+      formulaErrors,
       palette,
       revision,
       selectedChartElement,
@@ -10192,7 +10207,7 @@ function XlsxGrid({
       if (displayValue === null) {
         displayValue = batchCoversRow || !worksheet
           ? batchedCell?.value ?? ""
-          : getCellDisplayValue(worksheet, row, col, activeSheet);
+          : getCellDisplayValue(worksheet, row, col);
       }
       return displayValue;
     };
@@ -10292,6 +10307,11 @@ function XlsxGrid({
     };
 
     const formula = batchedCell?.formula ?? worksheet?.getFormulaAt(row, col);
+    const formulaError = formulaErrors.get(cellAddressToA1({ row, col }));
+    if (formulaError) {
+      nextData.value = formulaError;
+      nextData.errorTooltip = formulaErrorTooltip(formulaError);
+    }
     if (showFormulas && formula) {
       nextData.value = `=${formula.replace(/^=/, "")}`;
       nextData.style = { ...nextData.style, textAlign: "left", whiteSpace: "nowrap" };
@@ -10441,6 +10461,7 @@ function XlsxGrid({
     activeSheet,
     activeSheetChartHighlights,
     showFormulas,
+    formulaErrors,
     cellRenderCacheInvalidationKey,
     colIndexByActual,
     colPrefixSums,
@@ -12355,6 +12376,60 @@ function XlsxGrid({
     startCellSelection
   ]);
 
+  const [formulaPopover, setFormulaPopover] = React.useState<{
+    text: string; x: number; y: number; cell: string;
+    calculation: typeof controller.calculation; sheet: string | undefined;
+  } | null>(null);
+  const clearFormulaPopover = React.useCallback(() => setFormulaPopover(null), []);
+  React.useEffect(() => {
+    if (!formulaPopover) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clearFormulaPopover();
+    };
+    window.addEventListener("pointerdown", clearFormulaPopover);
+    window.addEventListener("scroll", clearFormulaPopover, true);
+    window.addEventListener("resize", clearFormulaPopover);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", clearFormulaPopover);
+      window.removeEventListener("scroll", clearFormulaPopover, true);
+      window.removeEventListener("resize", clearFormulaPopover);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [clearFormulaPopover, formulaPopover]);
+  const handleFormulaCornerClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    clearFormulaPopover();
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest("[data-xlsx-cell], [data-xlsx-body-canvas]")) return;
+    const resolvedCell = resolvePointerCellFromClient(event.clientX, event.clientY);
+    const cell = resolvedCell ? resolveMergeAnchorCell(resolvedCell) : null;
+    const address = cell ? cellAddressToA1(cell) : "";
+    if (!cell || !formulaErrors.has(address)) return;
+    const scroller = scrollRef.current;
+    const geometry = resolveGeometryOverlayRect({ start: cell, end: cell });
+    if (!scroller || !geometry) return;
+    const mountedCell = wrapperRef.current?.querySelector<HTMLElement>(`[data-xlsx-cell="${cell.row}:${cell.col}"]`);
+    const viewport = scroller.getBoundingClientRect();
+    const rect = mountedCell?.getBoundingClientRect() ?? {
+      left: viewport.left + geometry.left - (geometry.left >= frozenPaneRight ? scroller.scrollLeft : 0),
+      top: viewport.top + geometry.top - (geometry.top >= frozenPaneBottom ? scroller.scrollTop : 0),
+      width: geometry.width,
+      height: geometry.height
+    };
+    const offsetX = event.clientX - rect.left;
+    const offsetY = event.clientY - rect.top;
+    if (offsetX < 0 || offsetY < 0 || offsetX > Math.min(12 * zoomFactor, rect.width)
+      || offsetY > Math.min(12 * zoomFactor, rect.height)) {
+      return;
+    }
+    const text = getCellData(cell.row, cell.col).errorTooltip;
+    if (!text) return;
+    event.stopPropagation();
+    setFormulaPopover({ text, x: rect.left + 8 * zoomFactor, y: rect.top + 8 * zoomFactor, cell: address,
+      calculation: controller.calculation, sheet: activeSheet?.name });
+  }, [activeSheet?.name, clearFormulaPopover, controller.calculation, formulaErrors, frozenPaneBottom,
+    frozenPaneRight, getCellData, resolveGeometryOverlayRect, resolveMergeAnchorCell, resolvePointerCellFromClient, zoomFactor]);
+
   const handleCanvasBodyClick = React.useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
     if (!cell) {
@@ -13394,6 +13469,20 @@ function XlsxGrid({
             if (cellData.chartHighlight.borderLeft) {
               strokeCanvasBorderSide(paneContext, "left", localRect, highlightBorder);
             }
+          }
+
+          if (cellData.errorTooltip) {
+            const size = Math.max(0, Math.min(7 * zoomFactor, localRect.width - 2, localRect.height - 2));
+            flushPendingGridlines();
+            paneContext.save();
+            paneContext.fillStyle = "#facc15";
+            paneContext.beginPath();
+            paneContext.moveTo(localRect.left + 1, localRect.top + 1);
+            paneContext.lineTo(localRect.left + 1 + size, localRect.top + 1);
+            paneContext.lineTo(localRect.left + 1, localRect.top + 1 + size);
+            paneContext.closePath();
+            paneContext.fill();
+            paneContext.restore();
           }
 
           const rawText = cellData.value ?? "";
@@ -16321,6 +16410,7 @@ function XlsxGrid({
                     onClick={handleCanvasBodyClick}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
+                    data-xlsx-body-canvas="true"
                     style={canvasScrollBodyStyle}
                   />
                   <canvas
@@ -16328,6 +16418,7 @@ function XlsxGrid({
                     onClick={handleCanvasBodyClick}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
+                    data-xlsx-body-canvas="true"
                     style={canvasTopBodyStyle}
                   />
                   <canvas
@@ -16335,6 +16426,7 @@ function XlsxGrid({
                     onClick={handleCanvasBodyClick}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
+                    data-xlsx-body-canvas="true"
                     style={canvasLeftBodyStyle}
                   />
                   <canvas
@@ -16342,6 +16434,7 @@ function XlsxGrid({
                     onClick={handleCanvasBodyClick}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
+                    data-xlsx-body-canvas="true"
                     style={canvasCornerBodyStyle}
                   />
                   {hasCanvasDomDrawingOverlays ? (
@@ -16865,10 +16958,13 @@ function XlsxGrid({
   );
 
   return (
-    <div style={{ backgroundColor: palette.canvas, display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
+    <div onClickCapture={handleFormulaCornerClick}
+      style={{ backgroundColor: palette.canvas, display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
       {renderScroller
         ? renderScroller({ children: scrollerContent, viewportProps: scrollerViewportProps })
         : <div key={activeTabIndex} {...scrollerViewportProps}>{scrollerContent}</div>}
+      {formulaPopover && formulaPopover.calculation === controller.calculation && formulaPopover.sheet === activeSheet?.name
+        && <FormulaErrorPopover {...formulaPopover} palette={palette} className={formulaErrorTooltipClassName} />}
     </div>
   );
 }
@@ -16883,6 +16979,7 @@ function XlsxViewerInner({
   errorState,
   experimentalCanvas = true,
   fileTooLargeState,
+  formulaErrorTooltipClassName,
   getCellStyle,
   showFormulas,
   headerBackgroundColor,
@@ -16962,6 +17059,7 @@ function XlsxViewerInner({
                 errorState={errorState}
                 experimentalCanvas={experimentalCanvas}
                 fileTooLargeState={fileTooLargeState}
+                formulaErrorTooltipClassName={formulaErrorTooltipClassName}
                 getCellStyle={getCellStyle}
                 showFormulas={showFormulas}
                 loadingComponent={loadingComponent}
@@ -17871,7 +17969,7 @@ export function useXlsxViewerThumbnails(
             col,
             sheet,
             () => (worksheet ? getCellNumericValue(worksheet, row, col) : getBatchedCellNumericValue(batchedCell)),
-            () => (worksheet ? getCellDisplayValue(worksheet, row, col, sheet) : (batchedCell?.value ?? "")),
+            () => (worksheet ? getCellDisplayValue(worksheet, row, col) : (batchedCell?.value ?? "")),
             worksheet,
             workerRowBatch?.cells
           );
@@ -17932,7 +18030,7 @@ export function useXlsxViewerThumbnails(
               : checkboxState !== null
                 ? ""
                 : worksheet
-                  ? getCellDisplayValue(worksheet, row, col, sheet)
+                  ? getCellDisplayValue(worksheet, row, col)
                   : batchedCell?.value ?? ""
           };
 
