@@ -1,18 +1,18 @@
 diff --git a/MODUS_PATCHES.md b/MODUS_PATCHES.md
 new file mode 100644
-index 0000000..538a346
+index 0000000..ddaa2f4
 --- /dev/null
 +++ b/MODUS_PATCHES.md
 @@ -0,0 +1,84 @@
 +# Modus React XLSX viewer
 +
-+Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.1` WASM engine.
++Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.2` WASM engine.
 +
 +Preserved behavior:
 +
 +- Serializable external add-in values reach the engine in normal, worker, and deferred loads. Formula text remains intact; unresolved calls retain cached values.
 +- `recalculate` accepts updated external add-in values without reloading the workbook, including
-+  worker-backed read-only workbooks. Calculation skips the engine's known 5,000-formula trap.
++  worker-backed read-only workbooks. The engine (`wasm-dist-0.1.23-modus.2`) calculates serially, so the old 5,000-formula trap is gone; `autoCalculateFormulaLimit` (default 1,000) sets how many formulas a main-thread workbook may have and still recalculate on load and after edits.
 +- `controller.calculation` reports execution coverage on initial, deferred, and explicit recalculation.
 +  It compares the source OOXML formula inventory with the imported inventory, retains the engine
 +  statistics, and inspects typed formula results because engine `errors` misses some cell errors.
@@ -42,7 +42,7 @@ index 0000000..538a346
 +
 +Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 +
-+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.19`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
++After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.20`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 +
 +The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 +
@@ -205,14 +205,14 @@ index 0000000..49eac7a
 +  };
 +}
 diff --git a/packages/react-xlsx/package.json b/packages/react-xlsx/package.json
-index 6455584..ddbdcf8 100644
+index 6455584..31b9d19 100644
 --- a/packages/react-xlsx/package.json
 +++ b/packages/react-xlsx/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@extend-ai/react-xlsx",
 -  "version": "0.16.4",
-+  "version": "0.16.4-modus.19",
++  "version": "0.16.4-modus.20",
    "description": "React components and hooks for viewing XLSX workbooks",
    "license": "MIT",
    "keywords": [
@@ -221,7 +221,7 @@ index 6455584..ddbdcf8 100644
    },
    "dependencies": {
 -    "@dukelib/sheets-wasm": "0.1.23",
-+    "@dukelib/sheets-wasm": "https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.1.tar.gz",
++    "@dukelib/sheets-wasm": "https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.2.tar.gz",
      "@tanstack/react-virtual": "^3.13.12",
      "d3-geo": "^3.1.1",
      "d3-hierarchy": "^3.1.2",
@@ -2180,7 +2180,7 @@ index 0000000..bd96b92
 +  }
 +}
 diff --git a/packages/react-xlsx/src/controller.tsx b/packages/react-xlsx/src/controller.tsx
-index 23933bc..6777e88 100644
+index 23933bc..5c9298a 100644
 --- a/packages/react-xlsx/src/controller.tsx
 +++ b/packages/react-xlsx/src/controller.tsx
 @@ -1,3 +1,5 @@
@@ -2291,14 +2291,15 @@ index 23933bc..6777e88 100644
    }
  }
  
-@@ -1439,29 +1454,32 @@ async function resolveWorkbookBuffer(
+@@ -1439,29 +1454,33 @@ async function resolveWorkbookBuffer(
    return buffer;
  }
  
 -async function parseWorkbookBuffer(buffer: ArrayBuffer): Promise<{
 +async function parseWorkbookBuffer(
 +  buffer: ArrayBuffer,
-+  externalFnValues?: ExternalFnValues,
++  externalFnValues: ExternalFnValues | undefined,
++  autoCalculateFormulaLimit: number,
 +): Promise<{
    shouldAutoCalculate: boolean;
 +  calculation: XlsxCalculationReport;
@@ -2315,7 +2316,7 @@ index 23933bc..6777e88 100644
 -  const shouldAutoCalculate = totalFormulas <= FORMULA_COUNT_THRESHOLD;
 +  const parsedFormulaCount = countWorkbookFormulas(initialWorkbook);
 +  const sourceFormulaCount = countSourceWorkbookFormulas(new Uint8Array(buffer));
-+  const shouldAutoCalculate = parsedFormulaCount <= AUTO_CALCULATE_FORMULA_THRESHOLD;
++  const shouldAutoCalculate = parsedFormulaCount <= autoCalculateFormulaLimit;
    if (!shouldAutoCalculate) {
 -    return { shouldAutoCalculate, workbook: initialWorkbook };
 +    return { shouldAutoCalculate, workbook: initialWorkbook, calculation: calculationReport("skipped", "auto-formula-limit", parsedFormulaCount, sourceFormulaCount) };
@@ -2334,15 +2335,27 @@ index 23933bc..6777e88 100644
      workbook: result.workbook
    };
  }
-@@ -1871,6 +1889,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -1870,7 +1889,9 @@ function downloadUrl(src: string, fileName: string) {
+ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions): XlsxViewerController {
    const {
      allowResizeInReadOnly = false,
++    autoCalculateFormulaLimit = AUTO_CALCULATE_FORMULA_THRESHOLD,
      deferLoadingAboveBytes = DEFAULT_DEFER_LOADING_ABOVE_BYTES,
 +    externalFnValues,
      file,
      fileName,
      maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES,
-@@ -1898,10 +1917,32 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -1881,6 +1902,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     src,
+     useWorker = true
+   } = options;
++  // Read when a workbook loads or recalculates, so changing the limit never reloads the file.
++  const autoCalculateFormulaLimitRef = React.useRef(autoCalculateFormulaLimit);
++  autoCalculateFormulaLimitRef.current = autoCalculateFormulaLimit;
+   const [isLoading, setIsLoading] = React.useState(Boolean(file ?? src));
+   const [error, setError] = React.useState<Error | null>(null);
+   const [workbook, setWorkbook] = React.useState<Workbook | null>(null);
+@@ -1898,10 +1922,32 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    const [zoomScaleOverridesByTabId, setZoomScaleOverridesByTabId] = React.useState<Record<string, number>>({});
    const [activeCell, setActiveCell] = React.useState<XlsxCellAddress | null>(null);
    const [selection, setSelection] = React.useState<XlsxCellRange | null>(null);
@@ -2375,7 +2388,7 @@ index 23933bc..6777e88 100644
    const selectionAnchorRef = React.useRef<XlsxCellAddress | null>(null);
    const undoStackRef = React.useRef<HistoryEntry[]>([]);
    const redoStackRef = React.useRef<HistoryEntry[]>([]);
-@@ -1915,12 +1956,17 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -1915,12 +1961,17 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    const deferredBufferRef = React.useRef<ArrayBuffer | null>(null);
    const [deferredLoadFileSize, setDeferredLoadFileSize] = React.useState<number | null>(null);
    const imageAssetsRef = React.useRef<WorkbookImageAssets | null>(null);
@@ -2394,16 +2407,25 @@ index 23933bc..6777e88 100644
    const displayFileName = React.useMemo(() => resolveDisplayFileName(src, fileName), [fileName, src]);
    const shouldDeferLoading = deferLoadingAboveBytes > 0;
    const readOnly = requestedReadOnly || forcedReadOnly;
-@@ -2170,7 +2216,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2140,7 +2191,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+       return;
+     }
+ 
+-    void getWorkerClient().parseCharts(buffer, effectiveSkipXmlParsing, showHiddenSheets)
++    void getWorkerClient().parseCharts(buffer, effectiveSkipXmlParsing, showHiddenSheets, autoCalculateFormulaLimitRef.current)
+       .then((result) => {
+         if (workerTimeoutHandle !== null) {
+           window.clearTimeout(workerTimeoutHandle);
+@@ -2170,7 +2221,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    }, [getWorkerClient, hasIncompleteWorkerChartSnapshot, setChartAssets, showHiddenSheets, skipXmlParsing, workerSupported]);
  
    const loadWorkbookOnMainThread = React.useCallback(async (buffer: ArrayBuffer) => {
 -    const nextParsedWorkbook = await parseWorkbookBuffer(buffer);
-+    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValues);
++    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValues, autoCalculateFormulaLimitRef.current);
      const bytes = new Uint8Array(buffer);
      const nextImageAssets = loadWorkbookImageAssets(
        bytes,
-@@ -2181,7 +2227,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2181,7 +2232,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        imageAssets: nextImageAssets,
        parsedWorkbook: nextParsedWorkbook
      };
@@ -2412,7 +2434,7 @@ index 23933bc..6777e88 100644
  
    const refreshWorkbookState = React.useCallback((targetWorkbook: Workbook) => {
      const currentFormControls = imageAssetsRef.current?.formControlsByWorkbookSheetIndex ?? [];
-@@ -2224,6 +2270,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2224,6 +2275,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
    React.useEffect(() => {
      if (!file && !src) {
@@ -2425,7 +2447,7 @@ index 23933bc..6777e88 100644
        disposeWorkerClient();
        setForcedReadOnly(false);
        setWorkbook(null);
-@@ -2257,6 +2309,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2257,6 +2314,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      }
  
      let isCurrent = true;
@@ -2436,7 +2458,7 @@ index 23933bc..6777e88 100644
      const abortController = new AbortController();
      setIsLoading(true);
      setError(null);
-@@ -2296,6 +2352,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2296,6 +2357,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          }
  
          buffer = normalizeWorkbookArrayBuffer(buffer);
@@ -2444,7 +2466,7 @@ index 23933bc..6777e88 100644
  
          const preflight = preflightWorkbookBuffer(buffer);
          if (preflight?.tooLarge) {
-@@ -2310,6 +2367,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2310,6 +2372,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          if (shouldDeferLoading && buffer.byteLength > deferLoadingAboveBytes) {
            deferredBufferRef.current = buffer;
            setDeferredLoadFileSize(buffer.byteLength);
@@ -2452,7 +2474,7 @@ index 23933bc..6777e88 100644
            setWorkbook(null);
            setSheets([]);
            clearChartAssets();
-@@ -2320,7 +2378,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2320,7 +2383,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
          if (shouldUseWorkerForLoad) {
            try {
@@ -2461,7 +2483,7 @@ index 23933bc..6777e88 100644
              if (!isCurrent || abortController.signal.aborted) {
                return;
              }
-@@ -2343,6 +2401,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2343,6 +2406,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
              setFormControlsByWorkbookSheetIndex(snapshot.formControlsByWorkbookSheetIndex);
              setWorkbook(null);
              setSheets(snapshot.sheets);
@@ -2471,7 +2493,7 @@ index 23933bc..6777e88 100644
              setChartsByWorkbookSheetIndex(snapshot.chartsByWorkbookSheetIndex);
              setChartsheets(snapshot.chartsheets);
              setTabs(snapshot.tabs);
-@@ -2374,6 +2435,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2374,6 +2440,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
          setImageAssets(nextImageAssets);
          setWorkbook(nextParsedWorkbook.workbook);
@@ -2481,7 +2503,7 @@ index 23933bc..6777e88 100644
          const nextSheets = buildSheetList(
            nextParsedWorkbook.workbook,
            nextImageAssets.sheetStatesByWorkbookSheetIndex,
-@@ -2405,15 +2469,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2405,15 +2474,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          setIsWorkerBacked(false);
          setSortState(null);
          setError(nextError instanceof Error ? nextError : new Error("Could not load workbook."));
@@ -2502,7 +2524,7 @@ index 23933bc..6777e88 100644
      clearChartAssets,
      clearImageAssets,
      deferLoadingAboveBytes,
-@@ -2534,10 +2603,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2534,10 +2608,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
    const continueDeferredLoad = React.useCallback(() => {
      const deferredBuffer = deferredBufferRef.current;
@@ -2517,7 +2539,7 @@ index 23933bc..6777e88 100644
      setIsLoading(true);
      setError(null);
  
-@@ -2552,6 +2624,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2552,6 +2629,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        setShouldAutoCalculate(false);
        setIsWorkerBacked(false);
        setSortState(null);
@@ -2525,7 +2547,7 @@ index 23933bc..6777e88 100644
        setError(new XlsxFileSizeLimitExceededError(deferredBuffer.byteLength, maxFileSizeBytes));
        setIsLoading(false);
        return;
-@@ -2569,6 +2642,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2569,6 +2647,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        setShouldAutoCalculate(false);
        setIsWorkerBacked(false);
        setSortState(null);
@@ -2533,7 +2555,7 @@ index 23933bc..6777e88 100644
        setError(createWorkbookTooLargeError(preflight));
        setIsLoading(false);
        return;
-@@ -2580,8 +2654,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2580,8 +2659,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(new Uint8Array(deferredBuffer), skipXmlParsing);
  
      if (shouldUseWorkerForLoad) {
@@ -2544,7 +2566,7 @@ index 23933bc..6777e88 100644
            if (!effectiveSkipXmlParsing && hasIncompleteWorkerChartSnapshot(snapshot)) {
              throw new Error("Worker chart payload incomplete");
            }
-@@ -2596,6 +2671,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2596,6 +2676,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
            setDeferredLoadFileSize(null);
            setWorkbook(null);
            setSheets(snapshot.sheets);
@@ -2554,7 +2576,7 @@ index 23933bc..6777e88 100644
            setChartsByWorkbookSheetIndex(snapshot.chartsByWorkbookSheetIndex);
            setChartsheets(snapshot.chartsheets);
            setTabs(snapshot.tabs);
-@@ -2609,6 +2687,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2609,6 +2692,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
            setIsLoading(false);
          })
          .catch(async (workerError: unknown) => {
@@ -2562,7 +2584,7 @@ index 23933bc..6777e88 100644
            if (isAbortError(workerError)) {
              return;
            }
-@@ -2618,10 +2697,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2618,10 +2702,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
            disposeWorkerClient();
            const { imageAssets: nextImageAssets, parsedWorkbook: nextParsedWorkbook } = await loadWorkbookOnMainThread(deferredBuffer);
@@ -2577,7 +2599,7 @@ index 23933bc..6777e88 100644
            const nextSheets = buildSheetList(
              nextParsedWorkbook.workbook,
              nextImageAssets.sheetStatesByWorkbookSheetIndex,
-@@ -2640,6 +2723,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2640,6 +2728,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
            setIsLoading(false);
          })
          .catch((nextError: unknown) => {
@@ -2585,7 +2607,7 @@ index 23933bc..6777e88 100644
            deferredBufferRef.current = null;
            setDeferredLoadFileSize(null);
            setWorkbook(null);
-@@ -2651,13 +2735,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2651,13 +2740,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
            setIsWorkerBacked(false);
            setSortState(null);
            setError(nextError instanceof Error ? nextError : new Error("Could not load workbook."));
@@ -2596,13 +2618,13 @@ index 23933bc..6777e88 100644
      }
  
 -    void parseWorkbookBuffer(deferredBuffer)
-+    void parseWorkbookBuffer(deferredBuffer, externalFnValues)
++    void parseWorkbookBuffer(deferredBuffer, externalFnValues, autoCalculateFormulaLimitRef.current)
        .then((nextParsedWorkbook) => {
 +        if (!isCurrent()) { nextParsedWorkbook.workbook.free(); return; }
          const bytes = new Uint8Array(deferredBuffer);
          const nextImageAssets = loadWorkbookImageAssets(
            bytes,
-@@ -2668,6 +2754,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2668,6 +2759,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          setDeferredLoadFileSize(null);
          setImageAssets(nextImageAssets);
          setWorkbook(nextParsedWorkbook.workbook);
@@ -2612,7 +2634,7 @@ index 23933bc..6777e88 100644
          const nextSheets = buildSheetList(
            nextParsedWorkbook.workbook,
            nextImageAssets.sheetStatesByWorkbookSheetIndex,
-@@ -2686,6 +2775,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2686,6 +2780,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          setIsLoading(false);
        })
        .catch((nextError: unknown) => {
@@ -2620,7 +2642,7 @@ index 23933bc..6777e88 100644
          deferredBufferRef.current = null;
          setDeferredLoadFileSize(null);
          setWorkbook(null);
-@@ -2697,9 +2787,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2697,9 +2792,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          setIsWorkerBacked(false);
          setSortState(null);
          setError(nextError instanceof Error ? nextError : new Error("Could not load workbook."));
@@ -2634,14 +2656,15 @@ index 23933bc..6777e88 100644
      clearChartAssets,
      clearImageAssets,
      disposeWorkerClient,
-@@ -2715,15 +2809,21 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2715,15 +2814,21 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    ]);
  
    const maybeRecalculateWorkbook = React.useCallback((targetWorkbook: Workbook) => {
+-    if (!shouldAutoCalculate) {
 +    // The original file inventory no longer describes an intentionally edited workbook.
 +    sourceFormulaCountRef.current = null;
 +    const attempt = beginCalculation();
-     if (!shouldAutoCalculate) {
++    if (!shouldAutoCalculate || countWorkbookFormulas(targetWorkbook) > autoCalculateFormulaLimitRef.current) {
 +      applyCalculation(calculationReport("partial", "workbook-edited", countWorkbookFormulas(targetWorkbook)), attempt);
        return;
      }
@@ -2658,7 +2681,7 @@ index 23933bc..6777e88 100644
  
    const getActiveWorksheet = React.useCallback(() => {
      if (!workbook || !activeSheet) {
-@@ -2761,13 +2861,24 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2761,13 +2866,24 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      if (!isWorkerBacked) {
        return Promise.resolve({
          displayValue: "",
@@ -2684,7 +2707,7 @@ index 23933bc..6777e88 100644
    const getRowsBatchAsync = React.useCallback((workbookSheetIndex: number, startRow: number, rowCount: number) => {
      if (!isWorkerBacked) {
        return Promise.resolve(null);
-@@ -3045,17 +3156,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3045,17 +3161,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        return "";
      }
  
@@ -2703,7 +2726,7 @@ index 23933bc..6777e88 100644
      if (calculated.is_error) {
        return calculated.asError() ?? "";
      }
-@@ -3066,6 +3172,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3066,6 +3177,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      return calculated.toString();
    }, [activeSheet, getActiveWorksheet]);
  
@@ -2720,7 +2743,7 @@ index 23933bc..6777e88 100644
    const getCellFormula = React.useCallback((cell?: XlsxCellAddress | null) => {
      if (cell && activeSheet) {
        const workerSnapshot = workerCellSnapshotCacheRef.current.get(`${activeSheet.workbookSheetIndex}:${cell.row}:${cell.col}`);
-@@ -3092,11 +3208,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3092,11 +3213,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      const normalized = normalizeRange(targetRange);
      const rows: string[] = [];
      const htmlRows: string[] = [];
@@ -2735,7 +2758,7 @@ index 23933bc..6777e88 100644
      };
  
      for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
-@@ -3104,20 +3222,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3104,20 +3227,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        const htmlCells: string[] = [];
  
        for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
@@ -2760,7 +2783,7 @@ index 23933bc..6777e88 100644
          const cellStyles: string[] = [
            "padding:2px 4px",
            "white-space:pre-wrap",
-@@ -3184,12 +3302,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3184,12 +3307,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          const rowSpan = Math.min(merge?.rowSpan ?? 1, normalized.end.row - row + 1);
          const colSpan = Math.min(merge?.colSpan ?? 1, normalized.end.col - col + 1);
  
@@ -2776,7 +2799,7 @@ index 23933bc..6777e88 100644
  
          if (rowSpan > 1 || colSpan > 1) {
            payload.merges.push({
-@@ -3237,22 +3352,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3237,22 +3357,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          workerCellSnapshotCacheRef.current.set(cacheKey, snapshot);
          setWorkerCellSnapshotRevision((current) => current + 1);
        })
@@ -2802,7 +2825,7 @@ index 23933bc..6777e88 100644
  
    const activeCellAddress = React.useMemo(() => (activeCell ? cellAddressToA1(activeCell) : null), [activeCell]);
    const selectedRangeAddress = React.useMemo(() => (selection ? rangeToA1(selection) : null), [selection]);
-@@ -3350,6 +3456,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3350,6 +3461,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      setIsLoading(false);
      setImageAssets(nextImageAssets);
      setWorkbook(nextWorkbook);
@@ -2812,7 +2835,7 @@ index 23933bc..6777e88 100644
      setSheets(nextSheets);
      const nextChartAssets = loadWorkbookChartAssets(nextWorkbook, nextImageAssets, buildVisibleSheetIndexMap(nextSheets), showHiddenSheets);
      setChartAssets(nextChartAssets);
-@@ -3362,7 +3471,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3362,7 +3476,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      setSelection(entry.selection);
      selectionAnchorRef.current = entry.selection ? normalizeRange(entry.selection).start : entry.activeCell;
      setRevision((current) => current + 1);
@@ -2821,7 +2844,7 @@ index 23933bc..6777e88 100644
  
    const applyCellEditHistoryEntry = React.useCallback((
      entry: CellEditHistoryEntry,
-@@ -3377,7 +3486,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3377,7 +3491,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      const targetState = direction === "undo" ? entry.before : entry.after;
  
      isApplyingHistoryRef.current = true;
@@ -2830,7 +2853,7 @@ index 23933bc..6777e88 100644
      maybeRecalculateWorkbook(workbook);
      refreshWorkbookState(workbook);
  
-@@ -3390,7 +3499,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3390,7 +3504,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      setSelection(nextSelection);
      selectionAnchorRef.current = nextSelection ? normalizeRange(nextSelection).start : nextActiveCell;
      isApplyingHistoryRef.current = false;
@@ -2839,7 +2862,7 @@ index 23933bc..6777e88 100644
  
    const applyRangeEditHistoryEntry = React.useCallback((
      entry: RangeEditHistoryEntry,
-@@ -3404,8 +3513,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3404,8 +3518,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      const visibleSheetIndex = sheets.findIndex((sheet) => sheet.workbookSheetIndex === entry.sheetIndex);
  
      isApplyingHistoryRef.current = true;
@@ -2850,7 +2873,7 @@ index 23933bc..6777e88 100644
      }
      maybeRecalculateWorkbook(workbook);
      refreshWorkbookState(workbook);
-@@ -3419,7 +3529,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3419,7 +3534,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      setSelection(nextSelection);
      selectionAnchorRef.current = nextSelection ? normalizeRange(nextSelection).start : nextActiveCell;
      isApplyingHistoryRef.current = false;
@@ -2859,7 +2882,7 @@ index 23933bc..6777e88 100644
  
    const recordHistoryBeforeMutation = React.useCallback(() => {
      if (isApplyingHistoryRef.current) {
-@@ -3694,7 +3804,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3694,7 +3809,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          }
  
          const cell = { row: targetRow, col: startCol + colOffset };
@@ -2868,7 +2891,7 @@ index 23933bc..6777e88 100644
          mutations.push({
            after,
            before,
-@@ -3717,7 +3827,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3717,7 +3832,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      refreshWorkbookState,
      selection,
      tables,
@@ -2878,7 +2901,7 @@ index 23933bc..6777e88 100644
    ]);
  
    const download = React.useCallback(() => {
-@@ -3748,82 +3859,88 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3748,82 +3864,88 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      downloadText(workbook.saveCsvString(), `${fileStem(displayFileName)}-${activeSheetName}.csv`, CSV_MIME_TYPE);
    }, [activeSheet?.name, displayFileName, workbook]);
  
@@ -3016,7 +3039,7 @@ index 23933bc..6777e88 100644
        return;
      }
  
-@@ -3833,46 +3950,18 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3833,46 +3955,18 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
      recordHistoryBeforeMutation();
      const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
@@ -3071,7 +3094,7 @@ index 23933bc..6777e88 100644
      canResizeReadOnly,
      isWorkerBacked,
      readOnly,
-@@ -3880,6 +3969,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3880,6 +3974,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      refreshWorkbookState,
      workbook
    ]);
@@ -3088,7 +3111,7 @@ index 23933bc..6777e88 100644
  
    const resolveAnchoredObjectRect = React.useCallback((
      anchor: XlsxImage["anchor"],
-@@ -4229,29 +4328,84 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4229,29 +4333,84 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      return true;
    }, [getChartById, readOnly, updateChart, workbook]);
  
@@ -3185,7 +3208,7 @@ index 23933bc..6777e88 100644
  
    const clearSelection = React.useCallback(() => {
      selectionAnchorRef.current = null;
-@@ -4476,6 +4630,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4476,6 +4635,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        return;
      }
  
@@ -3193,7 +3216,7 @@ index 23933bc..6777e88 100644
      const mutations: RangeCellMutation[] = [];
      for (let row = nextRange.start.row; row <= nextRange.end.row; row += 1) {
        for (let col = nextRange.start.col; col <= nextRange.end.col; col += 1) {
-@@ -4489,21 +4644,19 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4489,21 +4649,19 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
            continue;
          }
  
@@ -3219,7 +3242,7 @@ index 23933bc..6777e88 100644
  
          const after = captureCellMutationState(targetCell);
          if (!after) {
-@@ -4523,18 +4676,30 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4523,18 +4681,30 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      setActiveCell(nextRange.end);
      selectionAnchorRef.current = nextRange.start;
      recordRangeEditHistory(mutations, nextRange, nextRange.end);
@@ -3255,7 +3278,7 @@ index 23933bc..6777e88 100644
  
    const unmergeSelection = React.useCallback(() => {
      const worksheet = getActiveWorksheet();
-@@ -4542,8 +4707,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4542,8 +4712,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        return;
      }
  
@@ -3272,7 +3295,7 @@ index 23933bc..6777e88 100644
      refreshWorkbookState(workbook);
    }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
  
-@@ -4562,6 +4734,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4562,6 +4739,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      }
  
      workbook.addSheet(candidate);
@@ -3280,7 +3303,7 @@ index 23933bc..6777e88 100644
      sheetOriginsRef.current = [...sheetOriginsRef.current, null];
      setFormControlsByWorkbookSheetIndex((current) => [...current, []]);
      setImagesByWorkbookSheetIndex((current) => [...current, []]);
-@@ -4595,7 +4768,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4595,7 +4773,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        setActiveTabIndexState(nextTabIndex);
      }
      setRevision((current) => current + 1);
@@ -3289,7 +3312,7 @@ index 23933bc..6777e88 100644
  
    const removeActiveSheet = React.useCallback(() => {
      if (readOnly || !workbook || !activeSheet) {
-@@ -4604,6 +4777,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4604,6 +4782,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
      recordHistoryBeforeMutation();
      workbook.removeSheet(activeSheet.workbookSheetIndex);
@@ -3297,7 +3320,7 @@ index 23933bc..6777e88 100644
      sheetOriginsRef.current = sheetOriginsRef.current.filter((_, index) => index !== activeSheet.workbookSheetIndex);
      setFormControlsByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
      setImagesByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
-@@ -4631,7 +4805,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4631,7 +4810,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      }
      setActiveSheetIndexState((current) => Math.max(0, Math.min(current, nextSheets.length - 1)));
      setRevision((current) => current + 1);
@@ -3306,7 +3329,7 @@ index 23933bc..6777e88 100644
  
    const defineNamedRange = React.useCallback((name: string, range?: XlsxCellRange | null) => {
      if (readOnly || !workbook) {
-@@ -4650,8 +4824,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4650,8 +4829,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
      recordHistoryBeforeMutation();
      workbook.defineName(trimmed, rangeToA1(targetRange));
@@ -3317,7 +3340,7 @@ index 23933bc..6777e88 100644
  
    const pasteText = React.useCallback((text: string) => {
      const worksheet = getActiveWorksheet();
-@@ -4744,6 +4919,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4744,6 +4924,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      if (hasMergeOperations) {
        recordHistoryBeforeMutation();
      }
@@ -3325,7 +3348,7 @@ index 23933bc..6777e88 100644
      for (const cell of payload.cells) {
        const nextCell = {
          col: targetCell.col + cell.colOffset,
-@@ -4751,32 +4927,17 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4751,32 +4932,17 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        };
        const before = hasMergeOperations ? null : captureCellMutationState(nextCell);
  
@@ -3368,7 +3391,7 @@ index 23933bc..6777e88 100644
        }
      }
  
-@@ -4826,7 +4987,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4826,7 +4992,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      recordRangeEditHistory,
      refreshWorkbookState,
      selection,
@@ -3378,7 +3401,7 @@ index 23933bc..6777e88 100644
    ]);
  
    const copySelectionToClipboard = React.useCallback(async () => {
-@@ -4835,9 +4997,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4835,9 +5002,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        return false;
      }
  
@@ -3390,7 +3413,7 @@ index 23933bc..6777e88 100644
          "text/html": new Blob([clipboardData.html], { type: "text/html" }),
          "text/plain": new Blob([clipboardData.text], { type: "text/plain" })
        });
-@@ -4948,6 +5111,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4948,6 +5116,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        activeTabIndex,
        addFormControl,
        addSheet,
@@ -3399,7 +3422,7 @@ index 23933bc..6777e88 100644
        canRedo,
        canDownload: Boolean(file ?? src),
        canExport: Boolean(workbook),
-@@ -5013,7 +5178,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5013,7 +5183,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        resizeChartBy,
        resizeImageBy,
        resizeColumn,
@@ -3409,7 +3432,7 @@ index 23933bc..6777e88 100644
        setCellFormula,
        setCellStyle,
        setCellValue,
-@@ -5035,11 +5202,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5035,11 +5207,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        selectedRangeAddress,
        selectedValue,
        selectCell,
@@ -3425,7 +3448,7 @@ index 23933bc..6777e88 100644
        setActiveSheetIndex,
        setActiveTabIndex,
        setSelectedCellFormula,
-@@ -5071,6 +5242,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5071,6 +5247,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        addFormControl,
        addSheet,
        canLoadDeferred,
@@ -3434,7 +3457,7 @@ index 23933bc..6777e88 100644
        canRedo,
        canUndo,
        canZoomIn,
-@@ -5131,7 +5304,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5131,7 +5309,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        resizeChartBy,
        resizeImageBy,
        resizeColumn,
@@ -3444,7 +3467,7 @@ index 23933bc..6777e88 100644
        setCellFormula,
        setCellStyle,
        setCellValue,
-@@ -5153,11 +5328,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5153,11 +5333,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        selectedRangeAddress,
        selectedValue,
        selectCell,
@@ -3916,17 +3939,17 @@ index 0000000..2b49b81
 +}
 diff --git a/packages/react-xlsx/src/safe-calculate.test.ts b/packages/react-xlsx/src/safe-calculate.test.ts
 new file mode 100644
-index 0000000..82bb803
+index 0000000..f467b59
 --- /dev/null
 +++ b/packages/react-xlsx/src/safe-calculate.test.ts
-@@ -0,0 +1,281 @@
+@@ -0,0 +1,273 @@
 +import { formulaErrorTooltip } from "./formula-error.ts";
 +import assert from "node:assert/strict";
 +import { readFileSync } from "node:fs";
 +import { before, test } from "node:test";
 +import initSheetsWasm, { Workbook } from "@dukelib/sheets-wasm";
 +import { externalCalcOptions, externalCallKey } from "./external-fn.ts";
-+import { CALCULATE_FORMULA_HARD_LIMIT, safeCalculate } from "./safe-calculate.ts";
++import { safeCalculate } from "./safe-calculate.ts";
 +import { calculationReport, cellCalculationDiagnostic, countSourceWorkbookFormulas } from "./calculation-diagnostics.ts";
 +import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 +
@@ -3968,14 +3991,18 @@ index 0000000..82bb803
 +  return Workbook.fromBytes(bytes);
 +}
 +
-+test("recalculates immediately below the engine formula limit", () => {
-+  const workbook = workbookWithFormulaCount(CALCULATE_FORMULA_HARD_LIMIT - 1);
-+  const result = safeCalculate(workbook);
++test("recalculates past the 5,000 formulas where the threaded engine used to trap", () => {
++  // The browser engine used to switch to a rayon thread pool at 5,000 formulas, which panics
++  // without threads and poisoned the workbook. It now always evaluates serially.
++  for (const formulaCount of [4_999, 5_000, 20_000]) {
++    const workbook = workbookWithFormulaCount(formulaCount);
++    const result = safeCalculate(workbook);
 +
-+  assert.equal(result.calculated, true);
-+  assert.equal(result.skipReason, null);
-+  assert.equal(workbook.getSheet(0).formulaCount, CALCULATE_FORMULA_HARD_LIMIT - 1);
-+  workbook.free();
++    assert.equal(result.calculated, true);
++    assert.equal(result.skipReason, null);
++    assert.equal(workbook.getSheet(0).getFormattedValue(`B${formulaCount}`), "3");
++    workbook.free();
++  }
 +});
 +
 +test("reports typed formula errors even when the engine errors statistic is zero", () => {
@@ -4090,18 +4117,6 @@ index 0000000..82bb803
 +  assert.equal(result.calculation.errorCount, null);
 +});
 +
-+test("skips the engine formula limit without poisoning the workbook", () => {
-+  const workbook = workbookWithFormulaCount(CALCULATE_FORMULA_HARD_LIMIT);
-+  const result = safeCalculate(workbook);
-+
-+  assert.equal(result.calculated, false);
-+  assert.equal(result.skipReason, "formula-limit");
-+  assert.doesNotThrow(() => workbook.getSheet(0));
-+  assert.equal(workbook.getSheet(0).formulaCount, CALCULATE_FORMULA_HARD_LIMIT);
-+  workbook.free();
-+});
-+
-+
 +test("cell inventory excludes sparkline, validation, and conditional-format extension formulas", () => {
 +  const source = new Workbook();
 +  source.getSheet(0).setFormula("A1", "1+2");
@@ -4202,30 +4217,20 @@ index 0000000..82bb803
 +  source.free();
 +});
 diff --git a/packages/react-xlsx/src/safe-calculate.ts b/packages/react-xlsx/src/safe-calculate.ts
-index 76df88d..c1d8ac1 100644
+index 76df88d..f603395 100644
 --- a/packages/react-xlsx/src/safe-calculate.ts
 +++ b/packages/react-xlsx/src/safe-calculate.ts
-@@ -1,4 +1,12 @@
+@@ -1,4 +1,9 @@
  import type { Workbook } from "@dukelib/sheets-wasm";
 +import type { ExternalCalcOptions } from "./external-fn.ts";
 +import { calculationReport, inspectCalculation, type XlsxCalculationReport } from "./calculation-diagnostics.ts";
 +
 +/** Automatic load-time calculation stays conservative to keep large workbooks responsive. */
 +export const AUTO_CALCULATE_FORMULA_THRESHOLD = 1_000;
-+
-+/** The current engine traps at this formula count. Never enter `calculate()` at or above it. */
-+export const CALCULATE_FORMULA_HARD_LIMIT = 5_000;
  
  const SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
  
-@@ -53,47 +61,61 @@ function hasUnresolvedSheetReferences(workbook: Workbook): boolean {
-   return false;
- }
- 
--export type SafeCalculateSkipReason = "unresolved-sheet-refs" | "calculate-trapped";
-+export type SafeCalculateSkipReason = "formula-limit" | "unresolved-sheet-refs" | "calculate-trapped";
- 
- export type SafeCalculateResult = {
+@@ -59,41 +64,50 @@ export type SafeCalculateResult = {
    workbook: Workbook;
    calculated: boolean;
    skipReason: SafeCalculateSkipReason | null;
@@ -4256,11 +4261,6 @@ index 76df88d..c1d8ac1 100644
 +    workbook: nextWorkbook, calculated: false, skipReason: reason,
 +    calculation: calculationReport(reason === "calculate-trapped" ? "failed" : "skipped", reason, formulaCount, sourceFormulaCount)
 +  });
-+  // This guard must run before `calculate()`: catching the WASM trap is too late because the
-+  // workbook instance is poisoned and later reads fail as well.
-+  if (formulaCount >= CALCULATE_FORMULA_HARD_LIMIT) {
-+    return skipped("formula-limit");
-+  }
    if (hasUnresolvedSheetReferences(workbook)) {
 -    return { workbook, calculated: false, skipReason: "unresolved-sheet-refs" };
 +    return skipped("unresolved-sheet-refs");
@@ -4402,7 +4402,7 @@ index 0000000..9d639ef
 +  }
 +}
 diff --git a/packages/react-xlsx/src/types.ts b/packages/react-xlsx/src/types.ts
-index 16b5350..095a9f3 100644
+index 16b5350..bc1ace1 100644
 --- a/packages/react-xlsx/src/types.ts
 +++ b/packages/react-xlsx/src/types.ts
 @@ -1,3 +1,5 @@
@@ -4421,10 +4421,17 @@ index 16b5350..095a9f3 100644
  export interface XlsxCellRange {
    end: XlsxCellAddress;
    start: XlsxCellAddress;
-@@ -963,6 +968,11 @@ export interface UseXlsxViewerControllerOptions {
+@@ -963,6 +968,18 @@ export interface UseXlsxViewerControllerOptions {
     * @default false
     */
    allowResizeInReadOnly?: boolean;
++  /**
++   * Main-thread workbooks with at most this many formulas are calculated on load and after each
++   * edit; larger ones keep their saved values. An editor can raise it, a read-only view rarely needs to.
++   *
++   * @default 1000
++   */
++  autoCalculateFormulaLimit?: number;
 +  /**
 +   * Values keyed by `externalCallKey(name, args)` resolve add-in formulas without rewriting them.
 +   * Unmapped calls preserve their cached values.
@@ -4433,7 +4440,7 @@ index 16b5350..095a9f3 100644
    /**
     * Defers loading until `continueDeferredLoad()` is called when the file is larger than this byte threshold.
     * Set to `0` to parse immediately.
-@@ -1042,6 +1052,9 @@ export interface UseXlsxViewerControllerOptions {
+@@ -1042,6 +1059,9 @@ export interface UseXlsxViewerControllerOptions {
  }
  
  export interface XlsxViewerController {
@@ -4443,7 +4450,7 @@ index 16b5350..095a9f3 100644
    activeCell: XlsxCellAddress | null;
    activeCellAddress: string | null;
    activeSheet: XlsxSheetData | null;
-@@ -1093,6 +1106,7 @@ export interface XlsxViewerController {
+@@ -1093,6 +1113,7 @@ export interface XlsxViewerController {
    getCellSnapshotAsync?: (workbookSheetIndex: number, row: number, col: number) => Promise<{
      displayValue: string;
      formula: string;
@@ -4451,7 +4458,7 @@ index 16b5350..095a9f3 100644
    }>;
    isLoadDeferred: boolean;
    isLoading: boolean;
-@@ -1101,7 +1115,7 @@ export interface XlsxViewerController {
+@@ -1101,7 +1122,7 @@ export interface XlsxViewerController {
    images: XlsxImage[];
    moveChartBy: (id: string, deltaX: number, deltaY: number) => void;
    shapes: XlsxShape[];
@@ -4460,7 +4467,7 @@ index 16b5350..095a9f3 100644
    maxZoomScale: number;
    minZoomScale: number;
    moveImageBy: (id: string, deltaX: number, deltaY: number) => void;
-@@ -1109,7 +1123,8 @@ export interface XlsxViewerController {
+@@ -1109,7 +1130,8 @@ export interface XlsxViewerController {
    /** Removes a Duke-supported control by its worksheet-local index. */
    removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
    readOnly: boolean;
@@ -4470,7 +4477,7 @@ index 16b5350..095a9f3 100644
    revision: number;
    resetZoom: () => void;
    resizeChartBy: (
-@@ -1126,6 +1141,10 @@ export interface XlsxViewerController {
+@@ -1126,6 +1148,10 @@ export interface XlsxViewerController {
    ) => void;
    resizeColumn: (col: number, widthPx: number) => void;
    resizeRow: (row: number, heightPx: number) => void;
@@ -4481,7 +4488,7 @@ index 16b5350..095a9f3 100644
    redo: () => void;
    pasteFromClipboard: () => Promise<boolean>;
    pasteStructuredClipboardData: (payload: string) => boolean;
-@@ -1176,11 +1195,19 @@ export interface XlsxViewerController {
+@@ -1176,11 +1202,19 @@ export interface XlsxViewerController {
     */
    setRangeStyle: (range: XlsxCellRange, style: XlsxCellStyleInput) => void;
    setZoomScale: (zoomScale: number) => void;
@@ -4503,7 +4510,7 @@ index 16b5350..095a9f3 100644
    setActiveSheetIndex: (index: number) => void;
    setActiveTabIndex: (index: number) => void;
    selectedChart: XlsxChart | null;
-@@ -1233,9 +1260,11 @@ export interface XlsxViewerSelection {
+@@ -1233,9 +1267,11 @@ export interface XlsxViewerSelection {
    activeCellAddress: string | null;
    clearSelection: () => void;
    selectedRangeAddress: string | null;
@@ -4517,7 +4524,7 @@ index 16b5350..095a9f3 100644
  }
  
  export interface XlsxViewerZoom {
-@@ -1266,7 +1295,7 @@ export interface XlsxViewerEditing {
+@@ -1266,7 +1302,7 @@ export interface XlsxViewerEditing {
    getCellFormula: (cell?: XlsxCellAddress | null) => string;
    getFormControlItems: (controlIndex: number, sheetIndex?: number) => string[];
    getSheetFormControls: (sheetIndex?: number) => XlsxFormControl[];
@@ -4526,7 +4533,7 @@ index 16b5350..095a9f3 100644
    pasteFromClipboard: () => Promise<boolean>;
    pasteStructuredClipboardData: (payload: string) => boolean;
    pasteText: (text: string) => boolean;
-@@ -1547,6 +1576,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
+@@ -1547,6 +1583,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
     * ```
     */
    experimentalCanvas?: boolean;
@@ -4535,7 +4542,7 @@ index 16b5350..095a9f3 100644
    /** Content shown for non-size load errors, or a function that receives the thrown error. */
    errorState?: React.ReactNode | ((error: Error) => React.ReactNode);
    /** Content shown when `maxFileSizeBytes` rejects a file. */
-@@ -1578,6 +1609,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
+@@ -1578,6 +1616,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
     * ```
     */
    getCellStyle?: (context: XlsxCellStyleContext) => React.CSSProperties | null | undefined;
@@ -4595,7 +4602,7 @@ index 0000000..e613caa
 +}
 +
 diff --git a/packages/react-xlsx/src/worker-client.ts b/packages/react-xlsx/src/worker-client.ts
-index 0a6a9c7..086f090 100644
+index 0a6a9c7..489c816 100644
 --- a/packages/react-xlsx/src/worker-client.ts
 +++ b/packages/react-xlsx/src/worker-client.ts
 @@ -1,3 +1,7 @@
@@ -4606,7 +4613,7 @@ index 0a6a9c7..086f090 100644
  import type { XlsxChart, XlsxChartsheet, XlsxFormControl, XlsxSheetData, XlsxTable, XlsxWorkbookTab } from "./types";
  import { getConfiguredWorkerWasmSource, type WorkerWasmSource } from "./wasm";
  
-@@ -10,8 +14,14 @@ type WorkerMessage =
+@@ -10,13 +14,20 @@ type WorkerMessage =
          showHiddenSheets?: boolean;
          skipXmlParsing?: boolean;
          wasmSource?: WorkerWasmSource;
@@ -4621,7 +4628,13 @@ index 0a6a9c7..086f090 100644
    | {
        id: number;
        type: "parseCharts";
-@@ -31,6 +41,11 @@ type WorkerMessage =
+       payload: {
+         buffer: ArrayBuffer;
++        autoCalculateFormulaLimit?: number;
+         showHiddenSheets?: boolean;
+         skipXmlParsing?: boolean;
+         wasmSource?: WorkerWasmSource;
+@@ -31,6 +42,11 @@ type WorkerMessage =
          col: number;
        };
      }
@@ -4633,7 +4646,7 @@ index 0a6a9c7..086f090 100644
    | {
        id: number;
        type: "getRowsBatch";
-@@ -42,6 +57,8 @@ type WorkerMessage =
+@@ -42,6 +58,8 @@ type WorkerMessage =
      };
  
  type WorkerSuccessMessage =
@@ -4642,7 +4655,7 @@ index 0a6a9c7..086f090 100644
    | {
        id: number;
        success: true;
-@@ -57,6 +74,7 @@ type WorkerSuccessMessage =
+@@ -57,6 +75,7 @@ type WorkerSuccessMessage =
        result: {
          chartsByWorkbookSheetIndex: XlsxChart[][];
          chartsheets: XlsxChartsheet[];
@@ -4650,7 +4663,7 @@ index 0a6a9c7..086f090 100644
          formControlsByWorkbookSheetIndex: XlsxFormControl[][];
          sheets: XlsxSheetData[];
          tablesByWorkbookSheetIndex: XlsxTable[][];
-@@ -69,6 +87,7 @@ type WorkerSuccessMessage =
+@@ -69,6 +88,7 @@ type WorkerSuccessMessage =
        result: {
          displayValue: string;
          formula: string;
@@ -4658,7 +4671,7 @@ index 0a6a9c7..086f090 100644
        };
      }
    | {
-@@ -131,11 +150,17 @@ export class XlsxWorkerClient {
+@@ -131,11 +151,17 @@ export class XlsxWorkerClient {
      this.pendingRequests.clear();
    }
  
@@ -4677,7 +4690,7 @@ index 0a6a9c7..086f090 100644
        formControlsByWorkbookSheetIndex: XlsxFormControl[][];
        sheets: XlsxSheetData[];
        tablesByWorkbookSheetIndex: XlsxTable[][];
-@@ -146,16 +171,26 @@ export class XlsxWorkerClient {
+@@ -146,16 +172,26 @@ export class XlsxWorkerClient {
          buffer: workerBuffer,
          showHiddenSheets,
          skipXmlParsing,
@@ -4705,7 +4718,24 @@ index 0a6a9c7..086f090 100644
      }>({
        id: 0,
        payload: { col, row, workbookSheetIndex },
-@@ -181,6 +216,12 @@ export class XlsxWorkerClient {
+@@ -163,7 +199,7 @@ export class XlsxWorkerClient {
+     });
+   }
+ 
+-  parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHiddenSheets = false) {
++  parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHiddenSheets = false, autoCalculateFormulaLimit?: number) {
+     const workerBuffer = cloneArrayBufferForTransfer(buffer);
+     return this.request<{
+       chartsByWorkbookSheetIndex: XlsxChart[][];
+@@ -172,6 +208,7 @@ export class XlsxWorkerClient {
+     }>({
+       id: 0,
+       payload: {
++        autoCalculateFormulaLimit,
+         buffer: workerBuffer,
+         showHiddenSheets,
+         skipXmlParsing,
+@@ -181,6 +218,12 @@ export class XlsxWorkerClient {
      }, [workerBuffer]);
    }
  
@@ -4719,7 +4749,7 @@ index 0a6a9c7..086f090 100644
      return this.request<unknown[] | null>({
        id: 0,
 diff --git a/packages/react-xlsx/src/xlsx-worker.ts b/packages/react-xlsx/src/xlsx-worker.ts
-index 8857fde..4dca040 100644
+index 8857fde..73038f3 100644
 --- a/packages/react-xlsx/src/xlsx-worker.ts
 +++ b/packages/react-xlsx/src/xlsx-worker.ts
 @@ -1,3 +1,5 @@
@@ -4760,7 +4790,14 @@ index 8857fde..4dca040 100644
        };
      }
    | {
-@@ -79,6 +87,11 @@ type WorkerRequest =
+@@ -74,11 +82,18 @@ type WorkerRequest =
+       type: "parseCharts";
+       payload: {
+         buffer: ArrayBuffer;
++        /** The main-thread workbook's calculation limit, so chart values come from the same state. */
++        autoCalculateFormulaLimit?: number;
+         showHiddenSheets?: boolean;
+         skipXmlParsing?: boolean;
          wasmSource?: WorkerWasmSource;
        };
      }
@@ -4772,7 +4809,7 @@ index 8857fde..4dca040 100644
    | {
        id: number;
        type: "getCellSnapshot";
-@@ -88,6 +101,11 @@ type WorkerRequest =
+@@ -88,6 +103,11 @@ type WorkerRequest =
          col: number;
        };
      }
@@ -4784,7 +4821,7 @@ index 8857fde..4dca040 100644
    | {
        id: number;
        type: "getRowsBatch";
-@@ -110,6 +128,7 @@ type WorkerSuccessResponse = {
+@@ -110,6 +130,7 @@ type WorkerSuccessResponse = {
      | {
          chartsByWorkbookSheetIndex: XlsxChart[][];
          chartsheets: XlsxChartsheet[];
@@ -4792,7 +4829,7 @@ index 8857fde..4dca040 100644
          formControlsByWorkbookSheetIndex: XlsxFormControl[][];
          sheets: XlsxSheetData[];
          tablesByWorkbookSheetIndex: XlsxTable[][];
-@@ -118,7 +137,10 @@ type WorkerSuccessResponse = {
+@@ -118,7 +139,10 @@ type WorkerSuccessResponse = {
      | {
          displayValue: string;
          formula: string;
@@ -4803,7 +4840,7 @@ index 8857fde..4dca040 100644
      | unknown[]
      | null;
  };
-@@ -132,6 +154,10 @@ type WorkerErrorResponse = {
+@@ -132,6 +156,10 @@ type WorkerErrorResponse = {
  type WorkerResponse = WorkerSuccessResponse | WorkerErrorResponse;
  
  let workbook: Workbook | null = null;
@@ -4814,7 +4851,7 @@ index 8857fde..4dca040 100644
  let chartsByWorkbookSheetIndex: XlsxChart[][] = [];
  let chartsheets: XlsxChartsheet[] = [];
  let formControlsByWorkbookSheetIndex: XlsxFormControl[][] = [];
-@@ -560,7 +586,11 @@ function buildSheetList(
+@@ -560,7 +588,11 @@ function buildSheetList(
        continue;
      }
  
@@ -4827,7 +4864,7 @@ index 8857fde..4dca040 100644
      const visibleRows: number[] = [];
      const hiddenRows: number[] = [];
      for (let row = 0; row <= maxRow; row += 1) {
-@@ -749,18 +779,13 @@ function decodeHtmlEntities(value: string): string {
+@@ -749,18 +781,13 @@ function decodeHtmlEntities(value: string): string {
      .replace(/&amp;/g, "&");
  }
  
@@ -4848,7 +4885,7 @@ index 8857fde..4dca040 100644
    if (cellValue.is_error) {
      return cellValue.asError() ?? "";
    }
-@@ -782,26 +807,35 @@ function cellAddressToA1(cell: XlsxCellAddress) {
+@@ -782,26 +809,35 @@ function cellAddressToA1(cell: XlsxCellAddress) {
    return `${label}${cell.row + 1}`;
  }
  
@@ -4892,7 +4929,7 @@ index 8857fde..4dca040 100644
    const structureAssets = effectiveSkipXmlParsing || shouldUseFastStructureParse || !canParseXmlInWorker()
      ? null
      : parseWorkbookStructureAssets(bytes, {
-@@ -818,6 +852,7 @@ async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHid
+@@ -818,6 +854,7 @@ async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHid
    );
    const sheetLayoutStates = structureAssets ? undefined : parseWorkerSheetLayoutAssets(bytes, nextWorkbook.sheetCount);
    workbook = nextWorkbook;
@@ -4900,7 +4937,7 @@ index 8857fde..4dca040 100644
    sheets = buildSheetList(nextWorkbook, structureAssets, sheetLayoutStates, showHiddenSheets);
    tablesByWorkbookSheetIndex = Array.from({ length: nextWorkbook.sheetCount }, (_, workbookSheetIndex) =>
      mapWorksheetTables(
-@@ -845,6 +880,7 @@ async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHid
+@@ -845,6 +882,7 @@ async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHid
    chartsheets = chartAssets.chartsheets;
    tabs = chartAssets.tabs;
    return {
@@ -4908,7 +4945,18 @@ index 8857fde..4dca040 100644
      chartsByWorkbookSheetIndex,
      chartsheets,
      formControlsByWorkbookSheetIndex,
-@@ -859,11 +895,8 @@ async function parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHidd
+@@ -854,16 +892,18 @@ async function loadWorkbook(buffer: ArrayBuffer, skipXmlParsing = false, showHid
+   };
+ }
+ 
+-async function parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHiddenSheets = false) {
++async function parseCharts(
++  buffer: ArrayBuffer,
++  skipXmlParsing = false,
++  showHiddenSheets = false,
++  autoCalculateFormulaLimit = AUTO_CALCULATE_FORMULA_THRESHOLD
++) {
+   const wasmModule = await getSheetsWasmModule();
    const bytes = new Uint8Array(buffer);
    const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
    let activeWorkbook = wasmModule.Workbook.fromBytes(bytes);
@@ -4918,11 +4966,11 @@ index 8857fde..4dca040 100644
 -  }
 -  if (totalFormulas <= FORMULA_COUNT_THRESHOLD) {
 +  const totalFormulas = countWorkbookFormulas(activeWorkbook);
-+  if (totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD) {
++  if (totalFormulas <= autoCalculateFormulaLimit) {
      const result = safeCalculate(activeWorkbook, {
        reparse: () => wasmModule.Workbook.fromBytes(bytes)
      });
-@@ -888,6 +921,24 @@ async function parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHidd
+@@ -888,6 +928,24 @@ async function parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHidd
    };
  }
  
@@ -4947,7 +4995,7 @@ index 8857fde..4dca040 100644
  function respond(message: WorkerResponse) {
    self.postMessage(message);
  }
-@@ -898,7 +949,12 @@ async function handleMessage(message: WorkerRequest) {
+@@ -898,29 +956,52 @@ async function handleMessage(message: WorkerRequest) {
        if (message.payload.wasmSource !== undefined) {
          setWasmSource(message.payload.wasmSource);
        }
@@ -4961,13 +5009,19 @@ index 8857fde..4dca040 100644
      }
      case "parseCharts": {
        if (message.payload.wasmSource !== undefined) {
-@@ -906,21 +962,34 @@ async function handleMessage(message: WorkerRequest) {
+         setWasmSource(message.payload.wasmSource);
        }
-       return parseCharts(message.payload.buffer, message.payload.skipXmlParsing, message.payload.showHiddenSheets);
-     }
+-      return parseCharts(message.payload.buffer, message.payload.skipXmlParsing, message.payload.showHiddenSheets);
++      return parseCharts(
++        message.payload.buffer,
++        message.payload.skipXmlParsing,
++        message.payload.showHiddenSheets,
++        message.payload.autoCalculateFormulaLimit
++      );
++    }
 +    case "recalculate": {
 +      return recalculateWorkbook(message.payload.externalFnValues);
-+    }
+     }
      case "getCellSnapshot": {
        if (!workbook) {
          return {
@@ -5037,7 +5091,7 @@ index ba00fed..73fefaa 100644
      format: ["esm"],
      noExternal,
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index 079eafc..426d1b6 100644
+index 079eafc..62c914b 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
 @@ -136,8 +136,8 @@ importers:
@@ -5046,8 +5100,8 @@ index 079eafc..426d1b6 100644
        '@dukelib/sheets-wasm':
 -        specifier: 0.1.23
 -        version: 0.1.23
-+        specifier: https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.1.tar.gz
-+        version: https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.1.tar.gz
++        specifier: https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.2.tar.gz
++        version: https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.2.tar.gz
        '@tanstack/react-virtual':
          specifier: ^3.13.12
          version: 3.13.23(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -5057,9 +5111,9 @@ index 079eafc..426d1b6 100644
  
 -  '@dukelib/sheets-wasm@0.1.23':
 -    resolution: {integrity: sha512-E/vHXR2I/EodNCpyVcFq0p8/u5qxmKxatUZvB7bsFfghUPQ2GMxg81MBFjOEQtLKXnzR7xjXOyzPzBTLbv2e1g==}
-+  '@dukelib/sheets-wasm@https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.1.tar.gz':
-+    resolution: {tarball: https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.1.tar.gz}
-+    version: 0.1.23-modus.1
++  '@dukelib/sheets-wasm@https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.2.tar.gz':
++    resolution: {tarball: https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.2.tar.gz}
++    version: 0.1.23-modus.2
  
    '@ecies/ciphers@0.2.6':
      resolution: {integrity: sha512-patgsRPKGkhhoBjETV4XxD0En4ui5fbX0hzayqI3M8tvNMGUoUvmyYAIWwlxBc1KX5cturfqByYdj5bYGRpN9g==}
@@ -5068,7 +5122,7 @@ index 079eafc..426d1b6 100644
        which: 4.0.0
  
 -  '@dukelib/sheets-wasm@0.1.23': {}
-+  '@dukelib/sheets-wasm@https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.1.tar.gz': {}
++  '@dukelib/sheets-wasm@https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.2.tar.gz': {}
  
    '@ecies/ciphers@0.2.6(@noble/ciphers@1.3.0)':
      dependencies:

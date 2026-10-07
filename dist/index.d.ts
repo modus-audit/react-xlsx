@@ -987,6 +987,13 @@ interface UseXlsxViewerControllerOptions {
      */
     allowResizeInReadOnly?: boolean;
     /**
+     * Main-thread workbooks with at most this many formulas are calculated on load and after each
+     * edit; larger ones keep their saved values. An editor can raise it, a read-only view rarely needs to.
+     *
+     * @default 1000
+     */
+    autoCalculateFormulaLimit?: number;
+    /**
      * Values keyed by `externalCallKey(name, args)` resolve add-in formulas without rewriting them.
      * Unmapped calls preserve their cached values.
      */

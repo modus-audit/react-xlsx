@@ -4867,7 +4867,6 @@ function externalCalcOptions(values) {
 
 // src/safe-calculate.ts
 var AUTO_CALCULATE_FORMULA_THRESHOLD = 1e3;
-var CALCULATE_FORMULA_HARD_LIMIT = 5e3;
 var SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
 function collectReferencedSheetNames(workbook2) {
   const referenced = /* @__PURE__ */ new Set();
@@ -4932,9 +4931,6 @@ function safeCalculate(workbook2, options = {}) {
     skipReason: reason,
     calculation: calculationReport(reason === "calculate-trapped" ? "failed" : "skipped", reason, formulaCount, sourceFormulaCount2)
   });
-  if (formulaCount >= CALCULATE_FORMULA_HARD_LIMIT) {
-    return skipped("formula-limit");
-  }
   if (hasUnresolvedSheetReferences(workbook2)) {
     return skipped("unresolved-sheet-refs");
   }
@@ -5617,13 +5613,13 @@ async function loadWorkbook(buffer, skipXmlParsing = false, showHiddenSheets = f
     tabs
   };
 }
-async function parseCharts(buffer, skipXmlParsing = false, showHiddenSheets = false) {
+async function parseCharts(buffer, skipXmlParsing = false, showHiddenSheets = false, autoCalculateFormulaLimit = AUTO_CALCULATE_FORMULA_THRESHOLD) {
   const wasmModule = await getSheetsWasmModule();
   const bytes = new Uint8Array(buffer);
   const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
   let activeWorkbook = wasmModule.Workbook.fromBytes(bytes);
   const totalFormulas = countWorkbookFormulas(activeWorkbook);
-  if (totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD) {
+  if (totalFormulas <= autoCalculateFormulaLimit) {
     const result = safeCalculate(activeWorkbook, {
       reparse: () => wasmModule.Workbook.fromBytes(bytes)
     });
@@ -5680,7 +5676,12 @@ async function handleMessage(message) {
       if (message.payload.wasmSource !== void 0) {
         setWasmSource(message.payload.wasmSource);
       }
-      return parseCharts(message.payload.buffer, message.payload.skipXmlParsing, message.payload.showHiddenSheets);
+      return parseCharts(
+        message.payload.buffer,
+        message.payload.skipXmlParsing,
+        message.payload.showHiddenSheets,
+        message.payload.autoCalculateFormulaLimit
+      );
     }
     case "recalculate": {
       return recalculateWorkbook(message.payload.externalFnValues);
