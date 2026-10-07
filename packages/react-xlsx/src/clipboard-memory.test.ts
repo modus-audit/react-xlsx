@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { cutPayload, forgetCopy, rememberCopy, rememberedCells, valuesOnly, withoutCopyOrigins } from "./clipboard-memory.ts";
+import { cutPayload, cutStillApplies, forgetCopy, rememberCopy, rememberedCells, valuesOnly, withoutCopyOrigins } from "./clipboard-memory.ts";
 
 const copied = JSON.stringify({
   rows: 1,
@@ -44,4 +44,11 @@ test("the remembered copy is used only while the clipboard text is that copy", (
 test("a cut whose clear is refused copies instead, so pasting it still relocates formulas", () => {
   assert.equal(cutPayload(copied, false), copied);
   assert.equal(JSON.parse(cutPayload(copied, true)).cells[0].source, undefined);
+});
+
+test("an async cut leaves the cells when the sheet or workbook changed during the clipboard write", () => {
+  const source = { sheet: 0, generation: 3 };
+  assert.equal(cutStillApplies(source, { sheet: 0, generation: 3 }), true);
+  assert.equal(cutStillApplies(source, { sheet: 1, generation: 3 }), false);
+  assert.equal(cutStillApplies(source, { sheet: 0, generation: 4 }), false);
 });

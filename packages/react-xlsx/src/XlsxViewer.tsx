@@ -16425,7 +16425,7 @@ function XlsxGrid({
         return;
       }
 
-      pasteText(textPayload);
+      pasteText(textPayload, { literal: valuesOnlyPaste });
     },
     tabIndex: 0,
     style: {

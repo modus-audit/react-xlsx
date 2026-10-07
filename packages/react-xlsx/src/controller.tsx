@@ -60,6 +60,7 @@ import { mergesTouching, mergeTarget } from "./merge-regions";
 import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
 import {
   clipboardTextGrid,
+  isPastedFormula,
   fillWrites,
   formulaDelta,
   formulaProblem,
@@ -69,8 +70,9 @@ import {
   textWrites,
   type XlsxEdit
 } from "./edit-guard";
-import { cutPayload, INTERNAL_CLIPBOARD_MIME, rememberCopy, rememberedCells, valuesOnly } from "./clipboard-memory";
+import { cutPayload, cutStillApplies, INTERNAL_CLIPBOARD_MIME, rememberCopy, rememberedCells, valuesOnly } from "./clipboard-memory";
 import { needsMainThreadReload } from "./load-mode";
+import { externalValuesState } from "./external-values";
 import { autoFitSizes } from "./auto-fit";
 import type {
   UseXlsxViewerControllerOptions,
@@ -1912,8 +1914,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   // Read when a workbook loads or recalculates, so new values recalculate in place.
   const externalFnValuesRef = React.useRef(externalFnValues);
   externalFnValuesRef.current = externalFnValues;
-  /** The values the workbook was last calculated with, so a change recalculates exactly once. */
-  const appliedExternalFnValuesRef = React.useRef<ExternalFnValues | undefined>(undefined);
+  const [externalValues] = React.useState(externalValuesState);
   const onBeforeEditRef = React.useRef(onBeforeEdit);
   onBeforeEditRef.current = onBeforeEdit;
   // Read when a workbook loads, so switching read-only on or off never reloads it.
@@ -1990,7 +1991,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const workerCellSnapshotCacheRef = React.useRef(new Map<string, { displayValue: string; formula: string; diagnostic: XlsxCellCalculationDiagnostic }>());
   const displayFileName = React.useMemo(() => resolveDisplayFileName(src, fileName), [fileName, src]);
   const shouldDeferLoading = deferLoadingAboveBytes > 0;
-  const readOnly = requestedReadOnly || forcedReadOnly;
+  // The worker can't edit, so a worker-backed workbook stays read-only until it reloads on the
+  // main thread (see the effect after the load).
+  const readOnly = requestedReadOnly || forcedReadOnly || isWorkerBacked;
   const canResizeReadOnly = requestedReadOnly && allowResizeInReadOnly && !forcedReadOnly;
   const workerSupported = useWorker && typeof Worker !== "undefined" && canUseConfiguredWasmSourceInWorker();
   const shouldForceReadOnlyForBuffer = React.useCallback((bufferByteLength: number) => (
@@ -2236,7 +2239,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [getWorkerClient, hasIncompleteWorkerChartSnapshot, setChartAssets, showHiddenSheets, skipXmlParsing, workerSupported]);
 
   const loadWorkbookOnMainThread = React.useCallback(async (buffer: ArrayBuffer) => {
-    appliedExternalFnValuesRef.current = externalFnValuesRef.current;
+    externalValues.loaded(externalFnValuesRef.current);
     const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValuesRef.current, autoCalculateFormulaLimitRef.current);
     const bytes = new Uint8Array(buffer);
     const nextImageAssets = loadWorkbookImageAssets(
@@ -2399,7 +2402,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
         if (shouldUseWorkerForLoad) {
           try {
-            appliedExternalFnValuesRef.current = externalFnValuesRef.current;
+            externalValues.loaded(externalFnValuesRef.current);
             const snapshot = await getWorkerClient().loadWorkbook(buffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValuesRef.current);
             if (!isCurrent || abortController.signal.aborted) {
               return;
@@ -2536,6 +2539,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const activeSheet = activeTab?.kind === "sheet"
     ? sheets[activeTab.sheetIndex ?? -1] ?? null
     : null;
+  /** Read after an await, to tell whether the user moved to another sheet meanwhile. */
+  const activeSheetRef = React.useRef(activeSheet);
+  activeSheetRef.current = activeSheet;
   const deferredMetadataCell = React.useDeferredValue(activeCell);
   const deferredMetadataSheet = React.useDeferredValue(activeSheet);
   const activeZoomTabKey = activeTab?.id ?? DEFAULT_ZOOM_TAB_KEY;
@@ -2684,7 +2690,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(new Uint8Array(deferredBuffer), skipXmlParsing);
 
     if (shouldUseWorkerForLoad) {
-      appliedExternalFnValuesRef.current = externalFnValuesRef.current;
+      externalValues.loaded(externalFnValuesRef.current);
       void getWorkerClient().loadWorkbook(deferredBuffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValuesRef.current)
         .then((snapshot) => {
           if (!isCurrent()) return;
@@ -2772,7 +2778,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
-    appliedExternalFnValuesRef.current = externalFnValuesRef.current;
+    externalValues.loaded(externalFnValuesRef.current);
     void parseWorkbookBuffer(deferredBuffer, externalFnValuesRef.current, autoCalculateFormulaLimitRef.current)
       .then((nextParsedWorkbook) => {
         if (!isCurrent()) { nextParsedWorkbook.workbook.free(); return; }
@@ -2849,7 +2855,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
-    const result = safeCalculate(targetWorkbook, { calcOptions: externalCalcOptions(externalFnValuesRef.current) });
+    const result = safeCalculate(targetWorkbook, { calcOptions: externalCalcOptions(externalValues.current()) });
     hasCalculatedValuesRef.current ||= result.calculated;
     applyCalculation(result.calculation, attempt);
     if (!result.calculated) {
@@ -3901,8 +3907,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
   const recalculate = React.useCallback((values?: ExternalFnValues) => {
     if (isLoading || (!isWorkerBacked && !workbook)) return;
-    const externalFnValues = values ?? externalFnValuesRef.current;
-    appliedExternalFnValuesRef.current = externalFnValues;
+    const externalFnValues = externalValues.recalculated(values);
     const attempt = beginCalculation();
     const generation = workbookGenerationRef.current;
     const isCurrent = () => generation === workbookGenerationRef.current && attempt === calculationAttemptRef.current;
@@ -3943,7 +3948,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
   // New external values recalculate the loaded workbook in place, once.
   React.useEffect(() => {
-    if (isLoading || appliedExternalFnValuesRef.current === externalFnValues) return;
+    if (isLoading || !externalValues.propChanged(externalFnValues)) return;
     recalculate(externalFnValues);
   }, [externalFnValues, isLoading, recalculate]);
 
@@ -4965,7 +4970,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setRevision((current) => current + 1);
   }, [allowEdit, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, selection, workbook]);
 
-  const pasteText = React.useCallback((text: string) => {
+  /** Pastes tab-separated text at the active cell. `literal` (Paste Values) writes `=…` as text. */
+  const pasteText = React.useCallback((text: string, options?: { literal?: boolean }) => {
+    const literal = options?.literal === true;
     const worksheet = getActiveWorksheet();
     const targetCell = activeCell ?? selection?.start ?? null;
     if (readOnly || !worksheet || !workbook || !targetCell || !text) {
@@ -4980,7 +4987,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     if (!allowEdit({
       kind: "content",
       range: pastedRange,
-      formulaDelta: () => formulaDelta(textWrites(targetCell, grid), (row, col) => Boolean(worksheet.getFormulaAt(row, col)))
+      formulaDelta: () => formulaDelta(textWrites(targetCell, grid, literal), (row, col) => Boolean(worksheet.getFormulaAt(row, col)))
     })) {
       return false;
     }
@@ -4998,7 +5005,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         if (!before) {
           continue;
         }
-        if (rawValue.startsWith("=") && rawValue.length > 1) {
+        if (isPastedFormula(rawValue, literal)) {
           worksheet.setFormula(cellAddressToA1(nextCell), rawValue);
           const after = captureCellMutationState(nextCell);
           if (!after) {
@@ -5168,18 +5175,29 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     if (!clipboardData) {
       return false;
     }
+    // The clear is authorized, and its cells fixed, before any await: it empties exactly the cells
+    // copied, even if the selection moves while the browser writes the clipboard.
     const clear = prepareClear();
-    const structured = cutPayload(clipboardData.structured, clear !== null);
-    rememberCopy(clipboardData.text, structured);
+    const source = { sheet: activeSheetRef.current?.workbookSheetIndex, generation: workbookGenerationRef.current };
+    rememberCopy(clipboardData.text, cutPayload(clipboardData.structured, clear !== null));
     if (clipboard) {
       clipboard.setData("text/plain", clipboardData.text);
       clipboard.setData("text/html", clipboardData.html);
-      clipboard.setData(INTERNAL_CLIPBOARD_MIME, structured);
+      clipboard.setData(INTERNAL_CLIPBOARD_MIME, cutPayload(clipboardData.structured, clear !== null));
     } else if (!(await writeClipboard(clipboardData))) {
       return false;
     }
-    clear?.();
-    return clear !== null;
+    const moved = !cutStillApplies(source, {
+      sheet: activeSheetRef.current?.workbookSheetIndex,
+      generation: workbookGenerationRef.current
+    });
+    if (!clear || moved) {
+      // Another sheet or workbook is showing now: leave the cells, and paste it as a copy.
+      if (moved) rememberCopy(clipboardData.text, clipboardData.structured);
+      return false;
+    }
+    clear();
+    return true;
   }, [getClipboardData, prepareClear, readOnly, writeClipboard]);
 
   const paste = React.useCallback(async (options?: { valuesOnly?: boolean }) => {
@@ -5204,7 +5222,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     structured ??= rememberedCells(text);
     if (options?.valuesOnly) {
       const values = structured && valuesOnly(structured);
-      return values ? pasteStructuredClipboardData(values) : pasteText(text);
+      return values ? pasteStructuredClipboardData(values) : pasteText(text, { literal: true });
     }
     return structured ? pasteStructuredClipboardData(structured) : pasteText(text);
   }, [pasteStructuredClipboardData, pasteText, readOnly]);

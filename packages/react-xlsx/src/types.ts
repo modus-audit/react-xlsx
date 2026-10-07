@@ -1165,7 +1165,7 @@ export interface XlsxViewerController {
   redo: () => void;
   pasteFromClipboard: () => Promise<boolean>;
   pasteStructuredClipboardData: (payload: string) => boolean;
-  pasteText: (text: string) => boolean;
+  pasteText: (text: string, options?: { literal?: boolean }) => boolean;
   /**
    * Pastes the system clipboard at the active cell. A paste of the viewer's own last copy keeps
    * its formulas and formatting; `valuesOnly` pastes values alone (Excel's Paste Values), leaving
@@ -1332,7 +1332,7 @@ export interface XlsxViewerEditing {
   mergeSelection: () => XlsxCellRange | null;
   pasteFromClipboard: () => Promise<boolean>;
   pasteStructuredClipboardData: (payload: string) => boolean;
-  pasteText: (text: string) => boolean;
+  pasteText: (text: string, options?: { literal?: boolean }) => boolean;
   paste: (options?: { valuesOnly?: boolean }) => Promise<boolean>;
   cutSelection: (clipboard?: DataTransfer) => Promise<boolean>;
   autoFit: (axis: "column" | "row", indices?: Iterable<number>) => void;

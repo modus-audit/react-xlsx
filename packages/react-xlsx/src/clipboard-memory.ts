@@ -67,6 +67,15 @@ export function cutPayload(structured: string, clearAllowed: boolean): string {
   return (clearAllowed && withoutCopyOrigins(structured)) || structured;
 }
 
+/** Whether a cut's clear still belongs to what's on screen after its clipboard write: the same
+ *  workbook load and the same sheet. */
+export function cutStillApplies(
+  source: { sheet: number | undefined; generation: number },
+  now: { sheet: number | undefined; generation: number }
+): boolean {
+  return source.sheet === now.sheet && source.generation === now.generation;
+}
+
 /** Excel's Paste Values: values only, no formulas, formatting or merges. */
 export function valuesOnly(structured: string): string | null {
   const parsed = payloadCells(structured);

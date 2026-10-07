@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { clipboardTextGrid, fillWrites, formulaDelta, formulaProblem, formulaText, payloadWrites, rangeFrom, textWrites } from "./edit-guard.ts";
+import { clipboardTextGrid, isPastedFormula, fillWrites, formulaDelta, formulaProblem, formulaText, payloadWrites, rangeFrom, textWrites } from "./edit-guard.ts";
 
 test("a formula entry gets one leading =", () => {
   assert.equal(formulaText("A1*2"), "=A1*2");
@@ -56,4 +56,12 @@ test("a fill repeats the source's formulas across the target, outside the source
 test("a paste's range runs from the start over the copied extent", () => {
   assert.deepEqual(rangeFrom({ row: 2, col: 1 }, 2, 3), { start: { row: 2, col: 1 }, end: { row: 3, col: 3 } });
   assert.deepEqual(clipboardTextGrid("a\tb\r\nc\n"), [["a", "b"], ["c"]]);
+});
+
+test("values-only plain text pastes =… as text, adding no formulas", () => {
+  assert.equal(isPastedFormula("=1+2"), true);
+  assert.equal(isPastedFormula("=1+2", true), false);
+  assert.equal(isPastedFormula("="), false);
+  const writes = [...textWrites({ row: 0, col: 0 }, clipboardTextGrid("=1+2\t=A1"), true)];
+  assert.deepEqual(writes.map((write) => write.formula), [false, false]);
 });

@@ -112,12 +112,17 @@ export function formulaDelta(writes: Iterable<EditAddress & { formula: boolean }
   return delta;
 }
 
-export function* textWrites(start: EditAddress, grid: string[][]) {
+/** Whether a pasted text field becomes a formula: `=…`, unless pasting values only. */
+export function isPastedFormula(value: string, literal = false): boolean {
+  return !literal && value.startsWith("=") && value.length > 1;
+}
+
+export function* textWrites(start: EditAddress, grid: string[][], literal = false) {
   for (let row = 0; row < grid.length; row += 1) {
     const line = grid[row] ?? [];
     for (let col = 0; col < line.length; col += 1) {
       const value = line[col] ?? "";
-      yield { row: start.row + row, col: start.col + col, formula: value.startsWith("=") && value.length > 1 };
+      yield { row: start.row + row, col: start.col + col, formula: isPastedFormula(value, literal) };
     }
   }
 }
