@@ -6704,7 +6704,6 @@ function externalCalcOptions(values) {
 
 // src/safe-calculate.ts
 var AUTO_CALCULATE_FORMULA_THRESHOLD = 1e3;
-var CALCULATE_FORMULA_HARD_LIMIT = 5e3;
 var SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
 function collectReferencedSheetNames(workbook) {
   const referenced = /* @__PURE__ */ new Set();
@@ -6761,9 +6760,6 @@ function countWorkbookFormulas(workbook) {
   return total;
 }
 function safeCalculate(workbook, options = {}) {
-  if (countWorkbookFormulas(workbook) >= CALCULATE_FORMULA_HARD_LIMIT) {
-    return { workbook, calculated: false, skipReason: "formula-limit" };
-  }
   if (hasUnresolvedSheetReferences(workbook)) {
     return { workbook, calculated: false, skipReason: "unresolved-sheet-refs" };
   }
@@ -7090,11 +7086,12 @@ var XlsxWorkerClient = class {
       type: "getCellSnapshot"
     });
   }
-  parseCharts(buffer, skipXmlParsing = false, showHiddenSheets = false) {
+  parseCharts(buffer, skipXmlParsing = false, showHiddenSheets = false, autoCalculateFormulaLimit) {
     const workerBuffer = cloneArrayBufferForTransfer(buffer);
     return this.request({
       id: 0,
       payload: {
+        autoCalculateFormulaLimit,
         buffer: workerBuffer,
         showHiddenSheets,
         skipXmlParsing,
@@ -8357,10 +8354,10 @@ async function resolveWorkbookBuffer({ file, src }, signal) {
   }
   return buffer;
 }
-async function parseWorkbookBuffer(buffer, externalFnValues) {
+async function parseWorkbookBuffer(buffer, externalFnValues, autoCalculateFormulaLimit) {
   const wasmModule = await getSheetsWasmModule();
   const initialWorkbook = wasmModule.Workbook.fromBytes(new Uint8Array(buffer));
-  const shouldAutoCalculate = countWorkbookFormulas(initialWorkbook) <= AUTO_CALCULATE_FORMULA_THRESHOLD;
+  const shouldAutoCalculate = countWorkbookFormulas(initialWorkbook) <= autoCalculateFormulaLimit;
   if (!shouldAutoCalculate) {
     return { shouldAutoCalculate, workbook: initialWorkbook };
   }
@@ -8702,6 +8699,7 @@ function downloadUrl(src, fileName) {
 function useXlsxViewerController(options) {
   const {
     allowResizeInReadOnly = false,
+    autoCalculateFormulaLimit = AUTO_CALCULATE_FORMULA_THRESHOLD,
     deferLoadingAboveBytes = DEFAULT_DEFER_LOADING_ABOVE_BYTES,
     externalFnValues,
     file,
@@ -8714,6 +8712,8 @@ function useXlsxViewerController(options) {
     src,
     useWorker = true
   } = options;
+  const autoCalculateFormulaLimitRef = React.useRef(autoCalculateFormulaLimit);
+  autoCalculateFormulaLimitRef.current = autoCalculateFormulaLimit;
   const [isLoading, setIsLoading] = React.useState(Boolean(file ?? src));
   const [error, setError] = React.useState(null);
   const [workbook, setWorkbook] = React.useState(null);
@@ -8934,7 +8934,7 @@ function useXlsxViewerController(options) {
       runMainThreadFallback();
       return;
     }
-    void getWorkerClient().parseCharts(buffer, effectiveSkipXmlParsing, showHiddenSheets).then((result) => {
+    void getWorkerClient().parseCharts(buffer, effectiveSkipXmlParsing, showHiddenSheets, autoCalculateFormulaLimitRef.current).then((result) => {
       if (workerTimeoutHandle !== null) {
         window.clearTimeout(workerTimeoutHandle);
       }
@@ -8961,7 +8961,7 @@ function useXlsxViewerController(options) {
     });
   }, [getWorkerClient, hasIncompleteWorkerChartSnapshot, setChartAssets, showHiddenSheets, skipXmlParsing, workerSupported]);
   const loadWorkbookOnMainThread = React.useCallback(async (buffer) => {
-    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValues);
+    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValues, autoCalculateFormulaLimitRef.current);
     const bytes = new Uint8Array(buffer);
     const nextImageAssets = loadWorkbookImageAssets(
       bytes,
@@ -9394,7 +9394,7 @@ function useXlsxViewerController(options) {
       });
       return;
     }
-    void parseWorkbookBuffer(deferredBuffer, externalFnValues).then((nextParsedWorkbook) => {
+    void parseWorkbookBuffer(deferredBuffer, externalFnValues, autoCalculateFormulaLimitRef.current).then((nextParsedWorkbook) => {
       const bytes = new Uint8Array(deferredBuffer);
       const nextImageAssets = loadWorkbookImageAssets(
         bytes,
@@ -9450,7 +9450,7 @@ function useXlsxViewerController(options) {
     shouldUseWorkerForReadOnlyLoad
   ]);
   const maybeRecalculateWorkbook = React.useCallback((targetWorkbook) => {
-    if (!shouldAutoCalculate) {
+    if (!shouldAutoCalculate || countWorkbookFormulas(targetWorkbook) > autoCalculateFormulaLimitRef.current) {
       return;
     }
     const result = safeCalculate(targetWorkbook);
