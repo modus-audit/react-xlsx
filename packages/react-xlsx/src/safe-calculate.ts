@@ -5,7 +5,7 @@ import { calculationReport, inspectCalculation, type XlsxCalculationReport } fro
 /** Automatic load-time calculation stays conservative to keep large workbooks responsive. */
 export const AUTO_CALCULATE_FORMULA_THRESHOLD = 1_000;
 
-const SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
+const SHEET_REF_REGEX = /'((?:[^']|'')+)'!|(?<![#\w.\u0080-\uFFFF])([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
 
 type FormulaCell = { formula?: string | null };
 
