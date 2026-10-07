@@ -49,8 +49,100 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
-// src/calculation-diagnostics.ts
+// src/source-formula-inventory.ts
 var import_fflate = require("fflate");
+var spreadsheetNamespaces = /* @__PURE__ */ new Set([
+  "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+  "http://purl.oclc.org/ooxml/spreadsheetml/main"
+]);
+var relationshipNamespaces = /* @__PURE__ */ new Set([
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+  "http://purl.oclc.org/ooxml/officeDocument/relationships"
+]);
+var packageRelationshipNamespace = "http://schemas.openxmlformats.org/package/2006/relationships";
+function decodeAttribute(value) {
+  const entities = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+  return value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_, entity) => entity.startsWith("#") ? String.fromCodePoint(entity[1] === "x" ? parseInt(entity.slice(2), 16) : Number(entity.slice(1))) : entities[entity]);
+}
+function scanXml(xml, visit) {
+  const stack = [];
+  const tags = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<[^>"']*(?:"[^"]*"[^>"']*|'[^']*'[^>"']*)*>/g;
+  for (const match of xml.matchAll(tags)) {
+    const tag = match[0];
+    if (tag.startsWith("<!") || tag.startsWith("<?")) continue;
+    if (tag.startsWith("</")) {
+      stack.pop();
+      continue;
+    }
+    const qualifiedName = /^<([^\s/>]+)/.exec(tag)?.[1];
+    if (!qualifiedName) continue;
+    const attributes = Object.fromEntries(Array.from(
+      tag.matchAll(/\s([^\s=]+)\s*=\s*(["'])(.*?)\2/g),
+      (attribute) => [attribute[1], decodeAttribute(attribute[3])]
+    ));
+    const namespaces = Object.create(stack[stack.length - 1]?.namespaces ?? null);
+    for (const [name2, value] of Object.entries(attributes)) {
+      if (name2 === "xmlns") namespaces[""] = value;
+      else if (name2.startsWith("xmlns:")) namespaces[name2.slice(6)] = value;
+    }
+    const separator = qualifiedName.indexOf(":");
+    const name = separator < 0 ? qualifiedName : qualifiedName.slice(separator + 1);
+    const prefix = separator < 0 ? "" : qualifiedName.slice(0, separator);
+    const element = { name, namespace: namespaces[prefix] ?? "", namespaces, attributes };
+    stack.push(element);
+    visit(stack);
+    if (/\/\s*>$/.test(tag)) stack.pop();
+  }
+}
+function spreadsheetPath(path, names) {
+  return path.length === names.length && path.every((element, index) => element.name === names[index] && spreadsheetNamespaces.has(element.namespace));
+}
+function countSourceWorkbookFormulas(bytes) {
+  if (bytes[0] !== 80 || bytes[1] !== 75) return null;
+  try {
+    const metadata = (0, import_fflate.unzipSync)(bytes, { filter: (entry) => entry.name === "xl/workbook.xml" || entry.name === "xl/_rels/workbook.xml.rels" });
+    if (!metadata["xl/workbook.xml"] || !metadata["xl/_rels/workbook.xml.rels"]) return null;
+    const sheetIds = [];
+    scanXml((0, import_fflate.strFromU8)(metadata["xl/workbook.xml"]), (path) => {
+      if (!spreadsheetPath(path, ["workbook", "sheets", "sheet"])) return;
+      const element = path[path.length - 1];
+      const id = Object.entries(element.attributes).find(([name]) => {
+        const [prefix, local] = name.split(":");
+        return local === "id" && relationshipNamespaces.has(element.namespaces[prefix] ?? "");
+      })?.[1];
+      if (!id) throw new Error("Missing worksheet relationship");
+      sheetIds.push(id);
+    });
+    const relationships = /* @__PURE__ */ new Map();
+    scanXml((0, import_fflate.strFromU8)(metadata["xl/_rels/workbook.xml.rels"]), (path) => {
+      if (path.length === 2 && path[0]?.name === "Relationships" && path[1]?.name === "Relationship" && path.every((element) => element.namespace === packageRelationshipNamespace)) {
+        relationships.set(path[1].attributes.Id, path[1].attributes);
+      }
+    });
+    const worksheetPaths = /* @__PURE__ */ new Set();
+    for (const id of sheetIds) {
+      const relationship = relationships.get(id);
+      if (!relationship?.Type || !relationship.Target || relationship.TargetMode === "External") return null;
+      if (!relationship.Type.endsWith("/worksheet")) continue;
+      const target = new URL(relationship.Target, "https://xlsx.invalid/xl/workbook.xml");
+      if (target.origin !== "https://xlsx.invalid") return null;
+      worksheetPaths.add(decodeURIComponent(target.pathname.slice(1)));
+    }
+    const worksheets = (0, import_fflate.unzipSync)(bytes, { filter: (entry) => worksheetPaths.has(entry.name) });
+    let count = 0;
+    for (const path of worksheetPaths) {
+      if (!worksheets[path]) return null;
+      scanXml((0, import_fflate.strFromU8)(worksheets[path]), (elements) => {
+        if (spreadsheetPath(elements, ["worksheet", "sheetData", "row", "c", "f"])) count += 1;
+      });
+    }
+    return count;
+  } catch {
+    return null;
+  }
+}
+
+// src/calculation-diagnostics.ts
 function calculationReport(status, reason = null, parsedFormulaCount = 0, sourceFormulaCount = null) {
   return {
     status,
@@ -65,54 +157,6 @@ function calculationReport(status, reason = null, parsedFormulaCount = 0, source
     revision: 0,
     issues: []
   };
-}
-function countSourceWorkbookFormulas(bytes) {
-  if (bytes[0] !== 80 || bytes[1] !== 75) return null;
-  try {
-    const archive = (0, import_fflate.unzipSync)(bytes, { filter: (entry) => /^xl\/worksheets\/[^/]+\.xml$/i.test(entry.name) });
-    let count = 0;
-    for (const data of Object.values(archive)) {
-      const xml = (0, import_fflate.strFromU8)(data);
-      count += countWorksheetCellFormulas(xml);
-    }
-    return count;
-  } catch {
-    return null;
-  }
-}
-function countWorksheetCellFormulas(xml) {
-  const spreadsheetNamespaces = /* @__PURE__ */ new Set([
-    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
-    "http://purl.oclc.org/ooxml/spreadsheetml/main"
-  ]);
-  const stack = [];
-  const formulaPath = ["worksheet", "sheetData", "row", "c"];
-  let count = 0;
-  const tags = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<[^>"']*(?:"[^"]*"[^>"']*|'[^']*'[^>"']*)*>/g;
-  for (const match of xml.matchAll(tags)) {
-    const tag = match[0];
-    if (tag.startsWith("<!") || tag.startsWith("<?")) continue;
-    if (tag.startsWith("</")) {
-      stack.pop();
-      continue;
-    }
-    const qualifiedName = /^<([^\s/>]+)/.exec(tag)?.[1];
-    if (!qualifiedName) continue;
-    let namespaces = stack[stack.length - 1]?.namespaces ?? /* @__PURE__ */ Object.create(null);
-    if (/\sxmlns(?::|\s*=)/.test(tag)) {
-      namespaces = Object.create(namespaces);
-      for (const declaration of tag.matchAll(/\sxmlns(?::([\w.-]+))?\s*=\s*(["'])(.*?)\2/g)) {
-        namespaces[declaration[1] ?? ""] = declaration[3] ?? "";
-      }
-    }
-    const separator = qualifiedName.indexOf(":");
-    const name = separator < 0 ? qualifiedName : qualifiedName.slice(separator + 1);
-    const prefix = separator < 0 ? "" : qualifiedName.slice(0, separator);
-    const namespace = namespaces[prefix] ?? "";
-    if (name === "f" && spreadsheetNamespaces.has(namespace) && stack.length === 4 && stack.every((element, index) => element.name === formulaPath[index] && spreadsheetNamespaces.has(element.namespace))) count += 1;
-    if (!/\/\s*>$/.test(tag)) stack.push({ name, namespace, namespaces });
-  }
-  return count;
 }
 function nonnegativeInteger(value) {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -8913,7 +8957,6 @@ function useXlsxViewerController(options) {
   const hasCalculatedValuesRef = React.useRef(false);
   const beginCalculation = React.useCallback(() => {
     const attempt = ++calculationAttemptRef.current;
-    hasCalculatedValuesRef.current = true;
     setCalculation((current) => ({ ...calculationReport("calculating", null, current.parsedFormulaCount, current.sourceFormulaCount), revision: attempt }));
     return attempt;
   }, []);
@@ -9228,6 +9271,7 @@ function useXlsxViewerController(options) {
     }
     let isCurrent = true;
     workbookGenerationRef.current += 1;
+    hasCalculatedValuesRef.current = false;
     const loadAttempt = beginCalculation();
     applyCalculation(calculationReport("calculating"), loadAttempt);
     const abortController = new AbortController();
@@ -9688,6 +9732,7 @@ function useXlsxViewerController(options) {
       return;
     }
     const result = safeCalculate(targetWorkbook);
+    hasCalculatedValuesRef.current ||= result.calculated;
     applyCalculation(result.calculation, attempt);
     if (!result.calculated) {
       setShouldAutoCalculate(false);
@@ -10137,17 +10182,7 @@ function useXlsxViewerController(options) {
       }
       workerCellSnapshotCacheRef.current.set(cacheKey, snapshot);
       setWorkerCellSnapshotRevision((current) => current + 1);
-    }).catch(() => {
-      if (!isCurrent) {
-        return;
-      }
-      workerCellSnapshotCacheRef.current.set(cacheKey, {
-        displayValue: "",
-        formula: "",
-        diagnostic: { source: "unknown", error: null }
-      });
-      setWorkerCellSnapshotRevision((current) => current + 1);
-    });
+    }).catch(() => void 0);
     return () => {
       isCurrent = false;
     };
@@ -10579,6 +10614,7 @@ function useXlsxViewerController(options) {
       reparse: readOnly && sourceBuffer ? () => workbook.constructor.fromBytes(new Uint8Array(sourceBuffer)) : void 0
     });
     applyCalculation(result.calculation, attempt);
+    hasCalculatedValuesRef.current ||= result.calculated;
     if (result.workbook !== workbook) {
       hasCalculatedValuesRef.current = false;
       setWorkbook(result.workbook);
@@ -11266,6 +11302,7 @@ function useXlsxViewerController(options) {
       counter += 1;
     }
     workbook.addSheet(candidate);
+    maybeRecalculateWorkbook(workbook);
     sheetOriginsRef.current = [...sheetOriginsRef.current, null];
     setFormControlsByWorkbookSheetIndex((current) => [...current, []]);
     setImagesByWorkbookSheetIndex((current) => [...current, []]);
@@ -11297,13 +11334,14 @@ function useXlsxViewerController(options) {
       setActiveTabIndexState(nextTabIndex);
     }
     setRevision((current) => current + 1);
-  }, [readOnly, recordHistoryBeforeMutation, setChartAssets, workbook]);
+  }, [maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
   const removeActiveSheet = React.useCallback(() => {
     if (readOnly || !workbook || !activeSheet) {
       return;
     }
     recordHistoryBeforeMutation();
     workbook.removeSheet(activeSheet.workbookSheetIndex);
+    maybeRecalculateWorkbook(workbook);
     sheetOriginsRef.current = sheetOriginsRef.current.filter((_, index) => index !== activeSheet.workbookSheetIndex);
     setFormControlsByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
     setImagesByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
@@ -11331,7 +11369,7 @@ function useXlsxViewerController(options) {
     }
     setActiveSheetIndexState((current) => Math.max(0, Math.min(current, nextSheets.length - 1)));
     setRevision((current) => current + 1);
-  }, [activeSheet, readOnly, recordHistoryBeforeMutation, setChartAssets, workbook]);
+  }, [activeSheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
   const defineNamedRange = React.useCallback((name, range) => {
     if (readOnly || !workbook) {
       return;
@@ -11346,8 +11384,9 @@ function useXlsxViewerController(options) {
     }
     recordHistoryBeforeMutation();
     workbook.defineName(trimmed, rangeToA1(targetRange));
+    maybeRecalculateWorkbook(workbook);
     setRevision((current) => current + 1);
-  }, [readOnly, recordHistoryBeforeMutation, selection, workbook]);
+  }, [maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, selection, workbook]);
   const pasteText = React.useCallback((text) => {
     const worksheet = getActiveWorksheet();
     const targetCell = activeCell ?? selection?.start ?? null;
