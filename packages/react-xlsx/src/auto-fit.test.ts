@@ -5,7 +5,11 @@ import { autoFitSizes, type FitSheet, fittedColumnWidth, fittedRowHeight } from 
 // 1px per character keeps the arithmetic readable.
 const measure = (text: string) => text.length;
 
-function sheet(cells: Record<string, { text: string; wrap?: boolean; size?: number }>, merged: string[] = []): FitSheet {
+function sheet(
+  cells: Record<string, { text: string; wrap?: boolean; size?: number }>,
+  merged: string[] = [],
+  spans: Record<string, { rowSpan: number; colSpan: number }> = {}
+): FitSheet {
   return {
     usedRange: () => [0, 0, 3, 3],
     getFormattedValueAt: (row, col) => cells[`${row}:${col}`]?.text ?? "",
@@ -13,7 +17,7 @@ function sheet(cells: Record<string, { text: string; wrap?: boolean; size?: numb
       const cell = cells[`${row}:${col}`];
       return { font: { size: cell?.size ?? 12 }, alignment: { wrapText: cell?.wrap === true } };
     },
-    getMergeSpan: () => null,
+    getMergeSpan: (row, col) => spans[`${row}:${col}`] ?? null,
     isMergedSecondary: (row, col) => merged.includes(`${row}:${col}`)
   };
 }
@@ -33,6 +37,16 @@ test("a row counts wrapped lines at the column's width; an empty row has no fit"
   assert.equal(fittedRowHeight(sheet({ "1:0": { text: words, wrap: true } }), 1, () => 50, measure), Math.ceil(3 * 16 * 1.2 + 2));
   assert.equal(fittedRowHeight(sheet({ "0:2": { text: "Total" } }), 0, () => 80, measure), Math.ceil(16 * 1.2 + 2));
   assert.equal(fittedRowHeight(sheet({}), 0, () => 80, measure), null);
+});
+
+test("a row wraps a merge across its columns at the merge's width, and skips taller merges", () => {
+  const words = Array.from({ length: 30 }, () => "word").join(" ");
+  const cells = { "0:0": { text: words, wrap: true } };
+  const across = sheet(cells, ["0:1", "0:2"], { "0:0": { rowSpan: 1, colSpan: 3 } });
+  // 149 chars in a 3 x 50px merge (142px of text) wrap to 2 lines; one 42px column would take 4.
+  assert.equal(fittedRowHeight(across, 0, () => 50, measure), Math.ceil(2 * 16 * 1.2 + 2));
+  const tall = sheet(cells, [], { "0:0": { rowSpan: 2, colSpan: 1 } });
+  assert.equal(fittedRowHeight(tall, 0, () => 50, measure), null);
 });
 
 test("autofit skips hidden and already-fitting indices, resets empty rows and keeps empty columns", () => {
