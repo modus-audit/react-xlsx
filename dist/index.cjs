@@ -142,18 +142,18 @@ function inspectCalculation(workbook, rawStats, parsedFormulaCount, sourceFormul
         inspectionComplete = false;
         continue;
       }
-      for (const cell of cells) {
-        if (!cell || !Number.isInteger(cell.row) || !Number.isInteger(cell.col)) {
+      for (const cell2 of cells) {
+        if (!cell2 || !Number.isInteger(cell2.row) || !Number.isInteger(cell2.col)) {
           inspectionComplete = false;
           continue;
         }
-        const value = sheet.getCalculatedValueAt(cell.row, cell.col);
+        const value = sheet.getCalculatedValueAt(cell2.row, cell2.col);
         inspected += 1;
         if (value.is_error) {
           resultErrors += 1;
           issues.push({
             sheet: workbook.sheetNames[index] ?? String(index),
-            cell: cellAddress(cell.row, cell.col),
+            cell: cellAddress(cell2.row, cell2.col),
             error: value.asError() ?? "Unknown formula error"
           });
         }
@@ -5072,14 +5072,14 @@ function parseSheetState(archive, path, options) {
     if (!cellRef) {
       return;
     }
-    const cell = parseA1CellReference(cellRef);
-    if (!cell) {
+    const cell2 = parseA1CellReference(cellRef);
+    if (!cell2) {
       return;
     }
-    minContentCol = Math.min(minContentCol, cell.col);
-    minContentRow = Math.min(minContentRow, cell.row);
-    maxContentCol = Math.max(maxContentCol, cell.col);
-    maxContentRow = Math.max(maxContentRow, cell.row);
+    minContentCol = Math.min(minContentCol, cell2.col);
+    minContentRow = Math.min(minContentRow, cell2.row);
+    maxContentCol = Math.max(maxContentCol, cell2.col);
+    maxContentRow = Math.max(maxContentRow, cell2.row);
   };
   const isMeaningfulCellNode = (cellNode) => {
     if (getFirstChild(cellNode, "f") || getFirstChild(cellNode, "is")) {
@@ -6863,8 +6863,8 @@ function collectReferencedSheetNames(workbook) {
     if (!Array.isArray(cells)) {
       continue;
     }
-    for (const cell of cells) {
-      const formula = cell?.formula;
+    for (const cell2 of cells) {
+      const formula = cell2?.formula;
       if (!formula) {
         continue;
       }
@@ -7003,6 +7003,104 @@ function getSheetsWasmModule() {
   return wasmModulePromise;
 }
 
+// src/formula-copy.ts
+var MAX_ROW = 1048576;
+var MAX_COL = 16384;
+var identifier = /[\p{L}\p{N}_.$\\]/u;
+var sheetRange = /:\s*[\p{L}\p{N}_.$\\]+!/uy;
+var cell = /^(\$?)([A-Za-z]{1,3})(\$?)([1-9]\d*)$/;
+var axisRange = /(\$?[A-Za-z]{1,3}|\$?[1-9]\d*)(\s*:\s*)(\$?[A-Za-z]{1,3}|\$?[1-9]\d*)/y;
+function columnNumber(letters) {
+  return [...letters.toUpperCase()].reduce((number, letter) => number * 26 + letter.charCodeAt(0) - 64, 0);
+}
+function columnLetters(number) {
+  let result = "";
+  while (number > 0) {
+    number -= 1;
+    result = String.fromCharCode(65 + number % 26) + result;
+    number = Math.floor(number / 26);
+  }
+  return result;
+}
+function shiftedAxis(token, delta, column) {
+  const absolute = token.startsWith("$");
+  const value = token.replace(/^\$/, "");
+  const original = column ? columnNumber(value) : Number(value);
+  const limit = column ? MAX_COL : MAX_ROW;
+  if (original > limit) return token;
+  const next = original + (absolute ? 0 : delta);
+  if (next < 1 || next > limit) return "#REF!";
+  const text = column ? columnLetters(next) : String(next);
+  return `${absolute ? "$" : ""}${column && value === value.toLowerCase() ? text.toLowerCase() : text}`;
+}
+function shiftedCell(token, rows, cols) {
+  const match = cell.exec(token);
+  if (!match || columnNumber(match[2]) > MAX_COL || Number(match[4]) > MAX_ROW) return token;
+  const col = shiftedAxis(match[1] + match[2], cols, true);
+  const row = shiftedAxis(match[3] + match[4], rows, false);
+  return col === "#REF!" || row === "#REF!" ? "#REF!" : col + row;
+}
+function copyFormula(formula, rows, cols) {
+  if (rows === 0 && cols === 0) return formula;
+  let result = "";
+  let index = 0;
+  while (index < formula.length) {
+    const start = index;
+    const char = formula[index];
+    if (char === '"' || char === "'") {
+      index += 1;
+      while (index < formula.length) {
+        if (formula[index++] !== char) continue;
+        if (formula[index] !== char) break;
+        index += 1;
+      }
+      result += formula.slice(start, index);
+      continue;
+    }
+    if (char === "[") {
+      let depth = 1;
+      index += 1;
+      while (index < formula.length && depth > 0) {
+        if (formula[index] === "'") {
+          index += 2;
+          continue;
+        }
+        if (formula[index] === "[") depth += 1;
+        if (formula[index] === "]") depth -= 1;
+        index += 1;
+      }
+      result += formula.slice(start, index);
+      continue;
+    }
+    if (!identifier.test(char)) {
+      result += char;
+      index += 1;
+      continue;
+    }
+    axisRange.lastIndex = index;
+    const range = axisRange.exec(formula);
+    if (range && !identifier.test(formula[index + range[0].length] ?? "") && formula[index + range[0].length] !== "!") {
+      const columns = /[A-Za-z]/.test(range[1]);
+      if (columns === /[A-Za-z]/.test(range[3])) {
+        result += shiftedAxis(range[1], columns ? cols : rows, columns) + range[2] + shiftedAxis(range[3], columns ? cols : rows, columns);
+        index += range[0].length;
+        continue;
+      }
+    }
+    while (index < formula.length && identifier.test(formula[index])) index += 1;
+    const token = formula.slice(start, index);
+    let following = index;
+    while (following < formula.length && /\s/.test(formula[following])) following += 1;
+    sheetRange.lastIndex = following;
+    const qualifier = sheetRange.test(formula);
+    result += formula[following] === "!" || formula[following] === "(" || formula[following] === "[" || qualifier ? token : shiftedCell(token, rows, cols);
+  }
+  return result;
+}
+function fillSourceIndex(target, start, size) {
+  return start + ((target - start) % size + size) % size;
+}
+
 // src/clipboard-cells.ts
 function plainCellStyle(defaultFont) {
   return {
@@ -7067,21 +7165,24 @@ function copiedCell(worksheet, row, col, offset, displayValue, style, styles) {
   return {
     ...offset,
     formula,
+    source: { row, col },
     value: displayValue,
     ...raw === void 0 ? {} : { raw },
     styleIndex: styles.add(style)
   };
 }
-function writePastedCell(worksheet, a1, row, col, cell, styles, plain) {
-  if (!cell.styleOnly) {
-    if (cell.formula) {
-      worksheet.setFormula(a1, cell.formula);
+function writePastedCell(worksheet, a1, row, col, cell2, styles, plain) {
+  if (!cell2.styleOnly) {
+    if (cell2.formula) {
+      const source = cell2.source;
+      const validSource = source && Number.isInteger(source.row) && Number.isInteger(source.col) && source.row >= 0 && source.row < 1048576 && source.col >= 0 && source.col < 16384;
+      worksheet.setFormula(a1, validSource ? copyFormula(cell2.formula, row - source.row, col - source.col) : cell2.formula);
     } else {
-      worksheet.setCell(a1, cell.raw ?? cell.value);
+      worksheet.setCell(a1, cell2.raw ?? cell2.value);
     }
   }
-  if (cell.styleIndex !== void 0 && styles && cell.styleIndex < styles.length) {
-    worksheet.setCellStyleAt(row, col, styleToRestore(styles[cell.styleIndex], plain));
+  if (cell2.styleIndex !== void 0 && styles && cell2.styleIndex < styles.length) {
+    worksheet.setCellStyleAt(row, col, styleToRestore(styles[cell2.styleIndex], plain));
   }
 }
 
@@ -7851,8 +7952,8 @@ function columnLabel(col) {
   }
   return label;
 }
-function cellAddressToA1(cell) {
-  return `${columnLabel(cell.col)}${cell.row + 1}`;
+function cellAddressToA1(cell2) {
+  return `${columnLabel(cell2.col)}${cell2.row + 1}`;
 }
 function parseA1CellReference2(reference) {
   const match = /^([A-Z]+)(\d+)$/i.exec(reference.trim());
@@ -8152,9 +8253,9 @@ function rangeToA1(range) {
   const end = cellAddressToA1(normalized.end);
   return start === end ? start : `${start}:${end}`;
 }
-function rangeContainsCell(range, cell) {
+function rangeContainsCell(range, cell2) {
   const normalized = normalizeRange(range);
-  return cell.row >= normalized.start.row && cell.row <= normalized.end.row && cell.col >= normalized.start.col && cell.col <= normalized.end.col;
+  return cell2.row >= normalized.start.row && cell2.row <= normalized.end.row && cell2.col >= normalized.start.col && cell2.col <= normalized.end.col;
 }
 function mapWorksheetTables(worksheet, autoFilterRanges = []) {
   const rawTables = worksheet?.tables ?? [];
@@ -8354,14 +8455,14 @@ function coerceUserEnteredValue(value) {
   }
   return value;
 }
-function applyCellMutationState(worksheet, cell, state, plain) {
+function applyCellMutationState(worksheet, cell2, state, plain) {
   if (state.formula) {
-    worksheet.setFormula(cellAddressToA1(cell), state.formula);
+    worksheet.setFormula(cellAddressToA1(cell2), state.formula);
   } else {
-    worksheet.setCell(cellAddressToA1(cell), normalizeCellValue(state.value));
+    worksheet.setCell(cellAddressToA1(cell2), normalizeCellValue(state.value));
   }
-  if (state.style && typeof state.style === "object" || worksheet.getCellStyleAt(cell.row, cell.col)) {
-    worksheet.setCellStyleAt(cell.row, cell.col, styleToRestore(state.style, plain));
+  if (state.style && typeof state.style === "object" || worksheet.getCellStyleAt(cell2.row, cell2.col)) {
+    worksheet.setCellStyleAt(cell2.row, cell2.col, styleToRestore(state.style, plain));
   }
 }
 function escapeHtml(value) {
@@ -9853,22 +9954,22 @@ function useXlsxViewerController(options) {
       showGridLines
     );
   }, [activeSheet?.showGridLines, activeSheet?.workbookSheetIndex]);
-  const getCellDisplayValue2 = React.useCallback((cell) => {
-    if (cell && activeSheet) {
-      const workerSnapshot = workerCellSnapshotCacheRef.current.get(`${activeSheet.workbookSheetIndex}:${cell.row}:${cell.col}`);
+  const getCellDisplayValue2 = React.useCallback((cell2) => {
+    if (cell2 && activeSheet) {
+      const workerSnapshot = workerCellSnapshotCacheRef.current.get(`${activeSheet.workbookSheetIndex}:${cell2.row}:${cell2.col}`);
       if (workerSnapshot) {
         return workerSnapshot.displayValue;
       }
     }
     const worksheet = getActiveWorksheet();
-    if (!worksheet || !cell) {
+    if (!worksheet || !cell2) {
       return "";
     }
-    const formatted = worksheet.getFormattedValueAt(cell.row, cell.col);
+    const formatted = worksheet.getFormattedValueAt(cell2.row, cell2.col);
     if (formatted && !formatted.startsWith("#")) {
       return decodeHtmlEntities(formatted);
     }
-    const calculated = worksheet.getCalculatedValueAt(cell.row, cell.col);
+    const calculated = worksheet.getCalculatedValueAt(cell2.row, cell2.col);
     if (calculated.is_error) {
       return calculated.asError() ?? "";
     }
@@ -9877,33 +9978,33 @@ function useXlsxViewerController(options) {
     }
     return calculated.toString();
   }, [activeSheet, getActiveWorksheet]);
-  const getCellCalculationDiagnostic = React.useCallback((cell) => {
-    if (!cell || !activeSheet) return null;
-    const snapshot = workerCellSnapshotCacheRef.current.get(`${activeSheet.workbookSheetIndex}:${cell.row}:${cell.col}`);
+  const getCellCalculationDiagnostic = React.useCallback((cell2) => {
+    if (!cell2 || !activeSheet) return null;
+    const snapshot = workerCellSnapshotCacheRef.current.get(`${activeSheet.workbookSheetIndex}:${cell2.row}:${cell2.col}`);
     if (snapshot) return snapshot.diagnostic;
     const worksheet = getActiveWorksheet();
     if (!worksheet) return null;
     return cellCalculationDiagnostic(
       worksheet,
-      cell.row,
-      cell.col,
-      activeSheet.cachedFormulaValues?.[cellAddressToA1(cell)],
+      cell2.row,
+      cell2.col,
+      activeSheet.cachedFormulaValues?.[cellAddressToA1(cell2)],
       calculation,
       hasCalculatedValuesRef.current
     );
   }, [activeSheet, calculation, getActiveWorksheet]);
-  const getCellFormula = React.useCallback((cell) => {
-    if (cell && activeSheet) {
-      const workerSnapshot = workerCellSnapshotCacheRef.current.get(`${activeSheet.workbookSheetIndex}:${cell.row}:${cell.col}`);
+  const getCellFormula = React.useCallback((cell2) => {
+    if (cell2 && activeSheet) {
+      const workerSnapshot = workerCellSnapshotCacheRef.current.get(`${activeSheet.workbookSheetIndex}:${cell2.row}:${cell2.col}`);
       if (workerSnapshot) {
         return workerSnapshot.formula;
       }
     }
     const worksheet = getActiveWorksheet();
-    if (!worksheet || !cell) {
+    if (!worksheet || !cell2) {
       return "";
     }
-    return worksheet.getFormulaAt(cell.row, cell.col) ?? "";
+    return worksheet.getFormulaAt(cell2.row, cell2.col) ?? "";
   }, [activeSheet, getActiveWorksheet]);
   const getClipboardData = React.useCallback(() => {
     const worksheet = getActiveWorksheet();
@@ -10103,15 +10204,15 @@ function useXlsxViewerController(options) {
       selection
     };
   }, [activeCell, activeSheetIndex, createSavedWorkbookBytes, selection, workbook]);
-  const captureCellMutationState = React.useCallback((cell) => {
+  const captureCellMutationState = React.useCallback((cell2) => {
     const worksheet = getActiveWorksheet();
     if (!worksheet) {
       return null;
     }
     return {
-      formula: worksheet.getFormulaAt(cell.row, cell.col) ?? null,
-      style: worksheet.getCellStyleAt(cell.row, cell.col),
-      value: worksheet.getCellAt(cell.row, cell.col).toJs()
+      formula: worksheet.getFormulaAt(cell2.row, cell2.col) ?? null,
+      style: worksheet.getCellStyleAt(cell2.row, cell2.col),
+      value: worksheet.getCellAt(cell2.row, cell2.col).toJs()
     };
   }, [getActiveWorksheet]);
   const restoreHistoryEntry = React.useCallback(async (entry) => {
@@ -10299,18 +10400,18 @@ function useXlsxViewerController(options) {
     refreshWorkbookState(workbook);
     return true;
   }, [activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
-  const recordCellEditHistory = React.useCallback((cell, before, after) => {
+  const recordCellEditHistory = React.useCallback((cell2, before, after) => {
     if (!activeSheet || isApplyingHistoryRef.current) {
       return;
     }
     pushHistoryEntry(undoStackRef.current, {
       kind: "cell-edit",
-      activeCellAfter: cell,
+      activeCellAfter: cell2,
       activeCellBefore: activeCell,
       after,
       before,
-      cell,
-      selectionAfter: { start: cell, end: cell },
+      cell: cell2,
+      selectionAfter: { start: cell2, end: cell2 },
       selectionBefore: selection,
       sheetIndex: activeSheet.workbookSheetIndex
     });
@@ -10402,12 +10503,12 @@ function useXlsxViewerController(options) {
         if (!before || !after) {
           continue;
         }
-        const cell = { row: targetRow, col: startCol + colOffset };
-        applyCellMutationState(worksheet, cell, after, plainStyle());
+        const cell2 = { row: targetRow, col: startCol + colOffset };
+        applyCellMutationState(worksheet, cell2, after, plainStyle());
         mutations.push({
           after,
           before,
-          cell
+          cell: cell2
         });
       }
     }
@@ -10816,19 +10917,19 @@ function useXlsxViewerController(options) {
     }
     return true;
   }, [getChartById, readOnly, updateChart, workbook]);
-  const selectCell = React.useCallback((cell, options2) => {
+  const selectCell = React.useCallback((cell2, options2) => {
     setSelectedChartId(null);
     setSelectedChartElement(null);
     setSelectedImageId(null);
-    setActiveCell(cell);
+    setActiveCell(cell2);
     if (options2?.extend && selectionAnchorRef.current) {
-      const extended = normalizeRange({ start: selectionAnchorRef.current, end: cell });
+      const extended = normalizeRange({ start: selectionAnchorRef.current, end: cell2 });
       setSelection(extended);
       setSelections((prev) => prev.length > 1 ? [...prev.slice(0, -1), extended] : [extended]);
       return;
     }
-    selectionAnchorRef.current = cell;
-    const single = { start: cell, end: cell };
+    selectionAnchorRef.current = cell2;
+    const single = { start: cell2, end: cell2 };
     setSelection(single);
     setSelections((prev) => {
       if (!options2?.append) return [single];
@@ -10843,12 +10944,12 @@ function useXlsxViewerController(options) {
     []
   );
   const revealCell = React.useCallback(
-    (cell) => {
+    (cell2) => {
       const impl = revealCellImplRef.current;
       if (impl) {
-        impl(cell);
+        impl(cell2);
       } else {
-        selectCell(cell);
+        selectCell(cell2);
       }
     },
     [selectCell]
@@ -10908,20 +11009,20 @@ function useXlsxViewerController(options) {
         if (worksheet.isMergedSecondary(row, col)) {
           continue;
         }
-        const cell = { row, col };
-        const before = captureCellMutationState(cell);
+        const cell2 = { row, col };
+        const before = captureCellMutationState(cell2);
         if (!before) {
           continue;
         }
         worksheet.setCell(cellAddressToA1({ row, col }), "");
-        const after = captureCellMutationState(cell);
+        const after = captureCellMutationState(cell2);
         if (!after) {
           continue;
         }
         mutations.push({
           after,
           before,
-          cell
+          cell: cell2
         });
       }
     }
@@ -10939,64 +11040,64 @@ function useXlsxViewerController(options) {
     selection,
     workbook
   ]);
-  const setCellValue = React.useCallback((cell, value) => {
+  const setCellValue = React.useCallback((cell2, value) => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !workbook) {
       return;
     }
-    const before = captureCellMutationState(cell);
+    const before = captureCellMutationState(cell2);
     if (!before) {
       return;
     }
     const nextValue = coerceUserEnteredValue(value);
-    worksheet.setCell(cellAddressToA1(cell), nextValue);
-    const after = captureCellMutationState(cell);
+    worksheet.setCell(cellAddressToA1(cell2), nextValue);
+    const after = captureCellMutationState(cell2);
     if (!after) {
       return;
     }
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
-    recordCellEditHistory(cell, before, after);
+    recordCellEditHistory(cell2, before, after);
   }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
-  const setCellFormula = React.useCallback((cell, formula) => {
+  const setCellFormula = React.useCallback((cell2, formula) => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !workbook) {
       return;
     }
-    const before = captureCellMutationState(cell);
+    const before = captureCellMutationState(cell2);
     if (!before) {
       return;
     }
     const trimmedFormula = formula.trim();
     if (!formula.trim()) {
-      worksheet.setCell(cellAddressToA1(cell), "");
+      worksheet.setCell(cellAddressToA1(cell2), "");
     } else {
-      worksheet.setFormula(cellAddressToA1(cell), formula);
+      worksheet.setFormula(cellAddressToA1(cell2), formula);
     }
-    const after = captureCellMutationState(cell);
+    const after = captureCellMutationState(cell2);
     if (!after) {
       return;
     }
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
-    recordCellEditHistory(cell, before, after);
+    recordCellEditHistory(cell2, before, after);
   }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
-  const setCellStyle = React.useCallback((cell, style) => {
+  const setCellStyle = React.useCallback((cell2, style) => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !workbook) {
       return;
     }
-    const before = captureCellMutationState(cell);
+    const before = captureCellMutationState(cell2);
     if (!before) {
       return;
     }
-    worksheet.setCellStyleAt(cell.row, cell.col, style);
-    const after = captureCellMutationState(cell);
+    worksheet.setCellStyleAt(cell2.row, cell2.col, style);
+    const after = captureCellMutationState(cell2);
     if (!after) {
       return;
     }
     refreshWorkbookState(workbook);
-    recordCellEditHistory(cell, before, after);
+    recordCellEditHistory(cell2, before, after);
   }, [captureCellMutationState, getActiveWorksheet, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
   const setSelectedCellValue = React.useCallback((value) => {
     if (!activeCell) {
@@ -11035,14 +11136,14 @@ function useXlsxViewerController(options) {
     const beforeStates = [];
     for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
       for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
-        const cell = { row, col };
-        const before = captureCellMutationState(cell);
+        const cell2 = { row, col };
+        const before = captureCellMutationState(cell2);
         if (!before) {
           continue;
         }
         beforeStates.push({
           before,
-          cell
+          cell: cell2
         });
       }
     }
@@ -11089,12 +11190,12 @@ function useXlsxViewerController(options) {
         if (!before) {
           continue;
         }
-        const sourceRow = sourceRange.start.row + (row - nextRange.start.row) % sourceHeight;
-        const sourceCol = sourceRange.start.col + (col - nextRange.start.col) % sourceWidth;
+        const sourceRow = fillSourceIndex(row, sourceRange.start.row, sourceHeight);
+        const sourceCol = fillSourceIndex(col, sourceRange.start.col, sourceWidth);
         const sourceFormula = worksheet.getFormulaAt(sourceRow, sourceCol);
         const sourceStyle = cloneCellStyle(worksheet.getCellStyleAt(sourceRow, sourceCol));
         if (sourceFormula) {
-          worksheet.setFormula(cellAddressToA1(targetCell), sourceFormula);
+          worksheet.setFormula(cellAddressToA1(targetCell), copyFormula(sourceFormula, row - sourceRow, col - sourceCol));
         } else {
           const sourceValue = normalizeCellValue(worksheet.getCellAt(sourceRow, sourceCol).toJs());
           worksheet.setCell(cellAddressToA1(targetCell), sourceValue);
@@ -11332,13 +11433,13 @@ function useXlsxViewerController(options) {
       recordHistoryBeforeMutation();
     }
     const plain = plainStyle();
-    for (const cell of payload.cells) {
+    for (const cell2 of payload.cells) {
       const nextCell = {
-        col: targetCell.col + cell.colOffset,
-        row: targetCell.row + cell.rowOffset
+        col: targetCell.col + cell2.colOffset,
+        row: targetCell.row + cell2.rowOffset
       };
       const before = hasMergeOperations ? null : captureCellMutationState(nextCell);
-      writePastedCell(worksheet, cellAddressToA1(nextCell), nextCell.row, nextCell.col, cell, payload.styles, plain);
+      writePastedCell(worksheet, cellAddressToA1(nextCell), nextCell.row, nextCell.col, cell2, payload.styles, plain);
       if (before) {
         const after = captureCellMutationState(nextCell);
         if (!after) {
@@ -20038,25 +20139,25 @@ function parseCellAddressAttribute(value) {
 function isSameCell(left, right) {
   return Boolean(left && right && left.row === right.row && left.col === right.col);
 }
-function isCellInRange(cell, range) {
+function isCellInRange(cell2, range) {
   if (!range) {
     return false;
   }
   const normalized = normalizeRange2(range);
-  return cell.row >= normalized.start.row && cell.row <= normalized.end.row && cell.col >= normalized.start.col && cell.col <= normalized.end.col;
+  return cell2.row >= normalized.start.row && cell2.row <= normalized.end.row && cell2.col >= normalized.start.col && cell2.col <= normalized.end.col;
 }
-function resolveCellChartHighlight(cell, highlights) {
+function resolveCellChartHighlight(cell2, highlights) {
   let match = null;
   for (const highlight of highlights) {
-    if (!isCellInRange(cell, highlight.range)) {
+    if (!isCellInRange(cell2, highlight.range)) {
       continue;
     }
     const normalized = normalizeRange2(highlight.range);
     match = {
-      borderBottom: cell.row === normalized.end.row,
-      borderLeft: cell.col === normalized.start.col,
-      borderRight: cell.col === normalized.end.col,
-      borderTop: cell.row === normalized.start.row,
+      borderBottom: cell2.row === normalized.end.row,
+      borderLeft: cell2.col === normalized.start.col,
+      borderRight: cell2.col === normalized.end.col,
+      borderTop: cell2.row === normalized.start.row,
       fillColor: highlight.fillColor,
       strokeColor: highlight.strokeColor
     };
@@ -21594,8 +21695,8 @@ function columnLabel2(col) {
   }
   return label;
 }
-function cellAddressToA12(cell) {
-  return `${columnLabel2(cell.col)}${cell.row + 1}`;
+function cellAddressToA12(cell2) {
+  return `${columnLabel2(cell2.col)}${cell2.row + 1}`;
 }
 function parseA1CellReference3(reference) {
   const match = /^([A-Z]+)(\d+)$/i.exec(reference.trim());
@@ -21633,13 +21734,13 @@ function parseInternalSheetLink(target) {
   }
   const rawSheetName = normalized.slice(0, separatorIndex).trim();
   const rawCellRef = normalized.slice(separatorIndex + 1).trim();
-  const cell = parseA1CellReference3(rawCellRef);
-  if (!cell) {
+  const cell2 = parseA1CellReference3(rawCellRef);
+  if (!cell2) {
     return null;
   }
   const sheetName = rawSheetName.startsWith("'") && rawSheetName.endsWith("'") ? rawSheetName.slice(1, -1).replace(/''/g, "'") : rawSheetName;
   return {
-    cell,
+    cell: cell2,
     sheetName
   };
 }
@@ -22087,11 +22188,11 @@ function getCellBooleanValue(worksheet, row, col) {
   }
   return null;
 }
-function getBatchedCellNumericValue(cell) {
-  if (!cell) {
+function getBatchedCellNumericValue(cell2) {
+  if (!cell2) {
     return null;
   }
-  const text = cell.value.trim();
+  const text = cell2.value.trim();
   if (text.length === 0) {
     return null;
   }
@@ -22104,11 +22205,11 @@ function getBatchedCellNumericValue(cell) {
   const value = Number(text.replace(/,/g, ""));
   return Number.isFinite(value) ? value : null;
 }
-function getBatchedCellBooleanValue(cell) {
-  if (!cell) {
+function getBatchedCellBooleanValue(cell2) {
+  if (!cell2) {
     return null;
   }
-  const text = cell.value.trim().toLowerCase();
+  const text = cell2.value.trim().toLowerCase();
   if (text.length === 0) {
     return null;
   }
@@ -22198,11 +22299,11 @@ function resolveRangePointCell(range, pointIndex) {
   }
   const rowOffset = Math.floor(pointIndex / colCount);
   const colOffset = pointIndex % colCount;
-  const cell = {
+  const cell2 = {
     col: normalized.start.col + colOffset,
     row: normalized.start.row + rowOffset
   };
-  return { start: cell, end: cell };
+  return { start: cell2, end: cell2 };
 }
 function collectChartRangeHighlights(chart, selectedElement, sheets, workbook, isDark) {
   if (!chart) {
@@ -23490,13 +23591,13 @@ function resolveConditionalCellIsMatch(operator, left, right, numericValue, text
   };
   switch (normalizedOperator) {
     case "greaterThan":
-      return compareComparable(left, (cell, value) => cell > value);
+      return compareComparable(left, (cell2, value) => cell2 > value);
     case "greaterThanOrEqual":
-      return compareComparable(left, (cell, value) => cell >= value);
+      return compareComparable(left, (cell2, value) => cell2 >= value);
     case "lessThan":
-      return compareComparable(left, (cell, value) => cell < value);
+      return compareComparable(left, (cell2, value) => cell2 < value);
     case "lessThanOrEqual":
-      return compareComparable(left, (cell, value) => cell <= value);
+      return compareComparable(left, (cell2, value) => cell2 <= value);
     case "between":
       if (typeof left !== "number" || typeof right !== "number") {
         return false;
@@ -23554,19 +23655,19 @@ function resolveConditionalFormulaComparable(formula, worksheet, sheet, batchedC
     return literal;
   }
   const cellRef = splitReference?.range ?? normalized;
-  const cell = parseA1CellReference3(cellRef.replace(/\$/g, ""));
-  if (!cell) {
+  const cell2 = parseA1CellReference3(cellRef.replace(/\$/g, ""));
+  if (!cell2) {
     return literal;
   }
   if (worksheet) {
-    const numeric = getCellNumericValue(worksheet, cell.row, cell.col);
+    const numeric = getCellNumericValue(worksheet, cell2.row, cell2.col);
     if (numeric !== null) {
       return numeric;
     }
-    return getCellDisplayValue(worksheet, cell.row, cell.col);
+    return getCellDisplayValue(worksheet, cell2.row, cell2.col);
   }
   if (batchedCells) {
-    const batched = batchedCells.get(`${cell.row}:${cell.col}`);
+    const batched = batchedCells.get(`${cell2.row}:${cell2.col}`);
     if (batched) {
       const numeric = getBatchedCellNumericValue(batched);
       if (numeric !== null) {
@@ -23583,7 +23684,7 @@ function normalizeConditionalTextOperand(value) {
   }
   return String(value).trim().toLowerCase();
 }
-function resolveConditionalOperand(token, worksheet, cell, anchor, activeSheet) {
+function resolveConditionalOperand(token, worksheet, cell2, anchor, activeSheet) {
   let trimmed = token.trim().replace(/^=/, "").trim();
   while (trimmed.startsWith("(") && trimmed.endsWith(")")) {
     trimmed = trimmed.slice(1, -1).trim();
@@ -23600,13 +23701,13 @@ function resolveConditionalOperand(token, worksheet, cell, anchor, activeSheet) 
   }
   const absolute = /^ABS\((.+)\)$/is.exec(trimmed);
   if (absolute) {
-    const operand = resolveConditionalOperand(absolute[1] ?? "", worksheet, cell, anchor, activeSheet);
+    const operand = resolveConditionalOperand(absolute[1] ?? "", worksheet, cell2, anchor, activeSheet);
     const number = operand?.number === null || operand?.number === void 0 ? null : Math.abs(operand.number);
     return number === null ? null : { number, text: String(number) };
   }
   const negated = /^-(.+)$/s.exec(trimmed);
   if (negated) {
-    const operand = resolveConditionalOperand(negated[1] ?? "", worksheet, cell, anchor, activeSheet);
+    const operand = resolveConditionalOperand(negated[1] ?? "", worksheet, cell2, anchor, activeSheet);
     const value = operand ? operand.number ?? (operand.text.trim() === "" ? 0 : null) : null;
     if (value === null) {
       return null;
@@ -23623,8 +23724,8 @@ function resolveConditionalOperand(token, worksheet, cell, anchor, activeSheet) 
   if (!parsed) {
     return null;
   }
-  const targetRow = rowAnchor ? parsed.row : parsed.row + (cell.row - anchor.row);
-  const targetCol = colAnchor ? parsed.col : parsed.col + (cell.col - anchor.col);
+  const targetRow = rowAnchor ? parsed.row : parsed.row + (cell2.row - anchor.row);
+  const targetCol = colAnchor ? parsed.col : parsed.col + (cell2.col - anchor.col);
   if (targetRow < 0 || targetCol < 0) {
     return null;
   }
@@ -23651,20 +23752,20 @@ function compareConditionalOperands(left, right, operator) {
       return delta === 0;
   }
 }
-function evaluateConditionalComparison(expression, worksheet, cell, anchor, activeSheet) {
+function evaluateConditionalComparison(expression, worksheet, cell2, anchor, activeSheet) {
   const match = /^(.+?)(<=|>=|<>|<|>|=)(.+)$/s.exec(expression);
   if (!match) {
     return false;
   }
-  const left = resolveConditionalOperand(match[1] ?? "", worksheet, cell, anchor, activeSheet);
-  const right = resolveConditionalOperand(match[3] ?? "", worksheet, cell, anchor, activeSheet);
+  const left = resolveConditionalOperand(match[1] ?? "", worksheet, cell2, anchor, activeSheet);
+  const right = resolveConditionalOperand(match[3] ?? "", worksheet, cell2, anchor, activeSheet);
   return left && right ? compareConditionalOperands(left, right, match[2] ?? "=") : false;
 }
-function resolveConditionalStyledRuleMatch(rule, numericValue, textValue, cell, worksheet, sheet, batchedCells) {
+function resolveConditionalStyledRuleMatch(rule, numericValue, textValue, cell2, worksheet, sheet, batchedCells) {
   const normalizedRuleType = rule.ruleType.trim().toLowerCase();
-  const anchor = rule.ranges[0]?.start ?? cell;
+  const anchor = rule.ranges[0]?.start ?? cell2;
   const resolveOperand = (formula) => {
-    const operand = worksheet ? resolveConditionalOperand(formula, worksheet, cell, anchor, sheet) : null;
+    const operand = worksheet ? resolveConditionalOperand(formula, worksheet, cell2, anchor, sheet) : null;
     return operand ? operand.number ?? operand.text : resolveConditionalFormulaComparable(formula, worksheet, sheet, batchedCells);
   };
   const left = resolveOperand(rule.formulas?.[0] ?? "");
@@ -23684,7 +23785,7 @@ function resolveConditionalStyledRuleMatch(rule, numericValue, textValue, cell, 
       const formula = (rule.formulas?.[0] ?? "").replace(/^=/, "");
       const conjunction = /^AND\((.*)\)$/is.exec(formula);
       const comparisons = conjunction ? (conjunction[1] ?? "").split(",") : [formula];
-      return comparisons.every((comparison) => evaluateConditionalComparison(comparison, worksheet, cell, anchor, sheet));
+      return comparisons.every((comparison) => evaluateConditionalComparison(comparison, worksheet, cell2, anchor, sheet));
     }
     case "beginwith":
     case "beginswith":
@@ -24515,10 +24616,10 @@ function GridRow({
       if (cellData.isMergedSecondary) {
         return null;
       }
-      const cell = { row: actualRow, col: actualCol };
-      const isEditing = isSameCell(editingCell, cell);
+      const cell2 = { row: actualRow, col: actualCol };
+      const isEditing = isSameCell(editingCell, cell2);
       const isSpilling = Boolean(cellData.spillWidth && cellData.spillWidth > 0);
-      const adornment = renderCellAdornment ? renderCellAdornment(cell) : null;
+      const adornment = renderCellAdornment ? renderCellAdornment(cell2) : null;
       const stickyLeft = stickyLeftByCol.get(actualCol);
       const validationRight = adornment ? 24 : 4;
       const conditionalIconRight = validationRight;
@@ -24642,10 +24743,10 @@ function GridRow({
             if (readOnly) {
               return;
             }
-            onCellDoubleClick(cell);
+            onCellDoubleClick(cell2);
           },
-          onClick: () => onCellClick(cell, cellData),
-          onPointerDown: (event) => onCellPointerDown(event, cell),
+          onClick: () => onCellClick(cell2, cellData),
+          onPointerDown: (event) => onCellPointerDown(event, cell2),
           style: cellStyle,
           title,
           children: [
@@ -24938,7 +25039,7 @@ function XlsxGrid({
   });
   revealCellRef.current = revealCell;
   React4.useEffect(() => {
-    controller.registerRevealCellImpl((cell) => revealCellRef.current(cell));
+    controller.registerRevealCellImpl((cell2) => revealCellRef.current(cell2));
     return () => controller.registerRevealCellImpl(null);
   }, [controller]);
   const scrollRef = React4.useRef(null);
@@ -25158,8 +25259,8 @@ function XlsxGrid({
     }
     return map;
   }, [mergedRegions]);
-  const resolveMergeAnchorCell = React4.useCallback((cell) => {
-    return mergedSecondaryAnchorMap.get(`${cell.row}:${cell.col}`) ?? cell;
+  const resolveMergeAnchorCell = React4.useCallback((cell2) => {
+    return mergedSecondaryAnchorMap.get(`${cell2.row}:${cell2.col}`) ?? cell2;
   }, [mergedSecondaryAnchorMap]);
   const normalizedSelection = React4.useMemo(() => selection ? normalizeRange2(selection) : null, [selection]);
   const zoomFactor = React4.useMemo(() => Math.max(0.1, zoomScale / 100), [zoomScale]);
@@ -26591,9 +26692,9 @@ function XlsxGrid({
       if (!(element instanceof HTMLElement)) {
         continue;
       }
-      const cell = parseCellAddressAttribute(element.closest("[data-xlsx-cell]")?.getAttribute("data-xlsx-cell") ?? null);
-      if (cell) {
-        return cell;
+      const cell2 = parseCellAddressAttribute(element.closest("[data-xlsx-cell]")?.getAttribute("data-xlsx-cell") ?? null);
+      if (cell2) {
+        return cell2;
       }
       const colHeader = element.closest("[data-xlsx-col-header]");
       if (colHeader && firstVisibleRowRef.current !== void 0) {
@@ -26636,9 +26737,9 @@ function XlsxGrid({
     }
     return { row: actualRow, col: actualCol };
   }, [resolvePointerCellFromGeometry, resolvePointerCellFromHitTest, rowIndexByActual]);
-  const resolveCellPointerOrigin = React4.useCallback((cell, rect, clientX, clientY) => {
-    const rowIndex = rowIndexByActual.get(cell.row);
-    const colIndex = colIndexByActual.get(cell.col);
+  const resolveCellPointerOrigin = React4.useCallback((cell2, rect, clientX, clientY) => {
+    const rowIndex = rowIndexByActual.get(cell2.row);
+    const colIndex = colIndexByActual.get(cell2.col);
     if (rowIndex === void 0 || colIndex === void 0) {
       return null;
     }
@@ -26653,10 +26754,10 @@ function XlsxGrid({
       originContentY: (rowPrefixSums[rowIndex] ?? 0) + clampContentOffset((clientY - rect.top) / contentScaleY, displayHeight)
     };
   }, [colIndexByActual, colPrefixSums, displayDefaultColWidth, displayDefaultRowHeight, displayEffectiveColWidths, displayEffectiveRowHeights, rowIndexByActual, rowPrefixSums]);
-  const resolveCellPointerOriginFromClient = React4.useCallback((cell, clientX, clientY) => {
+  const resolveCellPointerOriginFromClient = React4.useCallback((cell2, clientX, clientY) => {
     const scroller = scrollRef.current;
-    const rowIndex = rowIndexByActual.get(cell.row);
-    const colIndex = colIndexByActual.get(cell.col);
+    const rowIndex = rowIndexByActual.get(cell2.row);
+    const colIndex = colIndexByActual.get(cell2.col);
     if (!scroller || rowIndex === void 0 || colIndex === void 0) {
       return null;
     }
@@ -26834,13 +26935,13 @@ function XlsxGrid({
     }
   }, [activeSheetIndex, selectCell, setActiveSheetIndex, sheets]);
   const startEditing = React4.useCallback(
-    (cell, initialValue) => {
+    (cell2, initialValue) => {
       if (readOnly) {
         return;
       }
-      selectCell(cell);
-      setEditingCell(cell);
-      setEditingValue(initialValue ?? getControllerCellDisplayValue(cell));
+      selectCell(cell2);
+      setEditingCell(cell2);
+      setEditingValue(initialValue ?? getControllerCellDisplayValue(cell2));
     },
     [getControllerCellDisplayValue, readOnly, selectCell]
   );
@@ -26874,15 +26975,15 @@ function XlsxGrid({
     commitEditing();
   }, [commitEditing]);
   const handleEditingNavigate = React4.useCallback((key, value) => {
-    const cell = editingCellRef.current;
-    if (!cell) {
+    const cell2 = editingCellRef.current;
+    if (!cell2) {
       return;
     }
-    const currentRowIndex = rowIndexByActual.get(cell.row);
-    const currentColIndex = colIndexByActual.get(cell.col);
+    const currentRowIndex = rowIndexByActual.get(cell2.row);
+    const currentColIndex = colIndexByActual.get(cell2.col);
     if (currentRowIndex === void 0 || currentColIndex === void 0) {
       if (!readOnlyRef.current) {
-        setCellValue(cell, value);
+        setCellValue(cell2, value);
       }
       editingCellRef.current = null;
       setEditingCell(null);
@@ -26909,7 +27010,7 @@ function XlsxGrid({
         return;
     }
     if (!readOnlyRef.current) {
-      setCellValue(cell, value);
+      setCellValue(cell2, value);
     }
     editingCellRef.current = null;
     setEditingCell(null);
@@ -27819,12 +27920,12 @@ function XlsxGrid({
       width: elementRect.width / scaleX
     };
   }, []);
-  const resolveMountedCellOverlayRectForAddress = React4.useCallback((cell) => {
+  const resolveMountedCellOverlayRectForAddress = React4.useCallback((cell2) => {
     const wrapper = wrapperRef.current;
     if (!wrapper) {
       return null;
     }
-    const element = wrapper.querySelector(`[data-xlsx-cell="${cell.row}:${cell.col}"]`);
+    const element = wrapper.querySelector(`[data-xlsx-cell="${cell2.row}:${cell2.col}"]`);
     if (!element) {
       return null;
     }
@@ -27957,38 +28058,38 @@ function XlsxGrid({
     resolveGeometryOverlayRect,
     resolveMountedRangeOverlayRect
   ]);
-  const resolveCellDisplayRect = React4.useCallback((cell) => {
-    const rowIndex = rowIndexByActual.get(cell.row);
-    const colIndex = colIndexByActual.get(cell.col);
+  const resolveCellDisplayRect = React4.useCallback((cell2) => {
+    const rowIndex = rowIndexByActual.get(cell2.row);
+    const colIndex = colIndexByActual.get(cell2.col);
     if (rowIndex === void 0 || colIndex === void 0) {
       return null;
     }
-    const cellData = getCellData(cell.row, cell.col);
+    const cellData = getCellData(cell2.row, cell2.col);
     const colSpan = Math.max(1, cellData.colSpan ?? 1);
     const rowSpan = Math.max(1, cellData.rowSpan ?? 1);
-    let endActualCol = Math.min(displayColLimit - 1, cell.col + colSpan - 1);
-    let endActualRow = Math.min(displayRowLimit - 1, cell.row + rowSpan - 1);
+    let endActualCol = Math.min(displayColLimit - 1, cell2.col + colSpan - 1);
+    let endActualRow = Math.min(displayRowLimit - 1, cell2.row + rowSpan - 1);
     if (worksheet && (colSpan > 1 || rowSpan > 1)) {
-      for (let nextCol = cell.col + 1; nextCol < displayColLimit; nextCol += 1) {
-        const nextAnchor = resolveMergeAnchorCell({ row: cell.row, col: nextCol });
-        if (nextAnchor.row !== cell.row || nextAnchor.col !== cell.col) {
+      for (let nextCol = cell2.col + 1; nextCol < displayColLimit; nextCol += 1) {
+        const nextAnchor = resolveMergeAnchorCell({ row: cell2.row, col: nextCol });
+        if (nextAnchor.row !== cell2.row || nextAnchor.col !== cell2.col) {
           break;
         }
         endActualCol = nextCol;
       }
-      for (let nextRow = cell.row + 1; nextRow < displayRowLimit; nextRow += 1) {
-        const nextAnchor = resolveMergeAnchorCell({ row: nextRow, col: cell.col });
-        if (nextAnchor.row !== cell.row || nextAnchor.col !== cell.col) {
+      for (let nextRow = cell2.row + 1; nextRow < displayRowLimit; nextRow += 1) {
+        const nextAnchor = resolveMergeAnchorCell({ row: nextRow, col: cell2.col });
+        if (nextAnchor.row !== cell2.row || nextAnchor.col !== cell2.col) {
           break;
         }
         endActualRow = nextRow;
       }
     }
     return {
-      height: sumPrefixRange(actualRowPrefixSums, cell.row, endActualRow),
-      left: displayRowHeaderWidth + sumPrefixRange(actualColPrefixSums, 0, cell.col - 1),
-      top: displayHeaderHeight + sumPrefixRange(actualRowPrefixSums, 0, cell.row - 1),
-      width: sumPrefixRange(actualColPrefixSums, cell.col, endActualCol)
+      height: sumPrefixRange(actualRowPrefixSums, cell2.row, endActualRow),
+      left: displayRowHeaderWidth + sumPrefixRange(actualColPrefixSums, 0, cell2.col - 1),
+      top: displayHeaderHeight + sumPrefixRange(actualRowPrefixSums, 0, cell2.row - 1),
+      width: sumPrefixRange(actualColPrefixSums, cell2.col, endActualCol)
     };
   }, [
     actualColPrefixSums,
@@ -28013,13 +28114,13 @@ function XlsxGrid({
     if (!table || !column || !wrapper) {
       return null;
     }
-    const cell = wrapper.querySelector(`[data-xlsx-cell="${openTableMenu.row}:${openTableMenu.col}"]`);
-    if (cell) {
+    const cell2 = wrapper.querySelector(`[data-xlsx-cell="${openTableMenu.row}:${openTableMenu.col}"]`);
+    if (cell2) {
       return {
         column,
-        left: cell.offsetLeft + cell.offsetWidth - 170,
+        left: cell2.offsetLeft + cell2.offsetWidth - 170,
         table,
-        top: cell.offsetTop + cell.offsetHeight - 2
+        top: cell2.offsetTop + cell2.offsetHeight - 2
       };
     }
     const rect = resolveCellDisplayRect({ row: openTableMenu.row, col: openTableMenu.col });
@@ -28124,18 +28225,18 @@ function XlsxGrid({
     }
     applyHeaderSelection(range);
   }, [applyHeaderSelection, resolveMountedCellOverlayRect, resolveOverlayRect, zoomFactor]);
-  const syncActiveValidationOverlay = React4.useCallback((cell) => {
+  const syncActiveValidationOverlay = React4.useCallback((cell2) => {
     const overlay = activeValidationOverlayRef.current;
-    if (!overlay || !cell || editingCellRef.current || selectionDragRef.current || fillDragRef.current) {
+    if (!overlay || !cell2 || editingCellRef.current || selectionDragRef.current || fillDragRef.current) {
       if (overlay) {
         overlay.style.opacity = "0";
         overlay.style.visibility = "hidden";
       }
       return;
     }
-    const cellData = getCellData(cell.row, cell.col);
+    const cellData = getCellData(cell2.row, cell2.col);
     const shouldShow = cellData.validation?.validationType === "list" && cellData.validation.showDropdown;
-    const rect = shouldShow ? resolveOverlayRect({ start: cell, end: cell }) : null;
+    const rect = shouldShow ? resolveOverlayRect({ start: cell2, end: cell2 }) : null;
     if (!rect) {
       overlay.style.opacity = "0";
       overlay.style.visibility = "hidden";
@@ -28277,14 +28378,14 @@ function XlsxGrid({
     setGlobalCursor,
     zoomFactor
   ]);
-  function buildDraggedSelectionRange(dragState, cell) {
+  function buildDraggedSelectionRange(dragState, cell2) {
     if (dragState.axis === "row") {
       if (firstVisibleCol === void 0 || lastVisibleCol === void 0) {
         return null;
       }
       return normalizeRange2({
         start: { row: dragState.anchor.row, col: firstVisibleCol },
-        end: { row: cell.row, col: lastVisibleCol }
+        end: { row: cell2.row, col: lastVisibleCol }
       });
     }
     if (dragState.axis === "column") {
@@ -28293,10 +28394,10 @@ function XlsxGrid({
       }
       return normalizeRange2({
         start: { row: firstVisibleRow, col: dragState.anchor.col },
-        end: { row: lastVisibleRow, col: cell.col }
+        end: { row: lastVisibleRow, col: cell2.col }
       });
     }
-    return normalizeRange2({ start: dragState.anchor, end: cell });
+    return normalizeRange2({ start: dragState.anchor, end: cell2 });
   }
   function updateSelectionDragPreview(clientX, clientY) {
     const dragState = selectionDragRef.current;
@@ -28580,23 +28681,23 @@ function XlsxGrid({
   React4.useLayoutEffect(() => {
     syncActiveValidationOverlay(activeCell);
   }, [activeCell, editingCell, revision, syncActiveValidationOverlay]);
-  const handleCellDoubleClick = React4.useCallback((cell) => {
-    startEditing(cell);
+  const handleCellDoubleClick = React4.useCallback((cell2) => {
+    startEditing(cell2);
   }, [startEditing]);
-  const handleCellClick = React4.useCallback((cell, cellData) => {
+  const handleCellClick = React4.useCallback((cell2, cellData) => {
     if (!cellData.hyperlink) {
       return;
     }
     openHyperlink(cellData.hyperlink.target, cellData.hyperlink.location);
   }, [openHyperlink]);
-  const handleCellPointerDown = React4.useCallback((event, cell) => {
+  const handleCellPointerDown = React4.useCallback((event, cell2) => {
     if (event.button !== 0) {
       return;
     }
     event.preventDefault();
     focusGrid();
     axisSelectionRef.current = null;
-    const targetCell = event.currentTarget.colSpan > 1 || event.currentTarget.rowSpan > 1 ? resolvePointerCellFromGeometry(event.clientX, event.clientY) ?? cell : cell;
+    const targetCell = event.currentTarget.colSpan > 1 || event.currentTarget.rowSpan > 1 ? resolvePointerCellFromGeometry(event.clientX, event.clientY) ?? cell2 : cell2;
     if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
       selectRange({ start: targetCell, end: targetCell }, { toggle: true });
       return;
@@ -28609,8 +28710,8 @@ function XlsxGrid({
     if (editingCellRef.current && !isActive) {
       commitEditingRef.current();
     }
-    const pointerOrigin = targetCell.row === cell.row && targetCell.col === cell.col ? resolveCellPointerOrigin(cell, event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY) : resolveCellPointerOriginFromClient(targetCell, event.clientX, event.clientY);
-    const originOverlayRect = targetCell.row === cell.row && targetCell.col === cell.col ? resolveMountedCellOverlayRect(event.currentTarget) : resolveOverlayRect(initialRange);
+    const pointerOrigin = targetCell.row === cell2.row && targetCell.col === cell2.col ? resolveCellPointerOrigin(cell2, event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY) : resolveCellPointerOriginFromClient(targetCell, event.clientX, event.clientY);
+    const originOverlayRect = targetCell.row === cell2.row && targetCell.col === cell2.col ? resolveMountedCellOverlayRect(event.currentTarget) : resolveOverlayRect(initialRange);
     if (!pointerOrigin) {
       return;
     }
@@ -28627,7 +28728,7 @@ function XlsxGrid({
       event.clientX,
       event.clientY
     );
-    if (targetCell.row === cell.row && targetCell.col === cell.col) {
+    if (targetCell.row === cell2.row && targetCell.col === cell2.col) {
       applyPreviewOverlayFromElement(event.currentTarget, initialRange);
     } else {
       applyPreviewOverlay(initialRange);
@@ -28727,9 +28828,9 @@ function XlsxGrid({
     event.stopPropagation();
     startRowResize(event.pointerId, actualRow, rowHeight, event.clientY);
   }, [canResizeHeaders]);
-  const renderCellAdornment = React4.useCallback((cell) => {
-    const table = getTableAtCell(effectiveTables, cell.row, cell.col);
-    const tableColumn = getTableHeaderColumn(table, cell.row, cell.col);
+  const renderCellAdornment = React4.useCallback((cell2) => {
+    const table = getTableAtCell(effectiveTables, cell2.row, cell2.col);
+    const tableColumn = getTableHeaderColumn(table, cell2.row, cell2.col);
     if (!table || !tableColumn) {
       return null;
     }
@@ -28737,7 +28838,7 @@ function XlsxGrid({
     const triggerIcon = direction === "ascending" ? "\u25B2" : direction === "descending" ? "\u25BC" : "\u25BE";
     if (renderTableHeaderMenu) {
       return renderTableHeaderMenu({
-        cell,
+        cell: cell2,
         column: tableColumn,
         direction,
         sortAscending: () => sortTable(table.name, tableColumn.index, "ascending"),
@@ -28769,7 +28870,7 @@ function XlsxGrid({
           event.preventDefault();
           event.stopPropagation();
           setOpenTableMenu(
-            (current) => current && current.tableName === table.name && current.row === cell.row && current.col === cell.col ? null : { col: cell.col, row: cell.row, tableName: table.name }
+            (current) => current && current.tableName === table.name && current.row === cell2.row && current.col === cell2.col ? null : { col: cell2.col, row: cell2.row, tableName: table.name }
           );
         },
         style: {
@@ -28967,26 +29068,26 @@ function XlsxGrid({
     if (event.button !== 0) {
       return;
     }
-    const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
-    if (!cell) {
+    const cell2 = resolvePointerCellFromClient(event.clientX, event.clientY);
+    if (!cell2) {
       return;
     }
     event.preventDefault();
     focusGrid();
     axisSelectionRef.current = null;
     if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
-      const appendRowIndex = rowIndexByActual.get(cell.row);
-      const appendColIndex = colIndexByActual.get(cell.col);
+      const appendRowIndex = rowIndexByActual.get(cell2.row);
+      const appendColIndex = colIndexByActual.get(cell2.col);
       if (appendRowIndex === void 0 || appendColIndex === void 0) {
         return;
       }
-      const appendInitialRange = normalizeRange2({ start: cell, end: cell });
+      const appendInitialRange = normalizeRange2({ start: cell2, end: cell2 });
       startCellSelection(
         event.currentTarget,
         event.pointerId,
-        cell,
+        cell2,
         "cell",
-        cell,
+        cell2,
         {
           contentScaleX: 1,
           contentScaleY: 1,
@@ -29004,15 +29105,15 @@ function XlsxGrid({
       return;
     }
     const currentSelection = selectionRef.current;
-    const anchor = event.shiftKey && currentSelection ? currentSelection.start : cell;
-    const initialRange = normalizeRange2({ start: anchor, end: cell });
-    const isActive = isSameCell(activeCellRef.current, cell);
+    const anchor = event.shiftKey && currentSelection ? currentSelection.start : cell2;
+    const initialRange = normalizeRange2({ start: anchor, end: cell2 });
+    const isActive = isSameCell(activeCellRef.current, cell2);
     const committedOnPointerDown = !isActive || !editingCellRef.current;
     if (editingCellRef.current && !isActive) {
       commitEditingRef.current();
     }
-    const rowIndex = rowIndexByActual.get(cell.row);
-    const colIndex = colIndexByActual.get(cell.col);
+    const rowIndex = rowIndexByActual.get(cell2.row);
+    const colIndex = colIndexByActual.get(cell2.col);
     if (rowIndex === void 0 || colIndex === void 0) {
       return;
     }
@@ -29021,7 +29122,7 @@ function XlsxGrid({
       event.pointerId,
       anchor,
       "cell",
-      cell,
+      cell2,
       {
         contentScaleX: 1,
         contentScaleY: 1,
@@ -29073,13 +29174,13 @@ function XlsxGrid({
     const target = event.target;
     if (!(target instanceof Element) || !target.closest("[data-xlsx-cell], [data-xlsx-body-canvas]")) return;
     const resolvedCell = resolvePointerCellFromClient(event.clientX, event.clientY);
-    const cell = resolvedCell ? resolveMergeAnchorCell(resolvedCell) : null;
-    const address = cell ? cellAddressToA12(cell) : "";
-    if (!cell || !formulaErrors.has(address)) return;
+    const cell2 = resolvedCell ? resolveMergeAnchorCell(resolvedCell) : null;
+    const address = cell2 ? cellAddressToA12(cell2) : "";
+    if (!cell2 || !formulaErrors.has(address)) return;
     const scroller = scrollRef.current;
-    const geometry = resolveGeometryOverlayRect({ start: cell, end: cell });
+    const geometry = resolveGeometryOverlayRect({ start: cell2, end: cell2 });
     if (!scroller || !geometry) return;
-    const mountedCell = wrapperRef.current?.querySelector(`[data-xlsx-cell="${cell.row}:${cell.col}"]`);
+    const mountedCell = wrapperRef.current?.querySelector(`[data-xlsx-cell="${cell2.row}:${cell2.col}"]`);
     const viewport = scroller.getBoundingClientRect();
     const rect = mountedCell?.getBoundingClientRect() ?? {
       left: viewport.left + geometry.left - (geometry.left >= frozenPaneRight ? scroller.scrollLeft : 0),
@@ -29092,7 +29193,7 @@ function XlsxGrid({
     if (offsetX < 0 || offsetY < 0 || offsetX > Math.min(12 * zoomFactor, rect.width) || offsetY > Math.min(12 * zoomFactor, rect.height)) {
       return;
     }
-    const text = getCellData(cell.row, cell.col).errorTooltip;
+    const text = getCellData(cell2.row, cell2.col).errorTooltip;
     if (!text) return;
     event.stopPropagation();
     setFormulaPopover({
@@ -29117,21 +29218,21 @@ function XlsxGrid({
     zoomFactor
   ]);
   const handleCanvasBodyClick = React4.useCallback((event) => {
-    const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
-    if (!cell) {
+    const cell2 = resolvePointerCellFromClient(event.clientX, event.clientY);
+    if (!cell2) {
       return;
     }
-    handleCellClick(cell, getCellData(cell.row, cell.col));
+    handleCellClick(cell2, getCellData(cell2.row, cell2.col));
   }, [getCellData, handleCellClick, resolvePointerCellFromClient]);
   const handleCanvasBodyDoubleClick = React4.useCallback((event) => {
     if (readOnly) {
       return;
     }
-    const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
-    if (!cell) {
+    const cell2 = resolvePointerCellFromClient(event.clientX, event.clientY);
+    if (!cell2) {
       return;
     }
-    startEditing(cell);
+    startEditing(cell2);
   }, [readOnly, resolvePointerCellFromClient, startEditing]);
   const handleCornerPointerDown = React4.useCallback((event) => {
     if (event.button !== 0 || firstVisibleRow === void 0 || lastVisibleRow === void 0 || firstVisibleCol === void 0 || lastVisibleCol === void 0) {
@@ -29715,8 +29816,8 @@ function XlsxGrid({
         const drawnMergedAnchorKeys = /* @__PURE__ */ new Set();
         for (const rowItem of paneAxisItems.rows) {
           for (const colItem of paneAxisItems.cols) {
-            const cell = { row: rowItem.actualRow, col: colItem.actualCol };
-            const anchorCell = resolveMergeAnchorCell(cell);
+            const cell2 = { row: rowItem.actualRow, col: colItem.actualCol };
+            const anchorCell = resolveMergeAnchorCell(cell2);
             const anchorKey = `${anchorCell.row}:${anchorCell.col}`;
             let drawCell = anchorCell;
             const drawRowIndex = rowIndexByActual.get(drawCell.row);
@@ -29734,7 +29835,7 @@ function XlsxGrid({
               top: (useFrozenVerticalPosition ? stickyTopByRow.get(drawCell.row) ?? baseCellTop - drawingViewport.top : baseCellTop - drawingViewport.top) - paneBoundsForCell.top,
               width: displayEffectiveColWidths[drawColIndex] ?? colItem.size
             };
-            const isMergedSecondaryProbe = anchorCell.row !== cell.row || anchorCell.col !== cell.col;
+            const isMergedSecondaryProbe = anchorCell.row !== cell2.row || anchorCell.col !== cell2.col;
             if (!isMergedSecondaryProbe && !intersectsCanvasDirtyRects(
               roughLocalRect.left - CANVAS_DIRTY_CELL_CULL_MARGIN_PX,
               roughLocalRect.top - CANVAS_DIRTY_CELL_CULL_MARGIN_PX,
@@ -31752,25 +31853,25 @@ function XlsxGrid({
     applyPreviewOverlay(previewRange);
     installPendingSelectionDragListeners(pointerId, target);
   }
-  function resolveFillRange(sourceRange, cell) {
+  function resolveFillRange(sourceRange, cell2) {
     const normalizedSource = normalizeRange2(sourceRange);
-    if (isCellInRange(cell, normalizedSource)) {
+    if (isCellInRange(cell2, normalizedSource)) {
       return normalizedSource;
     }
-    const distanceAbove = Math.max(0, normalizedSource.start.row - cell.row);
-    const distanceBelow = Math.max(0, cell.row - normalizedSource.end.row);
-    const distanceLeft = Math.max(0, normalizedSource.start.col - cell.col);
-    const distanceRight = Math.max(0, cell.col - normalizedSource.end.col);
+    const distanceAbove = Math.max(0, normalizedSource.start.row - cell2.row);
+    const distanceBelow = Math.max(0, cell2.row - normalizedSource.end.row);
+    const distanceLeft = Math.max(0, normalizedSource.start.col - cell2.col);
+    const distanceRight = Math.max(0, cell2.col - normalizedSource.end.col);
     const verticalDistance = Math.max(distanceAbove, distanceBelow);
     const horizontalDistance = Math.max(distanceLeft, distanceRight);
     if (verticalDistance >= horizontalDistance) {
       return normalizeRange2({
         start: {
-          row: distanceAbove > 0 ? cell.row : normalizedSource.start.row,
+          row: distanceAbove > 0 ? cell2.row : normalizedSource.start.row,
           col: normalizedSource.start.col
         },
         end: {
-          row: distanceBelow > 0 ? cell.row : normalizedSource.end.row,
+          row: distanceBelow > 0 ? cell2.row : normalizedSource.end.row,
           col: normalizedSource.end.col
         }
       });
@@ -31778,11 +31879,11 @@ function XlsxGrid({
     return normalizeRange2({
       start: {
         row: normalizedSource.start.row,
-        col: distanceLeft > 0 ? cell.col : normalizedSource.start.col
+        col: distanceLeft > 0 ? cell2.col : normalizedSource.start.col
       },
       end: {
         row: normalizedSource.end.row,
-        col: distanceRight > 0 ? cell.col : normalizedSource.end.col
+        col: distanceRight > 0 ? cell2.col : normalizedSource.end.col
       }
     });
   }
@@ -31803,12 +31904,12 @@ function XlsxGrid({
     document.body.style.userSelect = "none";
     installFillDragListeners(pointerId, normalizedSource);
   }
-  function updateFillPreview(cell) {
+  function updateFillPreview(cell2) {
     const fillState = fillDragRef.current;
     if (!fillState) {
       return;
     }
-    const nextRange = resolveFillRange(fillState.sourceRange, cell);
+    const nextRange = resolveFillRange(fillState.sourceRange, cell2);
     fillState.previewRange = nextRange;
     applyPreviewOverlay(nextRange);
   }
@@ -32069,17 +32170,17 @@ function XlsxGrid({
     selectCell({ row: nextRow, col: nextCol }, extend ? { extend: true } : void 0);
     ensureCellVisible(clampedRowIndex, clampedColIndex);
   }
-  function revealCell(cell) {
+  function revealCell(cell2) {
     dataNavigationGenerationRef.current += 1;
     navigationCursorRef.current = null;
-    selectCell(cell);
+    selectCell(cell2);
     try {
-      const rowIndex = rowIndexByActual.get(cell.row);
-      const colIndex = colIndexByActual.get(cell.col);
+      const rowIndex = rowIndexByActual.get(cell2.row);
+      const colIndex = colIndexByActual.get(cell2.col);
       if (rowIndex !== void 0 && colIndex !== void 0) {
         scrollCellToCenter(rowIndex, colIndex);
       }
-      const range = { start: cell, end: cell };
+      const range = { start: cell2, end: cell2 };
       axisSelectionRef.current = null;
       selectionPreviewRangeRef.current = null;
       displayedSelectionRef.current = range;
@@ -32149,13 +32250,13 @@ function XlsxGrid({
     dataNavigationQueueRef.current = dataNavigationQueueRef.current.then(async () => {
       if (generation !== dataNavigationGenerationRef.current) return;
       const current = navigationControllerRef.current;
-      const cell = navigationCursorRef.current ?? current.activeCell ?? resolveCurrentCell();
-      if (!cell) return;
+      const cell2 = navigationCursorRef.current ?? current.activeCell ?? resolveCurrentCell();
+      if (!cell2) return;
       const destination = await current.findDataBoundary({
-        cell,
+        cell: cell2,
         direction,
-        maxRow: visibleRows[visibleRows.length - 1] ?? cell.row,
-        maxCol: visibleCols[visibleCols.length - 1] ?? cell.col
+        maxRow: visibleRows[visibleRows.length - 1] ?? cell2.row,
+        maxCol: visibleCols[visibleCols.length - 1] ?? cell2.col
       });
       if (generation !== dataNavigationGenerationRef.current) return;
       const rowIndex = rowIndexByActual.get(destination.row);
@@ -32952,6 +33053,7 @@ function XlsxGrid({
                     "div",
                     {
                       ref: fillHandleRef,
+                      "data-testid": "xlsx-fill-handle",
                       onPointerDown: (event) => {
                         if (readOnly || event.button !== 0 || !normalizedSelection || !resolvedSelectionOverlay) {
                           return;
