@@ -6,7 +6,7 @@ Preserved behavior:
 
 - Serializable external add-in values reach the engine in normal, worker, and deferred loads. Formula text remains intact; unresolved calls retain cached values.
 - `recalculate` accepts updated external add-in values without reloading the workbook, including
-  worker-backed read-only workbooks. Calculation skips the engine's known 5,000-formula trap.
+  worker-backed read-only workbooks. The engine (`wasm-dist-0.1.23-modus.2`) calculates serially, so the old 5,000-formula trap is gone; `autoCalculateFormulaLimit` (default 1,000) sets how many formulas a main-thread workbook may have and still recalculate on load and after edits.
 - `revealCell` selects and centers off-screen search results.
 - `selections`, append/toggle operations, and canvas Ctrl/Cmd drag support non-contiguous selections. Re-adding an existing range preserves the other regions.
 - Conditional formatting retains relative references, negated references (`lessThan -$H$13`, the plus-or-minus flux threshold), comparison/ABS/AND expressions, text and blank rules, and cached numeric fallback. These extend upstream's styled rules and retain its priority handling.

@@ -81,6 +81,8 @@ type WorkerRequest =
       type: "parseCharts";
       payload: {
         buffer: ArrayBuffer;
+        /** The main-thread workbook's calculation limit, so chart values come from the same state. */
+        autoCalculateFormulaLimit?: number;
         showHiddenSheets?: boolean;
         skipXmlParsing?: boolean;
         wasmSource?: WorkerWasmSource;
@@ -882,13 +884,18 @@ async function loadWorkbook(
   };
 }
 
-async function parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHiddenSheets = false) {
+async function parseCharts(
+  buffer: ArrayBuffer,
+  skipXmlParsing = false,
+  showHiddenSheets = false,
+  autoCalculateFormulaLimit = AUTO_CALCULATE_FORMULA_THRESHOLD
+) {
   const wasmModule = await getSheetsWasmModule();
   const bytes = new Uint8Array(buffer);
   const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing);
   let activeWorkbook = wasmModule.Workbook.fromBytes(bytes);
   const totalFormulas = countWorkbookFormulas(activeWorkbook);
-  if (totalFormulas <= AUTO_CALCULATE_FORMULA_THRESHOLD) {
+  if (totalFormulas <= autoCalculateFormulaLimit) {
     const result = safeCalculate(activeWorkbook, {
       reparse: () => wasmModule.Workbook.fromBytes(bytes)
     });
@@ -949,7 +956,12 @@ async function handleMessage(message: WorkerRequest) {
       if (message.payload.wasmSource !== undefined) {
         setWasmSource(message.payload.wasmSource);
       }
-      return parseCharts(message.payload.buffer, message.payload.skipXmlParsing, message.payload.showHiddenSheets);
+      return parseCharts(
+        message.payload.buffer,
+        message.payload.skipXmlParsing,
+        message.payload.showHiddenSheets,
+        message.payload.autoCalculateFormulaLimit
+      );
     }
     case "recalculate": {
       return recalculateWorkbook(message.payload.externalFnValues);
