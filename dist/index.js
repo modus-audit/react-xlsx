@@ -7773,14 +7773,25 @@ function fittedColumnWidth(sheet, col, measure) {
   }
   return widest > 0 ? Math.min(MAX_WIDTH_PX, Math.max(MIN_WIDTH_PX, Math.ceil(widest + CELL_PADDING_PX + FIT_GAP_PX))) : null;
 }
+function rowFitSpan(sheet, row, col) {
+  if (sheet.isMergedSecondary(row, col)) return 0;
+  const span = sheet.getMergeSpan(row, col);
+  if (typeof span !== "object" || span === null) return 1;
+  if ("rowSpan" in span && Number(span.rowSpan) > 1) return 0;
+  return "colSpan" in span ? Math.max(1, Number(span.colSpan) || 1) : 1;
+}
 function fittedRowHeight(sheet, row, columnWidthPx, measure) {
   let tallest = 0;
   const lastCol = usedEnd(sheet, 3);
   for (let col = 0; col <= lastCol; col += 1) {
     const text = sheet.getFormattedValueAt(row, col).trim();
-    if (!text || isMerged(sheet, row, col)) continue;
+    if (!text) continue;
+    const span = rowFitSpan(sheet, row, col);
+    if (span === 0) continue;
     const style = sheet.getCellStyleAt(row, col);
-    const lines = wraps(style) ? wrappedLines(text, cssFont(style), columnWidthPx(col) - CELL_PADDING_PX, measure) : text.split("\n").length;
+    let widthPx = 0;
+    for (let spanned = col; spanned < col + span; spanned += 1) widthPx += columnWidthPx(spanned);
+    const lines = wraps(style) ? wrappedLines(text, cssFont(style), widthPx - CELL_PADDING_PX, measure) : text.split("\n").length;
     tallest = Math.max(tallest, lines * fontPx(style) * LINE_HEIGHT);
   }
   return tallest > 0 ? Math.min(MAX_HEIGHT_PX, Math.max(MIN_HEIGHT_PX, Math.ceil(tallest + ROW_PADDING_PX))) : null;

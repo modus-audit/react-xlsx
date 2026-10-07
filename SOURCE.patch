@@ -1,9 +1,9 @@
 diff --git a/MODUS_PATCHES.md b/MODUS_PATCHES.md
 new file mode 100644
-index 0000000..5c0681a
+index 0000000..f1c36a5
 --- /dev/null
 +++ b/MODUS_PATCHES.md
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,90 @@
 +# Modus React XLSX viewer
 +
 +Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.2` WASM engine.
@@ -30,6 +30,7 @@ index 0000000..5c0681a
 +- Copy and paste carry each cell's formatting and its stored (or calculated) value, so pasted numbers stay numbers and formatting travels as in Excel; styles are stored once per distinct style, and a merged block's covered cells carry their style (Excel keeps a merge's edge borders there). The async `copySelectionToClipboard` writes plain text and HTML only: browsers refuse custom types there, which made it copy nothing.
 +- The engine reads an unstyled cell's style as `null`, has no call that clears a style, and patches the fields it is given. Pasting a plain cell, filling from one, or undoing a first format writes every field back to the workbook's default format (its first cell format's font), which reads back as `null` again.
 +- Row and column header borders grab for resizing within a sixth of the header (2 to 8 px) rather than a fixed 8 px, which took 16 of a default 20 px row and turned most clicks on row numbers into resizes. Ctrl/Cmd-click on a header adds that row or column to the selection, and the corner above the row numbers selects every cell. The DOM grid's resize handles use the same grab zone.
++- Row AutoFit wraps a merge that spans columns of a single row at the merge's full width (Excel's AutoFit skips merged cells, which left wrapped conclusions cut off). Merges taller than one row are still skipped.
 +- `resizeRows` and `resizeColumns` apply many sizes as one undo step (one state update on worker-backed sheets), for fitting a whole selection; `resizeRow` and `resizeColumn` use them.
 +- Unmerge clears every merged block the selection touches, as Excel does; the engine only unmerges an exact merged range.
 +- Worker row batches reuse upstream's viewport calculation, also applying it to worker DOM rendering and excluding frozen rows from the scrolling batch. Frozen rows are fetched separately; sparse batch coverage and cache invalidation keep distant cells visible without requesting every preceding row.
@@ -47,7 +48,7 @@ index 0000000..5c0681a
 +
 +Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/excel-viewer-e2e`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 +
-+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.21`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
++After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.22`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 +
 +The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 +
@@ -210,14 +211,14 @@ index 0000000..49eac7a
 +  };
 +}
 diff --git a/packages/react-xlsx/package.json b/packages/react-xlsx/package.json
-index 6455584..cdaee6e 100644
+index 6455584..eef8323 100644
 --- a/packages/react-xlsx/package.json
 +++ b/packages/react-xlsx/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@extend-ai/react-xlsx",
 -  "version": "0.16.4",
-+  "version": "0.16.4-modus.21",
++  "version": "0.16.4-modus.22",
    "description": "React components and hooks for viewing XLSX workbooks",
    "license": "MIT",
    "keywords": [
@@ -2004,10 +2005,10 @@ index 20d313c..9813472 100644
  
 diff --git a/packages/react-xlsx/src/auto-fit.test.ts b/packages/react-xlsx/src/auto-fit.test.ts
 new file mode 100644
-index 0000000..cc2fb2c
+index 0000000..71b92cd
 --- /dev/null
 +++ b/packages/react-xlsx/src/auto-fit.test.ts
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,61 @@
 +import assert from "node:assert/strict";
 +import { test } from "node:test";
 +import { autoFitSizes, type FitSheet, fittedColumnWidth, fittedRowHeight } from "./auto-fit.ts";
@@ -2015,7 +2016,11 @@ index 0000000..cc2fb2c
 +// 1px per character keeps the arithmetic readable.
 +const measure = (text: string) => text.length;
 +
-+function sheet(cells: Record<string, { text: string; wrap?: boolean; size?: number }>, merged: string[] = []): FitSheet {
++function sheet(
++  cells: Record<string, { text: string; wrap?: boolean; size?: number }>,
++  merged: string[] = [],
++  spans: Record<string, { rowSpan: number; colSpan: number }> = {}
++): FitSheet {
 +  return {
 +    usedRange: () => [0, 0, 3, 3],
 +    getFormattedValueAt: (row, col) => cells[`${row}:${col}`]?.text ?? "",
@@ -2023,7 +2028,7 @@ index 0000000..cc2fb2c
 +      const cell = cells[`${row}:${col}`];
 +      return { font: { size: cell?.size ?? 12 }, alignment: { wrapText: cell?.wrap === true } };
 +    },
-+    getMergeSpan: () => null,
++    getMergeSpan: (row, col) => spans[`${row}:${col}`] ?? null,
 +    isMergedSecondary: (row, col) => merged.includes(`${row}:${col}`)
 +  };
 +}
@@ -2045,6 +2050,16 @@ index 0000000..cc2fb2c
 +  assert.equal(fittedRowHeight(sheet({}), 0, () => 80, measure), null);
 +});
 +
++test("a row wraps a merge across its columns at the merge's width, and skips taller merges", () => {
++  const words = Array.from({ length: 30 }, () => "word").join(" ");
++  const cells = { "0:0": { text: words, wrap: true } };
++  const across = sheet(cells, ["0:1", "0:2"], { "0:0": { rowSpan: 1, colSpan: 3 } });
++  // 149 chars in a 3 x 50px merge (142px of text) wrap to 2 lines; one 42px column would take 4.
++  assert.equal(fittedRowHeight(across, 0, () => 50, measure), Math.ceil(2 * 16 * 1.2 + 2));
++  const tall = sheet(cells, [], { "0:0": { rowSpan: 2, colSpan: 1 } });
++  assert.equal(fittedRowHeight(tall, 0, () => 50, measure), null);
++});
++
 +test("autofit skips hidden and already-fitting indices, resets empty rows and keeps empty columns", () => {
 +  const fitSheet = sheet({ "0:0": { text: "x".repeat(40) }, "0:1": { text: "x".repeat(40) } });
 +  const base = { sheet: fitSheet, columnWidthPx: () => 64, rowHeightPx: () => 40, defaultRowHeightPx: 20, gridlinePx: 1, measure };
@@ -2057,10 +2072,10 @@ index 0000000..cc2fb2c
 +});
 diff --git a/packages/react-xlsx/src/auto-fit.ts b/packages/react-xlsx/src/auto-fit.ts
 new file mode 100644
-index 0000000..a66c1fe
+index 0000000..c0196d3
 --- /dev/null
 +++ b/packages/react-xlsx/src/auto-fit.ts
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,177 @@
 +/** Column widths and row heights that fit the displayed text, like Excel's AutoFit. */
 +
 +/** The grid's 4px cell padding on each side. */
@@ -2157,8 +2172,19 @@ index 0000000..a66c1fe
 +    : null;
 +}
 +
-+/** Pixel height for `row`: the tallest cell, counting wrapped lines at each column's width.
-+ *  Null when the row holds no text. Skips merged cells. */
++/** Columns a one-row merge anchored at (`row`, `col`) spans, 1 for a plain cell, or 0 for a cell
++ *  that can't size this row: inside a merge, or anchoring one taller than a row. */
++function rowFitSpan(sheet: FitSheet, row: number, col: number): number {
++  if (sheet.isMergedSecondary(row, col)) return 0;
++  const span = sheet.getMergeSpan(row, col);
++  if (typeof span !== "object" || span === null) return 1;
++  if ("rowSpan" in span && Number(span.rowSpan) > 1) return 0;
++  return "colSpan" in span ? Math.max(1, Number(span.colSpan) || 1) : 1;
++}
++
++/** Pixel height for `row`: the tallest cell, counting wrapped lines at each column's width (a
++ *  merge across columns of this one row wraps at the merge's width, which Excel's AutoFit skips).
++ *  Null when the row holds no text. Skips merges taller than the row. */
 +export function fittedRowHeight(
 +  sheet: FitSheet,
 +  row: number,
@@ -2169,10 +2195,14 @@ index 0000000..a66c1fe
 +  const lastCol = usedEnd(sheet, 3);
 +  for (let col = 0; col <= lastCol; col += 1) {
 +    const text = sheet.getFormattedValueAt(row, col).trim();
-+    if (!text || isMerged(sheet, row, col)) continue;
++    if (!text) continue;
++    const span = rowFitSpan(sheet, row, col);
++    if (span === 0) continue;
 +    const style = sheet.getCellStyleAt(row, col);
++    let widthPx = 0;
++    for (let spanned = col; spanned < col + span; spanned += 1) widthPx += columnWidthPx(spanned);
 +    const lines = wraps(style)
-+      ? wrappedLines(text, cssFont(style), columnWidthPx(col) - CELL_PADDING_PX, measure)
++      ? wrappedLines(text, cssFont(style), widthPx - CELL_PADDING_PX, measure)
 +      : text.split("\n").length;
 +    tallest = Math.max(tallest, lines * fontPx(style) * LINE_HEIGHT);
 +  }
