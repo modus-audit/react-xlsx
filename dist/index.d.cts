@@ -42,6 +42,56 @@ declare function externalCallKey(name: string, args: readonly string[]): string;
 /** Serializable map handed to the controller: `externalCallKey(name, args)` -> resolved value. */
 type ExternalFnValues = Record<string, string | number>;
 
+/** What an edit is about to change, for `onBeforeEdit`, and the formula checks it carries. Pure:
+ *  the controller supplies the worksheet reads. */
+interface EditAddress {
+    row: number;
+    col: number;
+}
+interface EditRange {
+    start: EditAddress;
+    end: EditAddress;
+}
+/** A formula the engine would mishandle silently: it leaves a malformed formula blank and stops
+ *  recalculating on one that names a missing sheet. */
+type XlsxFormulaProblem = {
+    kind: "syntax";
+} | {
+    kind: "missingSheet";
+    sheetName: string;
+};
+type XlsxEditKind = 
+/** Cell values or formulas: typing, clearing, pasting, filling. */
+"content" | "style" | "merge" | "unmerge" | "resize"
+/** Undo or redo. */
+ | "history"
+/** Sheets, defined names, table sorts and form controls. */
+ | "structure"
+/** Charts and images. */
+ | "drawing";
+/** An edit the viewer is about to make. `onBeforeEdit` returning false refuses it, before any change. */
+interface XlsxEdit {
+    kind: XlsxEditKind;
+    /** The workbook sheet the edit changes. */
+    sheetIndex: number;
+    /** The cells the edit writes (for a paste, from the active cell to the copied extent). */
+    range?: EditRange;
+    /** The net change in the workbook's formula count, counting replaced formulas once. Computed on
+     *  call, so a host that refuses on `range` first never pays for it. Absent when the edit can't
+     *  add formulas (a clear, a typed value). */
+    formulaDelta?: () => number;
+    /** A single formula entry, normalized to one leading `=`. */
+    formula?: string;
+    formulaProblem?: XlsxFormulaProblem;
+    axis?: "row" | "column";
+    /** The rows or columns a resize changes. */
+    indices?: number[];
+}
+/** A formula as the user sees it, with one leading `=`. */
+declare function formulaText(formula: string): string;
+/** Unbalanced parentheses or quotes, a trailing operator, or a sheet the workbook lacks. */
+declare function formulaProblem(formula: string, sheetNames: readonly string[]): XlsxFormulaProblem | undefined;
+
 interface XlsxThemePalette {
     colorsByIndex: Record<number, string>;
     majorLatinFont?: string;
@@ -995,9 +1045,16 @@ interface UseXlsxViewerControllerOptions {
     autoCalculateFormulaLimit?: number;
     /**
      * Values keyed by `externalCallKey(name, args)` resolve add-in formulas without rewriting them.
-     * Unmapped calls preserve their cached values.
+     * Unmapped calls preserve their cached values. Every calculation uses the latest values: the
+     * load, recalculation after each edit, undo and redo. Changing them recalculates in place,
+     * without reloading the workbook.
      */
     externalFnValues?: Record<string, string | number>;
+    /**
+     * Called before every workbook edit with what it would change; return `false` to refuse it.
+     * Without it, formula entries with a `formulaProblem` are refused.
+     */
+    onBeforeEdit?: (edit: XlsxEdit) => boolean;
     /**
      * Defers loading until `continueDeferredLoad()` is called when the file is larger than this byte threshold.
      * Set to `0` to parse immediately.
@@ -1034,7 +1091,8 @@ interface UseXlsxViewerControllerOptions {
      */
     maxFileSizeBytes?: number;
     /**
-     * Disables workbook edits, paste, fill, undo/redo, and other mutation actions.
+     * Disables workbook edits, paste, fill, undo/redo, and other mutation actions. Changing it after
+     * the workbook loads switches editing on or off in place, without reloading.
      *
      * @default false
      */
@@ -1094,7 +1152,8 @@ interface XlsxViewerController {
     canZoomOut: boolean;
     /** Adds a Duke-supported form control to a visible worksheet and returns its worksheet-local index. */
     addFormControl: (input: XlsxFormControlInput, sheetIndex?: number) => number | null;
-    clearSelectedCells: () => void;
+    /** Clears the selection's contents; false when nothing was cleared (read-only or refused). */
+    clearSelectedCells: () => boolean;
     clearSelection: () => void;
     continueDeferredLoad: () => void;
     copySelectionToClipboard: () => Promise<boolean>;
@@ -1162,7 +1221,27 @@ interface XlsxViewerController {
     redo: () => void;
     pasteFromClipboard: () => Promise<boolean>;
     pasteStructuredClipboardData: (payload: string) => boolean;
-    pasteText: (text: string) => boolean;
+    pasteText: (text: string, options?: {
+        literal?: boolean;
+    }) => boolean;
+    /**
+     * Pastes the system clipboard at the active cell. A paste of the viewer's own last copy keeps
+     * its formulas and formatting; `valuesOnly` pastes values alone (Excel's Paste Values), leaving
+     * the destination's formatting. Rejects when the browser refuses the clipboard.
+     */
+    paste: (options?: {
+        valuesOnly?: boolean;
+    }) => Promise<boolean>;
+    /** Copies the selection, then clears it; pasting it moves formulas unchanged. A refused clear
+     *  leaves an ordinary copy. Writes to `clipboard` (a cut event's) when given, else the system
+     *  clipboard. Resolves whether the cells were cut; rejects when the browser refuses the clipboard. */
+    cutSelection: (clipboard?: DataTransfer) => Promise<boolean>;
+    /**
+     * Fits columns or rows to their text, as Excel's AutoFit, in one undo step: by default every
+     * selected one. Hidden ones are left alone; an empty row returns to the default height and an
+     * empty column keeps its width.
+     */
+    autoFit: (axis: "column" | "row", indices?: Iterable<number>) => void;
     selectedRangeAddress: string | null;
     selectedValue: string;
     selectedFormula: string;
@@ -1308,7 +1387,8 @@ interface XlsxViewerEditing {
     addFormControl: (input: XlsxFormControlInput, sheetIndex?: number) => number | null;
     canRedo: boolean;
     canUndo: boolean;
-    clearSelectedCells: () => void;
+    /** Clears the selection's contents; false when nothing was cleared (read-only or refused). */
+    clearSelectedCells: () => boolean;
     copySelectionToClipboard: () => Promise<boolean>;
     defineNamedRange: (name: string, range?: XlsxCellRange | null) => void;
     fillSelection: (targetRange: XlsxCellRange) => void;
@@ -1321,7 +1401,14 @@ interface XlsxViewerEditing {
     mergeSelection: () => XlsxCellRange | null;
     pasteFromClipboard: () => Promise<boolean>;
     pasteStructuredClipboardData: (payload: string) => boolean;
-    pasteText: (text: string) => boolean;
+    pasteText: (text: string, options?: {
+        literal?: boolean;
+    }) => boolean;
+    paste: (options?: {
+        valuesOnly?: boolean;
+    }) => Promise<boolean>;
+    cutSelection: (clipboard?: DataTransfer) => Promise<boolean>;
+    autoFit: (axis: "column" | "row", indices?: Iterable<number>) => void;
     removeActiveSheet: () => void;
     removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
     readOnly: boolean;
@@ -1535,6 +1622,9 @@ interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
      * @default false
      */
     allowResizeInReadOnly?: boolean;
+    /** Called when the browser refuses the clipboard to a keyboard paste (Ctrl/Cmd+Shift+V with no
+     *  paste event, as in Chrome on a Mac). */
+    onClipboardError?: (error: unknown) => void;
     /** Class name applied to the root viewer shell. */
     className?: string;
     /**
@@ -1745,4 +1835,20 @@ declare function useXlsxViewerThumbnails(options?: UseXlsxViewerThumbnailsOption
 declare function XlsxViewer(props: XlsxViewerProps): react_jsx_runtime.JSX.Element;
 declare function DefaultXlsxToolbar(): react_jsx_runtime.JSX.Element;
 
-export { DefaultXlsxToolbar, type ExternalFnValues, type UseXlsxViewerControllerOptions, type UseXlsxViewerThumbnailsOptions, type XlsxAxisSize, type XlsxCalculationIssue, type XlsxCalculationReport, type XlsxCellAddress, type XlsxCellAlignmentInput, type XlsxCellBorderEdgeInput, type XlsxCellBorderStyleInput, type XlsxCellCalculationDiagnostic, type XlsxCellFillStyleInput, type XlsxCellFontStyleInput, type XlsxCellGradientStopInput, type XlsxCellNumberFormatInput, type XlsxCellProtectionInput, type XlsxCellRange, type XlsxCellStyleColorInput, type XlsxCellStyleContext, type XlsxCellStyleInput, type XlsxChart, type XlsxChartAxis, type XlsxChartDataLabels, type XlsxChartElementSelection, type XlsxChartLoadingRenderProps, type XlsxChartReference, type XlsxChartSeries, type XlsxChartsheet, type XlsxDrawingLayout, XlsxFileSizeLimitExceededError, type XlsxFileTooLargeRenderProps, type XlsxFormControl, type XlsxFormControlActionEvent, type XlsxFormControlCaption, type XlsxFormControlCaptionInput, type XlsxFormControlCaptionRun, type XlsxFormControlChangeEvent, type XlsxFormControlInput, type XlsxFormControlKind, type XlsxFormControlKindInput, type XlsxFormControlPatch, type XlsxFormControlRenderProps, type XlsxFormControlSelectionMode, type XlsxFormControlState, type XlsxFormulaTarget, type XlsxImage, type XlsxImageAnchor, type XlsxImageRect, type XlsxImageRenderProps, type XlsxImageResizeHandlePosition, type XlsxImageSelectionRenderProps, type XlsxScrollerRenderProps, type XlsxShape, type XlsxShapeFill, type XlsxShapeParagraph, type XlsxShapeStroke, type XlsxShapeTextBox, type XlsxShapeTextRun, type XlsxSheetData, type XlsxSheetThumbnail, type XlsxSheetThumbnailResolution, type XlsxSheetVisibility, type XlsxTable, type XlsxTableColumn, type XlsxTableHeaderMenuRenderProps, type XlsxTableSortDirection, type XlsxTableSortState, type XlsxThemePalette, XlsxViewer, type XlsxViewerCharts, type XlsxViewerController, type XlsxViewerEditing, type XlsxViewerImages, type XlsxViewerProps, XlsxViewerProvider, type XlsxViewerProviderProps, type XlsxViewerSelection, type XlsxViewerTables, type XlsxViewerThumbnails, type XlsxViewerZoom, type XlsxWasmSource, type XlsxWorkbookTab, externalCallKey, initWasm, setWasmSource, useXlsxViewer, useXlsxViewerCharts, useXlsxViewerController, useXlsxViewerEditing, useXlsxViewerImages, useXlsxViewerSelection, useXlsxViewerTables, useXlsxViewerThumbnails, useXlsxViewerZoom };
+/** Column widths and row heights that fit the displayed text, like Excel's AutoFit. */
+interface FitSheet {
+    usedRange(): unknown;
+    getFormattedValueAt(row: number, col: number): string;
+    getCellStyleAt(row: number, col: number): unknown;
+    getMergeSpan(row: number, col: number): unknown;
+    isMergedSecondary(row: number, col: number): boolean;
+}
+/** A cell that covers more than one row or column; AutoFit skips those, as Excel does. */
+declare function isMerged(sheet: Pick<FitSheet, "getMergeSpan" | "isMergedSecondary">, row: number, col: number): boolean;
+
+/** The A1 ranges of the merged blocks `range` touches. The engine unmerges only an exact merged
+ *  range, while Excel's Unmerge clears every merge in the selection, including one selected by its
+ *  top-left cell. */
+declare function mergesTouching(mergedRegions: unknown, range: XlsxCellRange): string[];
+
+export { DefaultXlsxToolbar, type ExternalFnValues, type UseXlsxViewerControllerOptions, type UseXlsxViewerThumbnailsOptions, type XlsxAxisSize, type XlsxCalculationIssue, type XlsxCalculationReport, type XlsxCellAddress, type XlsxCellAlignmentInput, type XlsxCellBorderEdgeInput, type XlsxCellBorderStyleInput, type XlsxCellCalculationDiagnostic, type XlsxCellFillStyleInput, type XlsxCellFontStyleInput, type XlsxCellGradientStopInput, type XlsxCellNumberFormatInput, type XlsxCellProtectionInput, type XlsxCellRange, type XlsxCellStyleColorInput, type XlsxCellStyleContext, type XlsxCellStyleInput, type XlsxChart, type XlsxChartAxis, type XlsxChartDataLabels, type XlsxChartElementSelection, type XlsxChartLoadingRenderProps, type XlsxChartReference, type XlsxChartSeries, type XlsxChartsheet, type XlsxDrawingLayout, type XlsxEdit, type XlsxEditKind, XlsxFileSizeLimitExceededError, type XlsxFileTooLargeRenderProps, type XlsxFormControl, type XlsxFormControlActionEvent, type XlsxFormControlCaption, type XlsxFormControlCaptionInput, type XlsxFormControlCaptionRun, type XlsxFormControlChangeEvent, type XlsxFormControlInput, type XlsxFormControlKind, type XlsxFormControlKindInput, type XlsxFormControlPatch, type XlsxFormControlRenderProps, type XlsxFormControlSelectionMode, type XlsxFormControlState, type XlsxFormulaProblem, type XlsxFormulaTarget, type XlsxImage, type XlsxImageAnchor, type XlsxImageRect, type XlsxImageRenderProps, type XlsxImageResizeHandlePosition, type XlsxImageSelectionRenderProps, type XlsxScrollerRenderProps, type XlsxShape, type XlsxShapeFill, type XlsxShapeParagraph, type XlsxShapeStroke, type XlsxShapeTextBox, type XlsxShapeTextRun, type XlsxSheetData, type XlsxSheetThumbnail, type XlsxSheetThumbnailResolution, type XlsxSheetVisibility, type XlsxTable, type XlsxTableColumn, type XlsxTableHeaderMenuRenderProps, type XlsxTableSortDirection, type XlsxTableSortState, type XlsxThemePalette, XlsxViewer, type XlsxViewerCharts, type XlsxViewerController, type XlsxViewerEditing, type XlsxViewerImages, type XlsxViewerProps, XlsxViewerProvider, type XlsxViewerProviderProps, type XlsxViewerSelection, type XlsxViewerTables, type XlsxViewerThumbnails, type XlsxViewerZoom, type XlsxWasmSource, type XlsxWorkbookTab, externalCallKey, formulaProblem, formulaText, initWasm, isMerged, mergesTouching, setWasmSource, useXlsxViewer, useXlsxViewerCharts, useXlsxViewerController, useXlsxViewerEditing, useXlsxViewerImages, useXlsxViewerSelection, useXlsxViewerTables, useXlsxViewerThumbnails, useXlsxViewerZoom };

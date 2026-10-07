@@ -2251,19 +2251,19 @@ function resolveChartExSeriesLayout(raw) {
   if (!raw || typeof raw !== "object") {
     return void 0;
   }
-  const record = raw;
-  return typeof record.layout === "string" ? record.layout : typeof record.layoutId === "string" ? record.layoutId : void 0;
+  const record2 = raw;
+  return typeof record2.layout === "string" ? record2.layout : typeof record2.layoutId === "string" ? record2.layoutId : void 0;
 }
 function resolveChartExSeriesAxisIds(raw) {
   if (!raw || typeof raw !== "object") {
     return [];
   }
-  const record = raw;
-  if (Array.isArray(record.axisIds)) {
-    return record.axisIds.filter((value) => typeof value === "number" && Number.isFinite(value));
+  const record2 = raw;
+  if (Array.isArray(record2.axisIds)) {
+    return record2.axisIds.filter((value) => typeof value === "number" && Number.isFinite(value));
   }
-  if (Array.isArray(record.axisId)) {
-    return record.axisId.flatMap((value) => {
+  if (Array.isArray(record2.axisId)) {
+    return record2.axisId.flatMap((value) => {
       if (typeof value === "number" && Number.isFinite(value)) {
         return [value];
       }
@@ -2273,8 +2273,8 @@ function resolveChartExSeriesAxisIds(raw) {
       return [];
     });
   }
-  if (typeof record.axisId === "number" && Number.isFinite(record.axisId)) {
-    return [record.axisId];
+  if (typeof record2.axisId === "number" && Number.isFinite(record2.axisId)) {
+    return [record2.axisId];
   }
   return [];
 }
@@ -2420,15 +2420,15 @@ function resolveChartExTextFormula(raw) {
   if (!raw || typeof raw !== "object") {
     return void 0;
   }
-  const record = raw;
-  if (typeof record.formula === "string" && record.formula.length > 0) {
-    return record.formula;
+  const record2 = raw;
+  if (typeof record2.formula === "string" && record2.formula.length > 0) {
+    return record2.formula;
   }
-  if (typeof record.text === "string" && record.text.length > 0) {
-    return record.text;
+  if (typeof record2.text === "string" && record2.text.length > 0) {
+    return record2.text;
   }
-  if (typeof record.value === "string" && record.value.length > 0) {
-    return record.value;
+  if (typeof record2.value === "string" && record2.value.length > 0) {
+    return record2.value;
   }
   return void 0;
 }
@@ -2439,15 +2439,15 @@ function resolveChartExTitleText(raw) {
   if (!raw || typeof raw !== "object") {
     return void 0;
   }
-  const record = raw;
-  if (typeof record.text === "string" && record.text.length > 0) {
-    return record.text;
+  const record2 = raw;
+  if (typeof record2.text === "string" && record2.text.length > 0) {
+    return record2.text;
   }
-  const nestedText = record.text && typeof record.text === "object" ? resolveChartExTextFormula(record.text) : void 0;
+  const nestedText = record2.text && typeof record2.text === "object" ? resolveChartExTextFormula(record2.text) : void 0;
   if (nestedText) {
     return nestedText;
   }
-  return typeof record.value === "string" && record.value.length > 0 ? record.value : void 0;
+  return typeof record2.value === "string" && record2.value.length > 0 ? record2.value : void 0;
 }
 function resolveChartExFallbackCategoryReference(workbook, fallbackSheetIndex, valueFormula) {
   if (!valueFormula) {
@@ -2586,9 +2586,9 @@ function normalizeChartExChart(workbook, workbookSheetIndex, visibleSheetIndex, 
     if (!entry || typeof entry !== "object") {
       return;
     }
-    const record = entry;
-    if (typeof record.id === "number") {
-      dataById.set(record.id, record);
+    const record2 = entry;
+    if (typeof record2.id === "number") {
+      dataById.set(record2.id, record2);
     }
   });
   const axes = Array.isArray(plotArea.axes) ? plotArea.axes.map(normalizeChartExAxis).filter((value) => Boolean(value)) : [];
@@ -2803,11 +2803,11 @@ function normalizeChartReference(raw) {
   if (!raw || typeof raw !== "object") {
     return null;
   }
-  const record = raw;
-  const values = Array.isArray(record.numbers) ? record.numbers : Array.isArray(record.strings) ? record.strings : void 0;
+  const record2 = raw;
+  const values = Array.isArray(record2.numbers) ? record2.numbers : Array.isArray(record2.strings) ? record2.strings : void 0;
   return {
-    formula: typeof record.formula === "string" ? record.formula : void 0,
-    refType: typeof record.refType === "string" ? record.refType : void 0,
+    formula: typeof record2.formula === "string" ? record2.formula : void 0,
+    refType: typeof record2.refType === "string" ? record2.refType : void 0,
     values
   };
 }
@@ -3912,10 +3912,10 @@ function measureColumnCharacterWidthPx(fontFamily, fontSizePt) {
   const font = `${fontSizePx}px "${normalizedFamily}"`;
   let width = DEFAULT_COLUMN_CHARACTER_WIDTH_PX;
   try {
-    const context = typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(32, 32).getContext("2d") : null;
-    if (context) {
-      context.font = font;
-      width = Math.max(1, context.measureText("0").width);
+    const context2 = typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(32, 32).getContext("2d") : null;
+    if (context2) {
+      context2.font = font;
+      width = Math.max(1, context2.measureText("0").width);
     }
   } catch {
     width = DEFAULT_COLUMN_CHARACTER_WIDTH_PX;
@@ -7536,6 +7536,280 @@ function normalizeWorkbookArrayBuffer(buffer) {
   return normalizedBuffer;
 }
 
+// src/edit-guard.ts
+function formulaText(formula) {
+  return `=${formula.replace(/^=/, "")}`;
+}
+function syntaxProblem(formula) {
+  let depth = 0;
+  let quote = null;
+  for (const char of formula) {
+    if (quote) {
+      if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    if (depth < 0) return true;
+  }
+  return quote !== null || depth !== 0 || /[+\-*/^&=<>,(]\s*$/.test(formula.slice(1));
+}
+var SHEET_REFERENCE = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-￿][\w.\u0080-￿]*)!/g;
+function missingSheet(formula, known) {
+  const names = new Set(known);
+  const text = formula.replace(/"[^"]*"/g, "");
+  for (const match of text.matchAll(SHEET_REFERENCE)) {
+    const name = (match[1] ?? match[2] ?? "").replace(/''/g, "'");
+    if (name.startsWith("[") || text[(match.index ?? 0) - 1] === "]") continue;
+    if (!names.has(name)) return name;
+  }
+  return null;
+}
+function formulaProblem(formula, sheetNames) {
+  if (syntaxProblem(formula)) return { kind: "syntax" };
+  const sheetName = missingSheet(formula, sheetNames);
+  return sheetName === null ? void 0 : { kind: "missingSheet", sheetName };
+}
+function clipboardTextGrid(text) {
+  const rows = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  if (rows.length > 1 && rows[rows.length - 1] === "") rows.pop();
+  return rows.map((row) => row.split("	"));
+}
+function rangeFrom(start, rows, cols) {
+  return { start, end: { row: start.row + Math.max(rows, 1) - 1, col: start.col + Math.max(cols, 1) - 1 } };
+}
+function formulaDelta(writes, hasFormula) {
+  const last = /* @__PURE__ */ new Map();
+  for (const write of writes) last.set(`${write.row}:${write.col}`, write);
+  let delta = 0;
+  for (const { row, col, formula } of last.values()) delta += Number(formula) - Number(hasFormula(row, col));
+  return delta;
+}
+function isPastedFormula(value, literal = false) {
+  return !literal && value.startsWith("=") && value.length > 1;
+}
+function* textWrites(start, grid, literal = false) {
+  for (let row = 0; row < grid.length; row += 1) {
+    const line = grid[row] ?? [];
+    for (let col = 0; col < line.length; col += 1) {
+      const value = line[col] ?? "";
+      yield { row: start.row + row, col: start.col + col, formula: isPastedFormula(value, literal) };
+    }
+  }
+}
+function* payloadWrites(start, cells) {
+  for (const cell2 of cells) {
+    if (cell2.styleOnly) continue;
+    yield { row: start.row + cell2.rowOffset, col: start.col + cell2.colOffset, formula: Boolean(cell2.formula) };
+  }
+}
+function* fillWrites(source, target, hasFormula) {
+  const height = source.end.row - source.start.row + 1;
+  const width = source.end.col - source.start.col + 1;
+  const wrap = (index, start, size) => start + ((index - start) % size + size) % size;
+  for (let row = target.start.row; row <= target.end.row; row += 1) {
+    for (let col = target.start.col; col <= target.end.col; col += 1) {
+      const inSource = row >= source.start.row && row <= source.end.row && col >= source.start.col && col <= source.end.col;
+      if (inSource) continue;
+      yield { row, col, formula: hasFormula(wrap(row, source.start.row, height), wrap(col, source.start.col, width)) };
+    }
+  }
+}
+
+// src/clipboard-memory.ts
+var INTERNAL_CLIPBOARD_MIME = "application/x-react-xlsx-range+json";
+var GRID_SURFACE_ATTRIBUTE = "data-react-xlsx-grid";
+var lastCopy = null;
+var watching = false;
+function forgetCopy() {
+  lastCopy = null;
+}
+function watchOtherCopies() {
+  if (watching || typeof document === "undefined") return;
+  watching = true;
+  const forget = (event) => {
+    const target = event.target;
+    const inGrid = typeof Element !== "undefined" && target instanceof Element && target.closest(`[${GRID_SURFACE_ATTRIBUTE}]`);
+    if (!inGrid) forgetCopy();
+  };
+  document.addEventListener("copy", forget, true);
+  document.addEventListener("cut", forget, true);
+}
+function rememberCopy(text, structured) {
+  watchOtherCopies();
+  lastCopy = { text, structured };
+}
+var sameText = (a, b) => a.replace(/\r\n/g, "\n").trimEnd() === b.replace(/\r\n/g, "\n").trimEnd();
+function rememberedCells(text) {
+  return lastCopy && sameText(text, lastCopy.text) ? lastCopy.structured : null;
+}
+function payloadCells(structured) {
+  try {
+    const payload = JSON.parse(structured);
+    if (typeof payload !== "object" || payload === null || !("cells" in payload) || !Array.isArray(payload.cells)) {
+      return null;
+    }
+    const cells = payload.cells.filter((cell2) => typeof cell2 === "object" && cell2 !== null);
+    return { payload, cells };
+  } catch {
+    return null;
+  }
+}
+function withoutCopyOrigins(structured) {
+  const parsed = payloadCells(structured);
+  if (!parsed) return null;
+  const cells = parsed.cells.map(({ source: _source, ...cell2 }) => cell2);
+  return JSON.stringify({ ...parsed.payload, cells });
+}
+function cutPayload(structured, clearAllowed) {
+  return clearAllowed && withoutCopyOrigins(structured) || structured;
+}
+function cutStillApplies(source, now) {
+  return source.sheet === now.sheet && source.generation === now.generation;
+}
+function valuesOnly(structured) {
+  const parsed = payloadCells(structured);
+  if (!parsed) return null;
+  const cells = parsed.cells.flatMap((cell2) => {
+    const { rowOffset, colOffset } = cell2;
+    if (cell2.styleOnly === true || typeof rowOffset !== "number" || typeof colOffset !== "number") return [];
+    const value = typeof cell2.value === "string" ? cell2.value : "";
+    return [{ rowOffset, colOffset, value, raw: cell2.raw, formula: null }];
+  });
+  return JSON.stringify({ ...parsed.payload, cells, merges: [], styles: [] });
+}
+
+// src/load-mode.ts
+function needsMainThreadReload(state) {
+  return state.isWorkerBacked && !state.isLoading && !state.requestedReadOnly && !state.forcedReadOnly;
+}
+
+// src/external-values.ts
+function externalValuesState() {
+  let prop;
+  let current;
+  return {
+    /** The values for a calculation: a load, an edit, undo or redo. */
+    current: () => current,
+    /** A load takes the prop's values. */
+    loaded(values) {
+      prop = values;
+      current = values;
+    },
+    /** An explicit recalculation; without values it keeps the current ones. */
+    recalculated(values) {
+      if (values !== void 0) current = values;
+      return current;
+    },
+    /** Whether a render's prop is new, and so should recalculate the loaded workbook. */
+    propChanged(values) {
+      if (values === prop) return false;
+      prop = values;
+      return true;
+    }
+  };
+}
+
+// src/auto-fit.ts
+var CELL_PADDING_PX = 8;
+var FIT_GAP_PX = 12;
+var MIN_WIDTH_PX = 24;
+var MAX_WIDTH_PX = 640;
+var MIN_HEIGHT_PX = 15;
+var MAX_HEIGHT_PX = 409;
+var LINE_HEIGHT = 1.2;
+var ROW_PADDING_PX = 2;
+function record(value, key) {
+  if (typeof value !== "object" || value === null || !(key in value)) return null;
+  const inner = value[key];
+  return typeof inner === "object" && inner !== null ? inner : null;
+}
+function fontPx(style) {
+  const size = record(style, "font")?.size;
+  return (typeof size === "number" ? size : 11) * 96 / 72;
+}
+function cssFont(style) {
+  const font = record(style, "font");
+  const name = typeof font?.name === "string" ? font.name : "Calibri";
+  return `${font?.italic === true ? "italic " : ""}${font?.bold === true ? "bold " : ""}${fontPx(style)}px "${name}", sans-serif`;
+}
+function usedEnd(sheet, index) {
+  const range = sheet.usedRange();
+  return Array.isArray(range) && typeof range[index] === "number" ? range[index] : -1;
+}
+function isMerged(sheet, row, col) {
+  if (sheet.isMergedSecondary(row, col)) return true;
+  const span = sheet.getMergeSpan(row, col);
+  return typeof span === "object" && span !== null && ("colSpan" in span && Number(span.colSpan) > 1 || "rowSpan" in span && Number(span.rowSpan) > 1);
+}
+function wraps(style) {
+  return record(style, "alignment")?.wrapText === true;
+}
+function wrappedLines(text, font, widthPx, measure) {
+  let lines = 0;
+  for (const paragraph of text.split("\n")) {
+    let line = "";
+    lines += 1;
+    for (const word of paragraph.split(" ")) {
+      const next = line ? `${line} ${word}` : word;
+      if (line && measure(next, font) > widthPx) {
+        lines += 1;
+        line = word;
+      } else {
+        line = next;
+      }
+    }
+  }
+  return lines;
+}
+function fittedColumnWidth(sheet, col, measure) {
+  let widest = 0;
+  const lastRow = usedEnd(sheet, 2);
+  for (let row = 0; row <= lastRow; row += 1) {
+    const text = sheet.getFormattedValueAt(row, col);
+    if (!text.trim() || isMerged(sheet, row, col)) continue;
+    const style = sheet.getCellStyleAt(row, col);
+    if (!style || wraps(style)) continue;
+    widest = Math.max(widest, measure(text, cssFont(style)));
+  }
+  return widest > 0 ? Math.min(MAX_WIDTH_PX, Math.max(MIN_WIDTH_PX, Math.ceil(widest + CELL_PADDING_PX + FIT_GAP_PX))) : null;
+}
+function fittedRowHeight(sheet, row, columnWidthPx, measure) {
+  let tallest = 0;
+  const lastCol = usedEnd(sheet, 3);
+  for (let col = 0; col <= lastCol; col += 1) {
+    const text = sheet.getFormattedValueAt(row, col).trim();
+    if (!text || isMerged(sheet, row, col)) continue;
+    const style = sheet.getCellStyleAt(row, col);
+    const lines = wraps(style) ? wrappedLines(text, cssFont(style), columnWidthPx(col) - CELL_PADDING_PX, measure) : text.split("\n").length;
+    tallest = Math.max(tallest, lines * fontPx(style) * LINE_HEIGHT);
+  }
+  return tallest > 0 ? Math.min(MAX_HEIGHT_PX, Math.max(MIN_HEIGHT_PX, Math.ceil(tallest + ROW_PADDING_PX))) : null;
+}
+var context;
+var contextFont = "";
+function measureText(text, font) {
+  context ??= typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+  if (!context) return text.length * 7;
+  if (font !== contextFont) {
+    context.font = font;
+    contextFont = font;
+  }
+  return context.measureText(text).width;
+}
+function autoFitSizes(input) {
+  const { axis, sheet, hidden, gridlinePx, measure = measureText } = input;
+  const sizes = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const index of input.indices) {
+    if (seen.has(index) || hidden.has(index)) continue;
+    seen.add(index);
+    const fitted = axis === "column" ? fittedColumnWidth(sheet, index, measure) : fittedRowHeight(sheet, index, input.columnWidthPx, measure) ?? input.defaultRowHeightPx + gridlinePx;
+    const current = (axis === "column" ? input.columnWidthPx(index) : input.rowHeightPx(index)) + gridlinePx;
+    if (fitted !== null && Math.abs(fitted - current) >= 1) sizes.push({ index, sizePx: fitted });
+  }
+  return sizes;
+}
+
 // src/controller.tsx
 var DEFAULT_ROW_HEIGHT = 24;
 var DEFAULT_COL_WIDTH = 80;
@@ -7545,7 +7819,6 @@ var MIN_ROW_HEIGHT_PX2 = 16;
 var GRID_HEADER_HEIGHT = 24;
 var GRID_ROW_HEADER_WIDTH = 40;
 var HISTORY_LIMIT = 100;
-var INTERNAL_CLIPBOARD_MIME = "application/x-react-xlsx-range+json";
 var DEFAULT_DEFER_LOADING_ABOVE_BYTES = 0;
 var DEFAULT_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 var MAX_INTERACTIVE_WORKSHEET_XML_BYTES = 200 * 1024 * 1024;
@@ -8457,14 +8730,6 @@ function applyCellMutationState(worksheet, cell2, state, plain) {
 function escapeHtml(value) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
-function parseClipboardText(text) {
-  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const rows = normalized.split("\n");
-  if (rows.length > 1 && rows[rows.length - 1] === "") {
-    rows.pop();
-  }
-  return rows.map((row) => row.split("	"));
-}
 function createAbortError2() {
   if (typeof DOMException !== "undefined") {
     return new DOMException("Aborted", "AbortError");
@@ -8859,6 +9124,7 @@ function useXlsxViewerController(options) {
     file,
     fileName,
     maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES,
+    onBeforeEdit,
     readOnly: requestedReadOnly = false,
     readOnlyAboveBytes = 0,
     showHiddenSheets = false,
@@ -8868,6 +9134,13 @@ function useXlsxViewerController(options) {
   } = options;
   const autoCalculateFormulaLimitRef = React.useRef(autoCalculateFormulaLimit);
   autoCalculateFormulaLimitRef.current = autoCalculateFormulaLimit;
+  const externalFnValuesRef = React.useRef(externalFnValues);
+  externalFnValuesRef.current = externalFnValues;
+  const [externalValues] = React.useState(externalValuesState);
+  const onBeforeEditRef = React.useRef(onBeforeEdit);
+  onBeforeEditRef.current = onBeforeEdit;
+  const requestedReadOnlyRef = React.useRef(requestedReadOnly);
+  requestedReadOnlyRef.current = requestedReadOnly;
   const [isLoading, setIsLoading] = React.useState(Boolean(file ?? src));
   const [error, setError] = React.useState(null);
   const [workbook, setWorkbook] = React.useState(null);
@@ -8921,6 +9194,7 @@ function useXlsxViewerController(options) {
   const [isWorkerBacked, setIsWorkerBacked] = React.useState(false);
   const [sortState, setSortState] = React.useState(null);
   const [forcedReadOnly, setForcedReadOnly] = React.useState(false);
+  const [loadGeneration, setLoadGeneration] = React.useState(0);
   const deferredBufferRef = React.useRef(null);
   const [deferredLoadFileSize, setDeferredLoadFileSize] = React.useState(null);
   const imageAssetsRef = React.useRef(null);
@@ -8936,12 +9210,11 @@ function useXlsxViewerController(options) {
   const workerCellSnapshotCacheRef = React.useRef(/* @__PURE__ */ new Map());
   const displayFileName = React.useMemo(() => resolveDisplayFileName(src, fileName), [fileName, src]);
   const shouldDeferLoading = deferLoadingAboveBytes > 0;
-  const readOnly = requestedReadOnly || forcedReadOnly;
+  const readOnly = requestedReadOnly || forcedReadOnly || isWorkerBacked;
   const canResizeReadOnly = requestedReadOnly && allowResizeInReadOnly && !forcedReadOnly;
   const workerSupported = useWorker && typeof Worker !== "undefined" && canUseConfiguredWasmSourceInWorker();
-  const canUseWorkerForRequestedReadOnly = requestedReadOnly;
-  const shouldForceReadOnlyForBuffer = React.useCallback((bufferByteLength) => !requestedReadOnly && readOnlyAboveBytes > 0 && bufferByteLength > readOnlyAboveBytes, [readOnlyAboveBytes, requestedReadOnly]);
-  const shouldUseWorkerForReadOnlyLoad = React.useCallback((willForceReadOnly) => workerSupported && (willForceReadOnly || canUseWorkerForRequestedReadOnly), [canUseWorkerForRequestedReadOnly, workerSupported]);
+  const shouldForceReadOnlyForBuffer = React.useCallback((bufferByteLength) => !requestedReadOnlyRef.current && readOnlyAboveBytes > 0 && bufferByteLength > readOnlyAboveBytes, [readOnlyAboveBytes]);
+  const shouldUseWorkerForReadOnlyLoad = React.useCallback((willForceReadOnly) => workerSupported && (willForceReadOnly || requestedReadOnlyRef.current), [workerSupported]);
   const disposeWorkerClient = React.useCallback(() => {
     workerClientRef.current?.dispose();
     workerClientRef.current = null;
@@ -9129,7 +9402,8 @@ function useXlsxViewerController(options) {
     });
   }, [getWorkerClient, hasIncompleteWorkerChartSnapshot, setChartAssets, showHiddenSheets, skipXmlParsing, workerSupported]);
   const loadWorkbookOnMainThread = React.useCallback(async (buffer) => {
-    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValues, autoCalculateFormulaLimitRef.current);
+    externalValues.loaded(externalFnValuesRef.current);
+    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValuesRef.current, autoCalculateFormulaLimitRef.current);
     const bytes = new Uint8Array(buffer);
     const nextImageAssets = loadWorkbookImageAssets(
       bytes,
@@ -9140,7 +9414,7 @@ function useXlsxViewerController(options) {
       imageAssets: nextImageAssets,
       parsedWorkbook: nextParsedWorkbook
     };
-  }, [externalFnValues, skipXmlParsing]);
+  }, [skipXmlParsing]);
   const refreshWorkbookState = React.useCallback((targetWorkbook) => {
     const currentFormControls = imageAssetsRef.current?.formControlsByWorkbookSheetIndex ?? [];
     const nextFormControls = refreshWorkbookFormControls(
@@ -9279,7 +9553,8 @@ function useXlsxViewerController(options) {
       }
       if (shouldUseWorkerForLoad) {
         try {
-          const snapshot = await getWorkerClient().loadWorkbook(buffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValues);
+          externalValues.loaded(externalFnValuesRef.current);
+          const snapshot = await getWorkerClient().loadWorkbook(buffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValuesRef.current);
           if (!isCurrent || abortController.signal.aborted) {
             return;
           }
@@ -9388,10 +9663,18 @@ function useXlsxViewerController(options) {
     shouldForceReadOnlyForBuffer,
     shouldUseWorkerForReadOnlyLoad,
     src,
-    showHiddenSheets
+    showHiddenSheets,
+    loadGeneration
   ]);
+  React.useEffect(() => {
+    if (needsMainThreadReload({ isWorkerBacked, isLoading, requestedReadOnly, forcedReadOnly })) {
+      setLoadGeneration((generation) => generation + 1);
+    }
+  }, [forcedReadOnly, isLoading, isWorkerBacked, requestedReadOnly]);
   const activeTab = tabs[activeTabIndex] ?? null;
   const activeSheet = activeTab?.kind === "sheet" ? sheets[activeTab.sheetIndex ?? -1] ?? null : null;
+  const activeSheetRef = React.useRef(activeSheet);
+  activeSheetRef.current = activeSheet;
   const deferredMetadataCell = React.useDeferredValue(activeCell);
   const deferredMetadataSheet = React.useDeferredValue(activeSheet);
   const activeZoomTabKey = activeTab?.id ?? DEFAULT_ZOOM_TAB_KEY;
@@ -9523,7 +9806,8 @@ function useXlsxViewerController(options) {
     const shouldUseWorkerForLoad = shouldUseWorkerForReadOnlyLoad(shouldForceReadOnly);
     const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(new Uint8Array(deferredBuffer), skipXmlParsing);
     if (shouldUseWorkerForLoad) {
-      void getWorkerClient().loadWorkbook(deferredBuffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValues).then((snapshot) => {
+      externalValues.loaded(externalFnValuesRef.current);
+      void getWorkerClient().loadWorkbook(deferredBuffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValuesRef.current).then((snapshot) => {
         if (!isCurrent()) return;
         if (!effectiveSkipXmlParsing && hasIncompleteWorkerChartSnapshot(snapshot)) {
           throw new Error("Worker chart payload incomplete");
@@ -9605,7 +9889,8 @@ function useXlsxViewerController(options) {
       });
       return;
     }
-    void parseWorkbookBuffer(deferredBuffer, externalFnValues, autoCalculateFormulaLimitRef.current).then((nextParsedWorkbook) => {
+    externalValues.loaded(externalFnValuesRef.current);
+    void parseWorkbookBuffer(deferredBuffer, externalFnValuesRef.current, autoCalculateFormulaLimitRef.current).then((nextParsedWorkbook) => {
       if (!isCurrent()) {
         nextParsedWorkbook.workbook.free();
         return;
@@ -9679,7 +9964,7 @@ function useXlsxViewerController(options) {
       applyCalculation(calculationReport("partial", "workbook-edited", countWorkbookFormulas(targetWorkbook)), attempt);
       return;
     }
-    const result = safeCalculate(targetWorkbook);
+    const result = safeCalculate(targetWorkbook, { calcOptions: externalCalcOptions(externalValues.current()) });
     hasCalculatedValuesRef.current ||= result.calculated;
     applyCalculation(result.calculation, attempt);
     if (!result.calculated) {
@@ -9692,6 +9977,11 @@ function useXlsxViewerController(options) {
     }
     return workbook.getSheet(activeSheet.workbookSheetIndex);
   }, [activeSheet, workbook]);
+  const allowEdit = React.useCallback((edit) => {
+    const full = { ...edit, sheetIndex: activeSheet?.workbookSheetIndex ?? 0 };
+    const hook = onBeforeEditRef.current;
+    return hook ? hook(full) : !full.formulaProblem;
+  }, [activeSheet]);
   const getFormControlWorksheet = React.useCallback((sheetIndex = activeSheetIndex) => {
     const targetSheet = sheets[sheetIndex];
     if (!workbook || !targetSheet) {
@@ -10290,7 +10580,7 @@ function useXlsxViewerController(options) {
   }, [createHistoryEntry]);
   const addFormControl = React.useCallback((input, sheetIndex = activeSheetIndex) => {
     const target = getFormControlWorksheet(sheetIndex);
-    if (readOnly || !workbook || !target) {
+    if (readOnly || !workbook || !target || !allowEdit({ kind: "structure" })) {
       return null;
     }
     recordHistoryBeforeMutation();
@@ -10308,11 +10598,11 @@ function useXlsxViewerController(options) {
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
     return controlIndex;
-  }, [activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+  }, [allowEdit, activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
   const updateFormControl = React.useCallback((controlIndex, patch, sheetIndex = activeSheetIndex) => {
     const target = getFormControlWorksheet(sheetIndex);
     const currentControl = target?.worksheet.formControls[controlIndex];
-    if (readOnly || !workbook || !target || !currentControl) {
+    if (readOnly || !workbook || !target || !currentControl || !allowEdit({ kind: "structure" })) {
       return false;
     }
     recordHistoryBeforeMutation();
@@ -10366,10 +10656,10 @@ function useXlsxViewerController(options) {
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
     return true;
-  }, [activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+  }, [allowEdit, activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
   const removeFormControl = React.useCallback((controlIndex, sheetIndex = activeSheetIndex) => {
     const target = getFormControlWorksheet(sheetIndex);
-    if (readOnly || !workbook || !target || !target.worksheet.formControls[controlIndex]) {
+    if (readOnly || !workbook || !target || !target.worksheet.formControls[controlIndex] || !allowEdit({ kind: "structure" })) {
       return false;
     }
     recordHistoryBeforeMutation();
@@ -10382,7 +10672,7 @@ function useXlsxViewerController(options) {
     }
     refreshWorkbookState(workbook);
     return true;
-  }, [activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+  }, [allowEdit, activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
   const recordCellEditHistory = React.useCallback((cell2, before, after) => {
     if (!activeSheet || isApplyingHistoryRef.current) {
       return;
@@ -10420,7 +10710,7 @@ function useXlsxViewerController(options) {
   const sortTable = React.useCallback((tableName, columnIndex, direction) => {
     const worksheet = getActiveWorksheet();
     const targetTable = tables.find((table) => table.name === tableName || table.displayName === tableName);
-    if (!worksheet || !workbook || !activeSheet || !targetTable) {
+    if (!worksheet || !workbook || !activeSheet || !targetTable || !allowEdit({ kind: "structure" })) {
       return;
     }
     const dataStartRow = targetTable.start.row + Math.max(targetTable.headerRowCount, 1);
@@ -10500,6 +10790,7 @@ function useXlsxViewerController(options) {
     setSortState({ columnIndex, direction, tableName: targetTable.name });
     recordRangeEditHistory(mutations, selection, activeCell);
   }, [
+    allowEdit,
     activeCell,
     activeSheet,
     getActiveWorksheet,
@@ -10534,8 +10825,9 @@ function useXlsxViewerController(options) {
     const activeSheetName = activeSheet?.name ?? "sheet";
     downloadText(workbook.saveCsvString(), `${fileStem(displayFileName)}-${activeSheetName}.csv`, CSV_MIME_TYPE);
   }, [activeSheet?.name, displayFileName, workbook]);
-  const recalculate = React.useCallback((externalFnValues2) => {
+  const recalculate = React.useCallback((values) => {
     if (isLoading || !isWorkerBacked && !workbook) return;
+    const externalFnValues2 = externalValues.recalculated(values);
     const attempt = beginCalculation();
     const generation = workbookGenerationRef.current;
     const isCurrent = () => generation === workbookGenerationRef.current && attempt === calculationAttemptRef.current;
@@ -10570,6 +10862,10 @@ function useXlsxViewerController(options) {
     if (result.calculated || result.workbook !== workbook) refreshWorkbookState(result.workbook);
     if (!result.calculated) setShouldAutoCalculate(false);
   }, [applyCalculation, beginCalculation, getWorkerClient, isLoading, isWorkerBacked, readOnly, refreshWorkbookState, workbook]);
+  React.useEffect(() => {
+    if (isLoading || !externalValues.propChanged(externalFnValues)) return;
+    recalculate(externalFnValues);
+  }, [externalFnValues, isLoading, recalculate]);
   const applyReadOnlyResizeOverrides = React.useCallback((axis, sizes) => {
     if (!activeSheet) {
       return;
@@ -10600,6 +10896,9 @@ function useXlsxViewerController(options) {
     if (readOnly && !canResizeReadOnly || !activeSheet || sizes.length === 0) {
       return;
     }
+    if (!allowEdit({ kind: "resize", axis, indices: sizes.map((size) => size.index) })) {
+      return;
+    }
     if (isWorkerBacked) {
       applyReadOnlyResizeOverrides(axis, sizes);
       return;
@@ -10620,6 +10919,7 @@ function useXlsxViewerController(options) {
     refreshWorkbookState(workbook);
   }, [
     activeSheet,
+    allowEdit,
     applyReadOnlyResizeOverrides,
     canResizeReadOnly,
     isWorkerBacked,
@@ -10638,6 +10938,37 @@ function useXlsxViewerController(options) {
   );
   const resizeColumns = React.useCallback((sizes) => resizeAxis("column", sizes), [resizeAxis]);
   const resizeRows = React.useCallback((sizes) => resizeAxis("row", sizes), [resizeAxis]);
+  const autoFit = React.useCallback((axis, indices) => {
+    const worksheet = getActiveWorksheet();
+    const sheet = activeSheet;
+    if (!worksheet || !sheet) {
+      return;
+    }
+    const selected = function* () {
+      for (const region of selectionsRef.current.length > 0 ? selectionsRef.current : selection ? [selection] : []) {
+        const range = normalizeRange(region);
+        const [first, last] = axis === "column" ? [range.start.col, range.end.col] : [range.start.row, range.end.row];
+        for (let index = first; index <= last; index += 1) yield index;
+      }
+    };
+    const visibleColIndex = new Map(sheet.visibleCols.map((col, index) => [col, index]));
+    const columnWidthPx = (col) => sheet.colWidths[visibleColIndex.get(col) ?? -1] ?? sheet.defaultColWidthPx;
+    const rowHeightPx = (row) => {
+      const points = worksheet.getRowHeight(row);
+      return points === void 0 ? sheet.defaultRowHeightPx : points * 96 / 72;
+    };
+    const sizes = autoFitSizes({
+      axis,
+      indices: indices ?? selected(),
+      sheet: worksheet,
+      hidden: new Set((axis === "column" ? sheet.hiddenCols : sheet.hiddenRows) ?? []),
+      columnWidthPx,
+      rowHeightPx,
+      defaultRowHeightPx: sheet.defaultRowHeightPx,
+      gridlinePx: sheet.showGridLines ? resolveDeviceGridlineThicknessPx() : 0
+    });
+    resizeAxis(axis, sizes);
+  }, [activeSheet, getActiveWorksheet, resizeAxis, selection]);
   const resolveAnchoredObjectRect = React.useCallback((anchor, worksheet) => {
     const resolveAxisSum = (index, getSize) => {
       let total = 0;
@@ -10684,7 +11015,7 @@ function useXlsxViewerController(options) {
       readOnly,
       rect
     });
-    if (readOnly || !workbook || !activeSheet || !imageAssetsRef.current || !hydratedChartAssets) {
+    if (readOnly || !workbook || !activeSheet || !imageAssetsRef.current || !hydratedChartAssets || !allowEdit({ kind: "drawing" })) {
       return;
     }
     const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
@@ -10712,6 +11043,7 @@ function useXlsxViewerController(options) {
     setChartsByWorkbookSheetIndex((current) => current.map((sheetCharts) => sheetCharts.map((chart) => chart.id === id ? { ...chart, anchor: nextAnchor } : chart)));
     setRevision((current) => current + 1);
   }, [
+    allowEdit,
     activeSheet,
     getChartById,
     getColumnWidthPx,
@@ -10723,7 +11055,7 @@ function useXlsxViewerController(options) {
     workbook
   ]);
   const setImageRect = React.useCallback((id, rect, layout) => {
-    if (readOnly || !workbook || !activeSheet || !imageAssetsRef.current) {
+    if (readOnly || !workbook || !activeSheet || !imageAssetsRef.current || !allowEdit({ kind: "drawing" })) {
       return;
     }
     const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
@@ -10744,6 +11076,7 @@ function useXlsxViewerController(options) {
     setImagesByWorkbookSheetIndex([...imageAssetsRef.current.imagesByWorkbookSheetIndex]);
     setRevision((current) => current + 1);
   }, [
+    allowEdit,
     activeSheet,
     getColumnWidthPx,
     getImageById,
@@ -10865,7 +11198,7 @@ function useXlsxViewerController(options) {
   const updateChart = React.useCallback((id, patch) => {
     const currentChart = getChartById(id);
     const hydratedChartAssets = ensureChartAssetsHydrated(workbook, sheets);
-    if (readOnly || !currentChart) {
+    if (readOnly || !currentChart || !allowEdit({ kind: "drawing" })) {
       return;
     }
     recordHistoryBeforeMutation();
@@ -10877,9 +11210,9 @@ function useXlsxViewerController(options) {
     }
     setChartsByWorkbookSheetIndex((current) => current.map((sheetCharts) => sheetCharts.map((chart) => chart.id === id ? { ...chart, ...patch } : chart)));
     setRevision((current) => current + 1);
-  }, [ensureChartAssetsHydrated, getChartById, readOnly, recordHistoryBeforeMutation, sheets, workbook]);
+  }, [allowEdit, ensureChartAssetsHydrated, getChartById, readOnly, recordHistoryBeforeMutation, sheets, workbook]);
   const setChartSeriesFormula = React.useCallback((chartId, seriesIndex, formula) => {
-    if (readOnly) {
+    if (readOnly || !allowEdit({ kind: "drawing" })) {
       return false;
     }
     const chart = getChartById(chartId);
@@ -10900,7 +11233,7 @@ function useXlsxViewerController(options) {
       } : current);
     }
     return true;
-  }, [getChartById, readOnly, updateChart, workbook]);
+  }, [allowEdit, getChartById, readOnly, updateChart, workbook]);
   const selectCell = React.useCallback((cell2, options2) => {
     setSelectedChartId(null);
     setSelectedChartElement(null);
@@ -10980,41 +11313,47 @@ function useXlsxViewerController(options) {
     setSelectedChartElement(null);
     setSelectedImageId(null);
   }, []);
-  const clearSelectedCells = React.useCallback(() => {
+  const prepareClear = React.useCallback(() => {
     const worksheet = getActiveWorksheet();
     const targetRange = selection ?? (activeCell ? { start: activeCell, end: activeCell } : null);
     if (readOnly || !worksheet || !workbook || !targetRange) {
-      return;
+      return null;
     }
     const normalized = normalizeRange(targetRange);
-    const mutations = [];
-    for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
-      for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
-        if (worksheet.isMergedSecondary(row, col)) {
-          continue;
-        }
-        const cell2 = { row, col };
-        const before = captureCellMutationState(cell2);
-        if (!before) {
-          continue;
-        }
-        worksheet.setCell(cellAddressToA1({ row, col }), "");
-        const after = captureCellMutationState(cell2);
-        if (!after) {
-          continue;
-        }
-        mutations.push({
-          after,
-          before,
-          cell: cell2
-        });
-      }
+    if (!allowEdit({ kind: "content", range: normalized })) {
+      return null;
     }
-    maybeRecalculateWorkbook(workbook);
-    refreshWorkbookState(workbook);
-    recordRangeEditHistory(mutations, normalized, activeCell ?? normalized.start);
+    return () => {
+      const mutations = [];
+      for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
+        for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
+          if (worksheet.isMergedSecondary(row, col)) {
+            continue;
+          }
+          const cell2 = { row, col };
+          const before = captureCellMutationState(cell2);
+          if (!before) {
+            continue;
+          }
+          worksheet.setCell(cellAddressToA1({ row, col }), "");
+          const after = captureCellMutationState(cell2);
+          if (!after) {
+            continue;
+          }
+          mutations.push({
+            after,
+            before,
+            cell: cell2
+          });
+        }
+      }
+      maybeRecalculateWorkbook(workbook);
+      refreshWorkbookState(workbook);
+      recordRangeEditHistory(mutations, normalized, activeCell ?? normalized.start);
+    };
   }, [
     activeCell,
+    allowEdit,
     captureCellMutationState,
     getActiveWorksheet,
     maybeRecalculateWorkbook,
@@ -11024,9 +11363,55 @@ function useXlsxViewerController(options) {
     selection,
     workbook
   ]);
-  const setCellValue = React.useCallback((cell2, value) => {
+  const clearSelectedCells = React.useCallback(() => {
+    const clear = prepareClear();
+    clear?.();
+    return clear !== null;
+  }, [prepareClear]);
+  const setCellFormula = React.useCallback((cell2, formula) => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !workbook) {
+      return;
+    }
+    const trimmedFormula = formula.trim();
+    const entry = trimmedFormula ? formulaText(trimmedFormula) : void 0;
+    const hadFormula = Boolean(worksheet.getFormulaAt(cell2.row, cell2.col));
+    if (!allowEdit({
+      kind: "content",
+      range: { start: cell2, end: cell2 },
+      formula: entry,
+      formulaProblem: entry ? formulaProblem(entry, workbook.sheetNames) : void 0,
+      formulaDelta: () => Number(Boolean(entry)) - Number(hadFormula)
+    })) {
+      return;
+    }
+    const before = captureCellMutationState(cell2);
+    if (!before) {
+      return;
+    }
+    if (!entry) {
+      worksheet.setCell(cellAddressToA1(cell2), "");
+    } else {
+      worksheet.setFormula(cellAddressToA1(cell2), entry);
+    }
+    const after = captureCellMutationState(cell2);
+    if (!after) {
+      return;
+    }
+    maybeRecalculateWorkbook(workbook);
+    refreshWorkbookState(workbook);
+    recordCellEditHistory(cell2, before, after);
+  }, [allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
+  const setCellValue = React.useCallback((cell2, value) => {
+    if (value.trim().startsWith("=")) {
+      setCellFormula(cell2, value);
+      return;
+    }
+    const worksheet = getActiveWorksheet();
+    if (readOnly || !worksheet || !workbook) {
+      return;
+    }
+    if (!allowEdit({ kind: "content", range: { start: cell2, end: cell2 } })) {
       return;
     }
     const before = captureCellMutationState(cell2);
@@ -11042,33 +11427,13 @@ function useXlsxViewerController(options) {
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
     recordCellEditHistory(cell2, before, after);
-  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
-  const setCellFormula = React.useCallback((cell2, formula) => {
-    const worksheet = getActiveWorksheet();
-    if (readOnly || !worksheet || !workbook) {
-      return;
-    }
-    const before = captureCellMutationState(cell2);
-    if (!before) {
-      return;
-    }
-    const trimmedFormula = formula.trim();
-    if (!formula.trim()) {
-      worksheet.setCell(cellAddressToA1(cell2), "");
-    } else {
-      worksheet.setFormula(cellAddressToA1(cell2), formula);
-    }
-    const after = captureCellMutationState(cell2);
-    if (!after) {
-      return;
-    }
-    maybeRecalculateWorkbook(workbook);
-    refreshWorkbookState(workbook);
-    recordCellEditHistory(cell2, before, after);
-  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
+  }, [allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, setCellFormula, workbook]);
   const setCellStyle = React.useCallback((cell2, style) => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !workbook) {
+      return;
+    }
+    if (!allowEdit({ kind: "style", range: { start: cell2, end: cell2 } })) {
       return;
     }
     const before = captureCellMutationState(cell2);
@@ -11082,7 +11447,7 @@ function useXlsxViewerController(options) {
     }
     refreshWorkbookState(workbook);
     recordCellEditHistory(cell2, before, after);
-  }, [captureCellMutationState, getActiveWorksheet, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
+  }, [allowEdit, captureCellMutationState, getActiveWorksheet, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
   const setSelectedCellValue = React.useCallback((value) => {
     if (!activeCell) {
       return;
@@ -11117,6 +11482,9 @@ function useXlsxViewerController(options) {
       return;
     }
     const normalized = normalizeRange(range);
+    if (!allowEdit({ kind: "style", range: normalized })) {
+      return;
+    }
     const beforeStates = [];
     for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
       for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
@@ -11149,7 +11517,7 @@ function useXlsxViewerController(options) {
     }
     refreshWorkbookState(workbook);
     recordRangeEditHistory(mutations, selection, activeCell);
-  }, [activeCell, captureCellMutationState, getActiveWorksheet, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
+  }, [activeCell, allowEdit, captureCellMutationState, getActiveWorksheet, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
   const fillSelection = React.useCallback((targetRange) => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !workbook || !selection) {
@@ -11160,6 +11528,14 @@ function useXlsxViewerController(options) {
     const sourceHeight = sourceRange.end.row - sourceRange.start.row + 1;
     const sourceWidth = sourceRange.end.col - sourceRange.start.col + 1;
     if (sourceHeight <= 0 || sourceWidth <= 0) {
+      return;
+    }
+    const hasFormula = (row, col) => Boolean(worksheet.getFormulaAt(row, col));
+    if (!allowEdit({
+      kind: "content",
+      range: nextRange,
+      formulaDelta: () => formulaDelta(fillWrites(sourceRange, nextRange, hasFormula), hasFormula)
+    })) {
       return;
     }
     const plain = plainStyle();
@@ -11202,7 +11578,7 @@ function useXlsxViewerController(options) {
     setActiveCell(nextRange.end);
     selectionAnchorRef.current = nextRange.start;
     recordRangeEditHistory(mutations, nextRange, nextRange.end);
-  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook, plainStyle]);
+  }, [allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook, plainStyle]);
   const mergeSelection = React.useCallback(() => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !selection || !workbook) {
@@ -11210,6 +11586,9 @@ function useXlsxViewerController(options) {
     }
     const target = mergeTarget(worksheet.mergedRegions, selection);
     if (target.range.start.row === target.range.end.row && target.range.start.col === target.range.end.col) {
+      return null;
+    }
+    if (!allowEdit({ kind: "merge", range: target.range })) {
       return null;
     }
     recordHistoryBeforeMutation();
@@ -11221,14 +11600,14 @@ function useXlsxViewerController(options) {
     selectRange(target.range);
     setActiveCell(target.range.start);
     return target.range;
-  }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selectRange, selection, workbook]);
+  }, [allowEdit, getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selectRange, selection, workbook]);
   const unmergeSelection = React.useCallback(() => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !selection || !workbook) {
       return;
     }
     const merges = mergesTouching(worksheet.mergedRegions, selection);
-    if (merges.length === 0) {
+    if (merges.length === 0 || !allowEdit({ kind: "unmerge", range: normalizeRange(selection) })) {
       return;
     }
     recordHistoryBeforeMutation();
@@ -11236,9 +11615,9 @@ function useXlsxViewerController(options) {
       worksheet.unmergeCells(merge);
     }
     refreshWorkbookState(workbook);
-  }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
+  }, [allowEdit, getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
   const addSheet = React.useCallback((name) => {
-    if (readOnly || !workbook) {
+    if (readOnly || !workbook || !allowEdit({ kind: "structure" })) {
       return;
     }
     recordHistoryBeforeMutation();
@@ -11282,9 +11661,9 @@ function useXlsxViewerController(options) {
       setActiveTabIndexState(nextTabIndex);
     }
     setRevision((current) => current + 1);
-  }, [maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
+  }, [allowEdit, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
   const removeActiveSheet = React.useCallback(() => {
-    if (readOnly || !workbook || !activeSheet) {
+    if (readOnly || !workbook || !activeSheet || !allowEdit({ kind: "structure" })) {
       return;
     }
     recordHistoryBeforeMutation();
@@ -11317,9 +11696,9 @@ function useXlsxViewerController(options) {
     }
     setActiveSheetIndexState((current) => Math.max(0, Math.min(current, nextSheets.length - 1)));
     setRevision((current) => current + 1);
-  }, [activeSheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
+  }, [allowEdit, activeSheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
   const defineNamedRange = React.useCallback((name, range) => {
-    if (readOnly || !workbook) {
+    if (readOnly || !workbook || !allowEdit({ kind: "structure" })) {
       return;
     }
     const trimmed = name.trim();
@@ -11334,15 +11713,24 @@ function useXlsxViewerController(options) {
     workbook.defineName(trimmed, rangeToA1(targetRange));
     maybeRecalculateWorkbook(workbook);
     setRevision((current) => current + 1);
-  }, [maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, selection, workbook]);
-  const pasteText = React.useCallback((text) => {
+  }, [allowEdit, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, selection, workbook]);
+  const pasteText = React.useCallback((text, options2) => {
+    const literal = options2?.literal === true;
     const worksheet = getActiveWorksheet();
     const targetCell = activeCell ?? selection?.start ?? null;
     if (readOnly || !worksheet || !workbook || !targetCell || !text) {
       return false;
     }
-    const grid = parseClipboardText(text);
+    const grid = clipboardTextGrid(text);
     if (grid.length === 0 || grid.every((row) => row.length === 0)) {
+      return false;
+    }
+    const pastedRange = rangeFrom(targetCell, grid.length, Math.max(...grid.map((row) => row.length), 1));
+    if (!allowEdit({
+      kind: "content",
+      range: pastedRange,
+      formulaDelta: () => formulaDelta(textWrites(targetCell, grid, literal), (row, col) => Boolean(worksheet.getFormulaAt(row, col)))
+    })) {
       return false;
     }
     const mutations = [];
@@ -11358,7 +11746,7 @@ function useXlsxViewerController(options) {
         if (!before) {
           continue;
         }
-        if (rawValue.startsWith("=") && rawValue.length > 1) {
+        if (isPastedFormula(rawValue, literal)) {
           worksheet.setFormula(cellAddressToA1(nextCell), rawValue);
           const after = captureCellMutationState(nextCell);
           if (!after) {
@@ -11386,19 +11774,12 @@ function useXlsxViewerController(options) {
     }
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
-    const nextRange = normalizeRange({
-      start: targetCell,
-      end: {
-        col: targetCell.col + Math.max(0, Math.max(...grid.map((row) => row.length), 1) - 1),
-        row: targetCell.row + grid.length - 1
-      }
-    });
     setActiveCell(targetCell);
-    setSelection(nextRange);
+    setSelection(pastedRange);
     selectionAnchorRef.current = targetCell;
-    recordRangeEditHistory(mutations, nextRange, targetCell);
+    recordRangeEditHistory(mutations, pastedRange, targetCell);
     return true;
-  }, [activeCell, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
+  }, [activeCell, allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
   const pasteStructuredClipboardData = React.useCallback((serializedPayload) => {
     const worksheet = getActiveWorksheet();
     const targetCell = activeCell ?? selection?.start ?? null;
@@ -11412,6 +11793,14 @@ function useXlsxViewerController(options) {
       return false;
     }
     if (!Array.isArray(payload.cells) || payload.cells.length === 0) {
+      return false;
+    }
+    const pastedRange = rangeFrom(targetCell, payload.rows ?? 1, payload.cols ?? 1);
+    if (!allowEdit({
+      kind: "content",
+      range: pastedRange,
+      formulaDelta: () => formulaDelta(payloadWrites(targetCell, payload.cells), (row, col) => Boolean(worksheet.getFormulaAt(row, col)))
+    })) {
       return false;
     }
     const hasMergeOperations = Array.isArray(payload.merges) && payload.merges.some((merge) => (merge.rowSpan ?? 1) > 1 || (merge.colSpan ?? 1) > 1);
@@ -11459,22 +11848,16 @@ function useXlsxViewerController(options) {
     }
     maybeRecalculateWorkbook(workbook);
     refreshWorkbookState(workbook);
-    const nextRange = normalizeRange({
-      start: targetCell,
-      end: {
-        col: targetCell.col + Math.max((payload.cols ?? 1) - 1, 0),
-        row: targetCell.row + Math.max((payload.rows ?? 1) - 1, 0)
-      }
-    });
     setActiveCell(targetCell);
-    setSelection(nextRange);
+    setSelection(pastedRange);
     selectionAnchorRef.current = targetCell;
     if (!hasMergeOperations) {
-      recordRangeEditHistory(mutations, nextRange, targetCell);
+      recordRangeEditHistory(mutations, pastedRange, targetCell);
     }
     return true;
   }, [
     activeCell,
+    allowEdit,
     captureCellMutationState,
     getActiveWorksheet,
     maybeRecalculateWorkbook,
@@ -11486,9 +11869,8 @@ function useXlsxViewerController(options) {
     workbook,
     plainStyle
   ]);
-  const copySelectionToClipboard = React.useCallback(async () => {
-    const clipboardData = getClipboardData();
-    if (!clipboardData || typeof navigator === "undefined" || !navigator.clipboard) {
+  const writeClipboard = React.useCallback(async (clipboardData) => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
       return false;
     }
     if (typeof ClipboardItem === "function" && navigator.clipboard.write) {
@@ -11501,30 +11883,69 @@ function useXlsxViewerController(options) {
     }
     await navigator.clipboard.writeText(clipboardData.text);
     return true;
-  }, [getClipboardData]);
-  const pasteFromClipboard = React.useCallback(async () => {
+  }, []);
+  const copySelectionToClipboard = React.useCallback(async () => {
+    const clipboardData = getClipboardData();
+    if (!clipboardData) {
+      return false;
+    }
+    rememberCopy(clipboardData.text, clipboardData.structured);
+    return writeClipboard(clipboardData);
+  }, [getClipboardData, writeClipboard]);
+  const cutSelection = React.useCallback(async (clipboard) => {
+    const clipboardData = readOnly ? null : getClipboardData();
+    if (!clipboardData) {
+      return false;
+    }
+    const clear = prepareClear();
+    const source = { sheet: activeSheetRef.current?.workbookSheetIndex, generation: workbookGenerationRef.current };
+    rememberCopy(clipboardData.text, cutPayload(clipboardData.structured, clear !== null));
+    if (clipboard) {
+      clipboard.setData("text/plain", clipboardData.text);
+      clipboard.setData("text/html", clipboardData.html);
+      clipboard.setData(INTERNAL_CLIPBOARD_MIME, cutPayload(clipboardData.structured, clear !== null));
+    } else if (!await writeClipboard(clipboardData)) {
+      return false;
+    }
+    const moved = !cutStillApplies(source, {
+      sheet: activeSheetRef.current?.workbookSheetIndex,
+      generation: workbookGenerationRef.current
+    });
+    if (!clear || moved) {
+      if (moved) rememberCopy(clipboardData.text, clipboardData.structured);
+      return false;
+    }
+    clear();
+    return true;
+  }, [getClipboardData, prepareClear, readOnly, writeClipboard]);
+  const paste = React.useCallback(async (options2) => {
     if (readOnly || typeof navigator === "undefined" || !navigator.clipboard) {
       return false;
     }
-    if (navigator.clipboard.read) {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
+    let structured = null;
+    let text = null;
+    if (navigator.clipboard.read && !options2?.valuesOnly) {
+      for (const item of await navigator.clipboard.read()) {
         if (item.types.includes(INTERNAL_CLIPBOARD_MIME)) {
-          const blob = await item.getType(INTERNAL_CLIPBOARD_MIME);
-          return pasteStructuredClipboardData(await blob.text());
+          structured = await (await item.getType(INTERNAL_CLIPBOARD_MIME)).text();
+          break;
         }
-      }
-      for (const item of items) {
-        if (item.types.includes("text/plain")) {
-          const blob = await item.getType("text/plain");
-          return pasteText(await blob.text());
+        if (text === null && item.types.includes("text/plain")) {
+          text = await (await item.getType("text/plain")).text();
         }
       }
     }
-    return pasteText(await navigator.clipboard.readText());
+    text ??= structured === null ? await navigator.clipboard.readText() : "";
+    structured ??= rememberedCells(text);
+    if (options2?.valuesOnly) {
+      const values = structured && valuesOnly(structured);
+      return values ? pasteStructuredClipboardData(values) : pasteText(text, { literal: true });
+    }
+    return structured ? pasteStructuredClipboardData(structured) : pasteText(text);
   }, [pasteStructuredClipboardData, pasteText, readOnly]);
+  const pasteFromClipboard = React.useCallback(() => paste(), [paste]);
   const undo = React.useCallback(() => {
-    if (readOnly || !workbook || undoStackRef.current.length === 0) {
+    if (readOnly || !workbook || undoStackRef.current.length === 0 || !allowEdit({ kind: "history" })) {
       return;
     }
     const entry = undoStackRef.current.pop();
@@ -11549,9 +11970,9 @@ function useXlsxViewerController(options) {
     }
     setHistoryRevision((current) => current + 1);
     void restoreHistoryEntry(entry);
-  }, [applyCellEditHistoryEntry, applyRangeEditHistoryEntry, createHistoryEntry, readOnly, restoreHistoryEntry, workbook]);
+  }, [allowEdit, applyCellEditHistoryEntry, applyRangeEditHistoryEntry, createHistoryEntry, readOnly, restoreHistoryEntry, workbook]);
   const redo = React.useCallback(() => {
-    if (readOnly || !workbook || redoStackRef.current.length === 0) {
+    if (readOnly || !workbook || redoStackRef.current.length === 0 || !allowEdit({ kind: "history" })) {
       return;
     }
     const entry = redoStackRef.current.pop();
@@ -11576,7 +11997,7 @@ function useXlsxViewerController(options) {
     }
     setHistoryRevision((current) => current + 1);
     void restoreHistoryEntry(entry);
-  }, [applyCellEditHistoryEntry, applyRangeEditHistoryEntry, createHistoryEntry, readOnly, restoreHistoryEntry, workbook]);
+  }, [allowEdit, applyCellEditHistoryEntry, applyRangeEditHistoryEntry, createHistoryEntry, readOnly, restoreHistoryEntry, workbook]);
   return React.useMemo(
     () => ({
       activeCell,
@@ -11642,6 +12063,9 @@ function useXlsxViewerController(options) {
       moveChartBy,
       moveImageBy,
       pasteFromClipboard,
+      paste,
+      cutSelection,
+      autoFit,
       pasteStructuredClipboardData,
       pasteText,
       removeActiveSheet,
@@ -11769,6 +12193,9 @@ function useXlsxViewerController(options) {
       moveChartBy,
       moveImageBy,
       pasteFromClipboard,
+      paste,
+      cutSelection,
+      autoFit,
       pasteStructuredClipboardData,
       pasteText,
       removeActiveSheet,
@@ -14249,9 +14676,9 @@ function coerceLooseNumber(value) {
     return null;
   }
   if (value && typeof value === "object") {
-    const record = value;
+    const record2 = value;
     for (const key of ["x", "value", "v", "num", "number", "raw"]) {
-      const nested = coerceLooseNumber(record[key]);
+      const nested = coerceLooseNumber(record2[key]);
       if (nested != null) {
         return nested;
       }
@@ -19324,7 +19751,6 @@ var DEFAULT_ROW_HEIGHT2 = 24;
 var DEFAULT_COL_WIDTH2 = 80;
 var HEADER_HEIGHT = 24;
 var ROW_HEADER_WIDTH = 40;
-var INTERNAL_CLIPBOARD_MIME2 = "application/x-react-xlsx-range+json";
 var MIN_OPEN_GRID_ROWS = 200;
 var MIN_OPEN_GRID_COLS = 50;
 var OPEN_GRID_ROW_PADDING = 120;
@@ -19438,11 +19864,11 @@ function rememberBoundedCacheValue(cache, key, value, limit) {
 function roundCanvasCacheWidth(width) {
   return Math.round(width * 4) / 4;
 }
-function measureCanvasTextWidth(context, text) {
+function measureCanvasTextWidth(context2, text) {
   if (text.length === 0) {
     return 0;
   }
-  const cacheKey = `${context.font}\0${text}`;
+  const cacheKey = `${context2.font}\0${text}`;
   const cached = canvasTextMeasureCache.get(cacheKey);
   if (cached !== void 0) {
     return cached;
@@ -19450,11 +19876,11 @@ function measureCanvasTextWidth(context, text) {
   return rememberBoundedCacheValue(
     canvasTextMeasureCache,
     cacheKey,
-    context.measureText(text).width,
+    context2.measureText(text).width,
     CANVAS_TEXT_MEASURE_CACHE_LIMIT
   );
 }
-function drawCanvasTextDecorations(context, {
+function drawCanvasTextDecorations(context2, {
   align,
   color,
   decoration,
@@ -19469,21 +19895,21 @@ function drawCanvasTextDecorations(context, {
   if (!decoration || text.length === 0) {
     return;
   }
-  const measured = ellipsize && maxWidth !== void 0 ? Math.min(maxWidth, measureCanvasTextWidth(context, text)) : measureCanvasTextWidth(context, text);
+  const measured = ellipsize && maxWidth !== void 0 ? Math.min(maxWidth, measureCanvasTextWidth(context2, text)) : measureCanvasTextWidth(context2, text);
   const startX = align === "right" ? textX - measured : align === "center" ? textX - measured / 2 : textX;
-  context.strokeStyle = color;
-  context.lineWidth = Math.max(1, zoomFactor * 0.75);
+  context2.strokeStyle = color;
+  context2.lineWidth = Math.max(1, zoomFactor * 0.75);
   if (decoration.includes("underline")) {
-    context.beginPath();
-    context.moveTo(startX, underlineY);
-    context.lineTo(startX + measured, underlineY);
-    context.stroke();
+    context2.beginPath();
+    context2.moveTo(startX, underlineY);
+    context2.lineTo(startX + measured, underlineY);
+    context2.stroke();
   }
   if (decoration.includes("line-through")) {
-    context.beginPath();
-    context.moveTo(startX, lineThroughY);
-    context.lineTo(startX + measured, lineThroughY);
-    context.stroke();
+    context2.beginPath();
+    context2.moveTo(startX, lineThroughY);
+    context2.lineTo(startX + measured, lineThroughY);
+    context2.stroke();
   }
 }
 function getCachedCanvasPath2D(path) {
@@ -19657,69 +20083,69 @@ function resolveCanvasBoundaryBorder(primary, secondary) {
   const secondaryPriority = getCanvasBorderPriority(secondary);
   return secondaryPriority > primaryPriority ? secondary : primary;
 }
-function applyCanvasBorderDash(context, style, width) {
-  context.lineCap = "butt";
+function applyCanvasBorderDash(context2, style, width) {
+  context2.lineCap = "butt";
   if (style === "dashed") {
-    context.setLineDash([Math.max(3, width * 3), Math.max(2, width * 2)]);
+    context2.setLineDash([Math.max(3, width * 3), Math.max(2, width * 2)]);
     return;
   }
   if (style === "dotted") {
-    context.lineCap = "round";
-    context.setLineDash([Math.max(0.01, width * 0.01), Math.max(2, width * 2.2)]);
+    context2.lineCap = "round";
+    context2.setLineDash([Math.max(0.01, width * 0.01), Math.max(2, width * 2.2)]);
     return;
   }
-  context.setLineDash([]);
+  context2.setLineDash([]);
 }
-function strokeCanvasBorderSide(context, side, rect, border) {
+function strokeCanvasBorderSide(context2, side, rect, border) {
   const halfWidth = border.width / 2;
   const left = rect.left;
   const right = rect.left + rect.width;
   const top = rect.top;
   const bottom = rect.top + rect.height;
-  context.strokeStyle = border.color;
-  context.lineWidth = border.width;
-  applyCanvasBorderDash(context, border.style, border.width);
+  context2.strokeStyle = border.color;
+  context2.lineWidth = border.width;
+  applyCanvasBorderDash(context2, border.style, border.width);
   const strokeLine = (offset = 0) => {
-    context.beginPath();
+    context2.beginPath();
     if (side === "top") {
-      context.moveTo(left, top + halfWidth + offset);
-      context.lineTo(right, top + halfWidth + offset);
+      context2.moveTo(left, top + halfWidth + offset);
+      context2.lineTo(right, top + halfWidth + offset);
     } else if (side === "bottom") {
-      context.moveTo(left, bottom - halfWidth - offset);
-      context.lineTo(right, bottom - halfWidth - offset);
+      context2.moveTo(left, bottom - halfWidth - offset);
+      context2.lineTo(right, bottom - halfWidth - offset);
     } else if (side === "left") {
-      context.moveTo(left + halfWidth + offset, top);
-      context.lineTo(left + halfWidth + offset, bottom);
+      context2.moveTo(left + halfWidth + offset, top);
+      context2.lineTo(left + halfWidth + offset, bottom);
     } else {
-      context.moveTo(right - halfWidth - offset, top);
-      context.lineTo(right - halfWidth - offset, bottom);
+      context2.moveTo(right - halfWidth - offset, top);
+      context2.lineTo(right - halfWidth - offset, bottom);
     }
-    context.stroke();
+    context2.stroke();
   };
   if (border.style === "double") {
     const inset = Math.max(1, border.width);
-    context.lineWidth = Math.max(1, border.width / 3);
-    context.setLineDash([]);
+    context2.lineWidth = Math.max(1, border.width / 3);
+    context2.setLineDash([]);
     strokeLine(0);
     strokeLine(inset);
   } else {
     strokeLine(0);
   }
-  context.setLineDash([]);
-  context.lineCap = "butt";
-  context.lineWidth = 1;
+  context2.setLineDash([]);
+  context2.lineCap = "butt";
+  context2.lineWidth = 1;
 }
-function truncateCanvasText(context, text, maxWidth) {
+function truncateCanvasText(context2, text, maxWidth) {
   if (maxWidth <= 0 || text.length === 0) {
     return "";
   }
   const roundedMaxWidth = roundCanvasCacheWidth(maxWidth);
-  const cacheKey = `${context.font}\0${roundedMaxWidth}\0${text}`;
+  const cacheKey = `${context2.font}\0${roundedMaxWidth}\0${text}`;
   const cached = canvasTextTruncateCache.get(cacheKey);
   if (cached !== void 0) {
     return cached;
   }
-  if (measureCanvasTextWidth(context, text) <= maxWidth) {
+  if (measureCanvasTextWidth(context2, text) <= maxWidth) {
     rememberBoundedCacheValue(canvasTextTruncateCache, cacheKey, text, CANVAS_TEXT_TRUNCATE_CACHE_LIMIT);
     return text;
   }
@@ -19729,7 +20155,7 @@ function truncateCanvasText(context, text, maxWidth) {
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
     const candidate = `${text.slice(0, mid)}${ellipsis}`;
-    if (measureCanvasTextWidth(context, candidate) <= maxWidth) {
+    if (measureCanvasTextWidth(context2, candidate) <= maxWidth) {
       low = mid;
     } else {
       high = mid - 1;
@@ -19798,7 +20224,7 @@ function resolveCanvasTextMiddleY(verticalAlign, contentTop, contentHeight, line
   }
   return contentTop + contentHeight - lineHeight / 2;
 }
-function resolveCanvasWrapIndex(context, text, maxWidth) {
+function resolveCanvasWrapIndex(context2, text, maxWidth) {
   if (text.length <= 1) {
     return text.length;
   }
@@ -19808,7 +20234,7 @@ function resolveCanvasWrapIndex(context, text, maxWidth) {
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
     const candidate = text.slice(0, mid);
-    if (measureCanvasTextWidth(context, candidate) <= maxWidth) {
+    if (measureCanvasTextWidth(context2, candidate) <= maxWidth) {
       best = mid;
       low = mid + 1;
     } else {
@@ -19817,7 +20243,7 @@ function resolveCanvasWrapIndex(context, text, maxWidth) {
   }
   return best;
 }
-function wrapCanvasText(context, text, maxWidth) {
+function wrapCanvasText(context2, text, maxWidth) {
   if (text.length === 0) {
     return [""];
   }
@@ -19826,7 +20252,7 @@ function wrapCanvasText(context, text, maxWidth) {
   }
   const normalized = text.replace(/\r\n?/g, "\n");
   const roundedMaxWidth = roundCanvasCacheWidth(maxWidth);
-  const cacheKey = `${context.font}\0${roundedMaxWidth}\0${normalized}`;
+  const cacheKey = `${context2.font}\0${roundedMaxWidth}\0${normalized}`;
   const cached = canvasTextWrapCache.get(cacheKey);
   if (cached) {
     return cached;
@@ -19840,11 +20266,11 @@ function wrapCanvasText(context, text, maxWidth) {
     }
     let remaining = paragraph;
     while (remaining.length > 0) {
-      if (measureCanvasTextWidth(context, remaining) <= maxWidth) {
+      if (measureCanvasTextWidth(context2, remaining) <= maxWidth) {
         lines.push(remaining);
         break;
       }
-      const fit = Math.max(1, resolveCanvasWrapIndex(context, remaining, maxWidth));
+      const fit = Math.max(1, resolveCanvasWrapIndex(context2, remaining, maxWidth));
       const candidate = remaining.slice(0, fit);
       const whitespaceIndex = fit < remaining.length ? Math.max(candidate.lastIndexOf(" "), candidate.lastIndexOf("	")) : -1;
       const breakIndex = whitespaceIndex > 0 ? whitespaceIndex : fit;
@@ -19940,7 +20366,7 @@ function parseCanvasGradientStops(value) {
     };
   }).filter((stop) => Boolean(stop));
 }
-function resolveCanvasGradientFill(context, rect, backgroundImage) {
+function resolveCanvasGradientFill(context2, rect, backgroundImage) {
   const linearMatch = backgroundImage.match(/^linear-gradient\((.*)\)$/i);
   if (linearMatch) {
     const parts = splitCssGradientArgs(linearMatch[1] ?? "");
@@ -19958,7 +20384,7 @@ function resolveCanvasGradientFill(context, rect, backgroundImage) {
       const startY = centerY + Math.sin(radians) * projectedHalfLength;
       const endX = centerX + Math.cos(radians) * projectedHalfLength;
       const endY = centerY - Math.sin(radians) * projectedHalfLength;
-      const gradient = context.createLinearGradient(startX, startY, endX, endY);
+      const gradient = context2.createLinearGradient(startX, startY, endX, endY);
       const stops = parseCanvasGradientStops(parts.slice(1).join(","));
       if (stops.length > 0) {
         const normalizedStops = stops.map((stop, index) => ({
@@ -19976,7 +20402,7 @@ function resolveCanvasGradientFill(context, rect, backgroundImage) {
   if (radialMatch) {
     const parts = splitCssGradientArgs(radialMatch[1] ?? "");
     const stopParts = parts[0]?.startsWith("circle") ? parts.slice(1) : parts;
-    const gradient = context.createRadialGradient(
+    const gradient = context2.createRadialGradient(
       rect.left + rect.width / 2,
       rect.top + rect.height / 2,
       0,
@@ -19998,55 +20424,55 @@ function resolveCanvasGradientFill(context, rect, backgroundImage) {
   }
   return null;
 }
-function resolveCanvasDataBarFill(context, left, top, width, _height, dataBar) {
+function resolveCanvasDataBarFill(context2, left, top, width, _height, dataBar) {
   if (dataBar.gradient === false) {
     return dataBar.color;
   }
-  const gradient = context.createLinearGradient(left, top, left + width, top);
+  const gradient = context2.createLinearGradient(left, top, left + width, top);
   gradient.addColorStop(0, lightenColor3(dataBar.color, 0.28));
   gradient.addColorStop(1, dataBar.color);
   return gradient;
 }
-function drawCanvasConditionalIcon(context, icon, centerX, centerY, size) {
-  context.save();
+function drawCanvasConditionalIcon(context2, icon, centerX, centerY, size) {
+  context2.save();
   if (icon.glyph) {
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.fillStyle = icon.color ?? icon.backgroundColor ?? "#6b7280";
-    context.fillText(icon.glyph, centerX, centerY);
-    context.restore();
+    context2.textAlign = "center";
+    context2.textBaseline = "middle";
+    context2.fillStyle = icon.color ?? icon.backgroundColor ?? "#6b7280";
+    context2.fillText(icon.glyph, centerX, centerY);
+    context2.restore();
     return;
   }
   if (icon.shape === "arrow") {
     const fill = icon.color ?? "#111827";
     const stroke = icon.borderColor ?? darkenColor3(fill, 0.32);
     const scale = size / 16;
-    context.translate(centerX, centerY);
-    context.rotate((icon.rotationDeg ?? 0) * Math.PI / 180);
-    context.translate(-8 * scale, -8 * scale);
-    context.beginPath();
-    context.moveTo(2.5 * scale, 8 * scale);
-    context.lineTo(8.4 * scale, 2.4 * scale);
-    context.lineTo(8.4 * scale, 5.2 * scale);
-    context.lineTo(13.5 * scale, 5.2 * scale);
-    context.lineTo(13.5 * scale, 10.8 * scale);
-    context.lineTo(8.4 * scale, 10.8 * scale);
-    context.lineTo(8.4 * scale, 13.6 * scale);
-    context.closePath();
-    context.fillStyle = fill;
-    context.fill();
-    context.strokeStyle = stroke;
-    context.lineWidth = Math.max(1, 1.25 * scale);
-    context.lineJoin = "round";
-    context.stroke();
-    context.restore();
+    context2.translate(centerX, centerY);
+    context2.rotate((icon.rotationDeg ?? 0) * Math.PI / 180);
+    context2.translate(-8 * scale, -8 * scale);
+    context2.beginPath();
+    context2.moveTo(2.5 * scale, 8 * scale);
+    context2.lineTo(8.4 * scale, 2.4 * scale);
+    context2.lineTo(8.4 * scale, 5.2 * scale);
+    context2.lineTo(13.5 * scale, 5.2 * scale);
+    context2.lineTo(13.5 * scale, 10.8 * scale);
+    context2.lineTo(8.4 * scale, 10.8 * scale);
+    context2.lineTo(8.4 * scale, 13.6 * scale);
+    context2.closePath();
+    context2.fillStyle = fill;
+    context2.fill();
+    context2.strokeStyle = stroke;
+    context2.lineWidth = Math.max(1, 1.25 * scale);
+    context2.lineJoin = "round";
+    context2.stroke();
+    context2.restore();
     return;
   }
-  context.beginPath();
-  context.arc(centerX, centerY, size / 2, 0, Math.PI * 2);
-  context.fillStyle = icon.color ?? icon.backgroundColor ?? "#6b7280";
-  context.fill();
-  context.restore();
+  context2.beginPath();
+  context2.arc(centerX, centerY, size / 2, 0, Math.PI * 2);
+  context2.fillStyle = icon.color ?? icon.backgroundColor ?? "#6b7280";
+  context2.fill();
+  context2.restore();
 }
 function formatZoomScale(zoomScale) {
   return `${Math.round(zoomScale)}%`;
@@ -21393,41 +21819,41 @@ function resolveShapeVector(shape) {
   }
   return buildPresetShapePath(shape);
 }
-function drawCanvasRoundedRect(context, left, top, width, height, radius) {
+function drawCanvasRoundedRect(context2, left, top, width, height, radius) {
   const safeRadius = Math.max(0, Math.min(radius, width / 2, height / 2));
-  context.beginPath();
-  context.moveTo(left + safeRadius, top);
-  context.lineTo(left + width - safeRadius, top);
-  context.quadraticCurveTo(left + width, top, left + width, top + safeRadius);
-  context.lineTo(left + width, top + height - safeRadius);
-  context.quadraticCurveTo(left + width, top + height, left + width - safeRadius, top + height);
-  context.lineTo(left + safeRadius, top + height);
-  context.quadraticCurveTo(left, top + height, left, top + height - safeRadius);
-  context.lineTo(left, top + safeRadius);
-  context.quadraticCurveTo(left, top, left + safeRadius, top);
-  context.closePath();
+  context2.beginPath();
+  context2.moveTo(left + safeRadius, top);
+  context2.lineTo(left + width - safeRadius, top);
+  context2.quadraticCurveTo(left + width, top, left + width, top + safeRadius);
+  context2.lineTo(left + width, top + height - safeRadius);
+  context2.quadraticCurveTo(left + width, top + height, left + width - safeRadius, top + height);
+  context2.lineTo(left + safeRadius, top + height);
+  context2.quadraticCurveTo(left, top + height, left, top + height - safeRadius);
+  context2.lineTo(left, top + safeRadius);
+  context2.quadraticCurveTo(left, top, left + safeRadius, top);
+  context2.closePath();
 }
-function applyCanvasShapeDash(context, dash, lineWidth) {
+function applyCanvasShapeDash(context2, dash, lineWidth) {
   if (!dash) {
-    context.setLineDash([]);
+    context2.setLineDash([]);
     return;
   }
   const unit = Math.max(1, lineWidth);
   switch (dash) {
     case "dash":
-      context.setLineDash([4 * unit, 3 * unit]);
+      context2.setLineDash([4 * unit, 3 * unit]);
       break;
     case "dashDot":
-      context.setLineDash([4 * unit, 2 * unit, unit, 2 * unit]);
+      context2.setLineDash([4 * unit, 2 * unit, unit, 2 * unit]);
       break;
     case "dot":
-      context.setLineDash([unit, 2 * unit]);
+      context2.setLineDash([unit, 2 * unit]);
       break;
     case "lgDash":
-      context.setLineDash([8 * unit, 3 * unit]);
+      context2.setLineDash([8 * unit, 3 * unit]);
       break;
     default:
-      context.setLineDash([]);
+      context2.setLineDash([]);
       break;
   }
 }
@@ -22103,12 +22529,12 @@ function measureTextWidth(value, style) {
     return value.length * 7;
   }
   textMeasureCanvas ??= document.createElement("canvas");
-  const context = textMeasureCanvas.getContext("2d", { alpha: false });
-  if (!context) {
+  const context2 = textMeasureCanvas.getContext("2d", { alpha: false });
+  if (!context2) {
     return value.length * 7;
   }
-  context.font = buildCanvasFont(style);
-  return measureCanvasTextWidth(context, value);
+  context2.font = buildCanvasFont(style);
+  return measureCanvasTextWidth(context2, value);
 }
 function measureWrappedTextHeight(value, style, widthPx) {
   if (!value) {
@@ -22122,13 +22548,13 @@ function measureWrappedTextHeight(value, style, widthPx) {
     return fallbackLineCount * lineHeight + padding.top + padding.bottom;
   }
   textMeasureCanvas ??= document.createElement("canvas");
-  const context = textMeasureCanvas.getContext("2d", { alpha: false });
-  if (!context) {
+  const context2 = textMeasureCanvas.getContext("2d", { alpha: false });
+  if (!context2) {
     return fallbackLineCount * lineHeight + padding.top + padding.bottom;
   }
-  context.font = buildCanvasFont(style);
-  const wrappedLines = wrapCanvasText(context, value, availableWidth);
-  return wrappedLines.length * lineHeight + padding.top + padding.bottom;
+  context2.font = buildCanvasFont(style);
+  const wrappedLines2 = wrapCanvasText(context2, value, availableWidth);
+  return wrappedLines2.length * lineHeight + padding.top + padding.bottom;
 }
 function canCellTextOverflow(data) {
   if (!data.value || data.isMergedSecondary || data.shrinkToFit || data.style.whiteSpace === "pre-wrap") {
@@ -23442,7 +23868,7 @@ function intersectsCanvasDirtyRects(left, top, width, height, dirtyRects) {
   const bottom = top + height;
   return dirtyRects.some((dirtyRect) => left < dirtyRect.left + dirtyRect.width && right > dirtyRect.left && top < dirtyRect.top + dirtyRect.height && bottom > dirtyRect.top);
 }
-function blitCanvasWithScrollDelta(canvas, context, bufferCanvas, dpr, width, height, deltaX, deltaY) {
+function blitCanvasWithScrollDelta(canvas, context2, bufferCanvas, dpr, width, height, deltaX, deltaY) {
   if (width <= 0 || height <= 0) {
     return [];
   }
@@ -23480,8 +23906,8 @@ function blitCanvasWithScrollDelta(canvas, context, bufferCanvas, dpr, width, he
   const sourceY = deltaDeviceY > 0 ? deltaDeviceY : 0;
   const destinationX = deltaDeviceX > 0 ? 0 : -deltaDeviceX;
   const destinationY = deltaDeviceY > 0 ? 0 : -deltaDeviceY;
-  context.setTransform(1, 0, 0, 1, 0, 0);
-  context.drawImage(
+  context2.setTransform(1, 0, 0, 1, 0, 0);
+  context2.drawImage(
     bufferCanvas,
     sourceX,
     sourceY,
@@ -23492,7 +23918,7 @@ function blitCanvasWithScrollDelta(canvas, context, bufferCanvas, dpr, width, he
     overlapDeviceWidth,
     overlapDeviceHeight
   );
-  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context2.setTransform(dpr, 0, 0, dpr, 0, 0);
   const dirtyRects = [];
   if (clampedDeltaX > 0) {
     dirtyRects.push({
@@ -24093,7 +24519,7 @@ function resolveFormControlLabel(control) {
   }
   return label.replace(/\u00a0/g, " ").replace(/^\s+/, "");
 }
-function drawStaticShapeText(context, shape, left, top, width, height, zoomFactor) {
+function drawStaticShapeText(context2, shape, left, top, width, height, zoomFactor) {
   if (shape.paragraphs.length === 0) {
     return;
   }
@@ -24116,8 +24542,8 @@ function drawStaticShapeText(context, shape, left, top, width, height, zoomFacto
     );
     const widthPx = paragraph.runs.reduce((total, run) => {
       const fontSize = (run.fontSizePt ?? 11) * 96 / 72 * zoomFactor;
-      context.font = `${run.italic ? "italic " : ""}${run.bold ? "700 " : "400 "}${fontSize}px ${run.fontFamily ?? "Calibri, sans-serif"}`;
-      return total + measureCanvasTextWidth(context, run.text);
+      context2.font = `${run.italic ? "italic " : ""}${run.bold ? "700 " : "400 "}${fontSize}px ${run.fontFamily ?? "Calibri, sans-serif"}`;
+      return total + measureCanvasTextWidth(context2, run.text);
     }, 0);
     return { lineHeight, widthPx };
   });
@@ -24128,11 +24554,11 @@ function drawStaticShapeText(context, shape, left, top, width, height, zoomFacto
   } else if (shape.textBox?.verticalAlign === "bottom") {
     y = textTop + Math.max(0, textHeight - totalTextHeight);
   }
-  context.save();
-  context.beginPath();
-  context.rect(textLeft, textTop, textWidth, textHeight);
-  context.clip();
-  context.textBaseline = "middle";
+  context2.save();
+  context2.beginPath();
+  context2.rect(textLeft, textTop, textWidth, textHeight);
+  context2.clip();
+  context2.textBaseline = "middle";
   shape.paragraphs.forEach((paragraph, paragraphIndex) => {
     const metric = lineMetrics[paragraphIndex] ?? { lineHeight: 14 * zoomFactor, widthPx: 0 };
     let x = textLeft;
@@ -24144,88 +24570,88 @@ function drawStaticShapeText(context, shape, left, top, width, height, zoomFacto
     }
     paragraph.runs.forEach((run) => {
       const fontSize = (run.fontSizePt ?? 11) * 96 / 72 * zoomFactor;
-      context.font = `${run.italic ? "italic " : ""}${run.bold ? "700 " : "400 "}${fontSize}px ${run.fontFamily ?? "Calibri, sans-serif"}`;
-      context.fillStyle = run.color ?? "#000000";
-      context.textAlign = "left";
+      context2.font = `${run.italic ? "italic " : ""}${run.bold ? "700 " : "400 "}${fontSize}px ${run.fontFamily ?? "Calibri, sans-serif"}`;
+      context2.fillStyle = run.color ?? "#000000";
+      context2.textAlign = "left";
       const textY = y + metric.lineHeight / 2;
-      context.fillText(run.text, x, textY);
+      context2.fillText(run.text, x, textY);
       if (run.underline && run.text.length > 0) {
-        const textWidthPx = measureCanvasTextWidth(context, run.text);
-        context.strokeStyle = run.color ?? "#000000";
-        context.lineWidth = Math.max(1, zoomFactor * 0.75);
-        context.beginPath();
-        context.moveTo(x, textY + Math.max(2, fontSize * 0.28));
-        context.lineTo(x + textWidthPx, textY + Math.max(2, fontSize * 0.28));
-        context.stroke();
+        const textWidthPx = measureCanvasTextWidth(context2, run.text);
+        context2.strokeStyle = run.color ?? "#000000";
+        context2.lineWidth = Math.max(1, zoomFactor * 0.75);
+        context2.beginPath();
+        context2.moveTo(x, textY + Math.max(2, fontSize * 0.28));
+        context2.lineTo(x + textWidthPx, textY + Math.max(2, fontSize * 0.28));
+        context2.stroke();
       }
-      x += measureCanvasTextWidth(context, run.text);
+      x += measureCanvasTextWidth(context2, run.text);
     });
     y += metric.lineHeight;
   });
-  context.restore();
+  context2.restore();
 }
-function drawStaticShape(context, shape, rect, zoomFactor) {
+function drawStaticShape(context2, shape, rect, zoomFactor) {
   const fillColor = shape.fill?.none ? "transparent" : shape.fill?.color ?? "transparent";
   const strokeColor = shape.stroke?.none ? "transparent" : shape.stroke?.color ?? "transparent";
   const lineWidth = Math.max(0, (shape.stroke?.widthPx ?? (shape.geometry === "line" ? 2 : 1)) * zoomFactor);
   const vectorShape = resolveShapeVector(shape);
   const opacity = Math.min(shape.fill?.opacity ?? 1, shape.stroke?.opacity ?? 1);
-  context.save();
-  context.translate(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  context2.save();
+  context2.translate(rect.left + rect.width / 2, rect.top + rect.height / 2);
   if (shape.rotationDeg) {
-    context.rotate(shape.rotationDeg * Math.PI / 180);
+    context2.rotate(shape.rotationDeg * Math.PI / 180);
   }
-  context.scale(shape.flipH ? -1 : 1, shape.flipV ? -1 : 1);
-  context.globalAlpha *= opacity;
-  context.lineWidth = lineWidth;
-  context.strokeStyle = strokeColor;
-  context.fillStyle = fillColor;
-  applyCanvasShapeDash(context, shape.stroke?.dash, lineWidth);
+  context2.scale(shape.flipH ? -1 : 1, shape.flipV ? -1 : 1);
+  context2.globalAlpha *= opacity;
+  context2.lineWidth = lineWidth;
+  context2.strokeStyle = strokeColor;
+  context2.fillStyle = fillColor;
+  applyCanvasShapeDash(context2, shape.stroke?.dash, lineWidth);
   const localLeft = -rect.width / 2;
   const localTop = -rect.height / 2;
   if (vectorShape && typeof Path2D !== "undefined") {
-    context.save();
-    context.translate(localLeft, localTop);
-    context.scale(
+    context2.save();
+    context2.translate(localLeft, localTop);
+    context2.scale(
       rect.width / Math.max(1, vectorShape.viewBox.width),
       rect.height / Math.max(1, vectorShape.viewBox.height)
     );
     const path = getCachedCanvasPath2D(vectorShape.path);
     if (!path) {
-      context.restore();
-      context.restore();
+      context2.restore();
+      context2.restore();
       return;
     }
     if (fillColor !== "transparent") {
-      context.fill(path);
+      context2.fill(path);
     }
     if (strokeColor !== "transparent" && lineWidth > 0) {
-      context.stroke(path);
+      context2.stroke(path);
     }
-    context.restore();
+    context2.restore();
   } else if (shape.geometry === "ellipse") {
-    context.beginPath();
-    context.ellipse(0, 0, rect.width / 2, rect.height / 2, 0, 0, Math.PI * 2);
+    context2.beginPath();
+    context2.ellipse(0, 0, rect.width / 2, rect.height / 2, 0, 0, Math.PI * 2);
     if (fillColor !== "transparent") {
-      context.fill();
+      context2.fill();
     }
     if (strokeColor !== "transparent" && lineWidth > 0) {
-      context.stroke();
+      context2.stroke();
     }
   } else {
     const radius = shape.geometry === "roundRect" ? 12 * zoomFactor : 0;
-    drawCanvasRoundedRect(context, localLeft, localTop, rect.width, rect.height, radius);
+    drawCanvasRoundedRect(context2, localLeft, localTop, rect.width, rect.height, radius);
     if (fillColor !== "transparent") {
-      context.fill();
+      context2.fill();
     }
     if (strokeColor !== "transparent" && lineWidth > 0) {
-      context.stroke();
+      context2.stroke();
     }
   }
-  drawStaticShapeText(context, shape, localLeft, localTop, rect.width, rect.height, zoomFactor);
-  context.restore();
+  drawStaticShapeText(context2, shape, localLeft, localTop, rect.width, rect.height, zoomFactor);
+  context2.restore();
 }
-function drawStaticFormControl(context, control, rect, palette, zoomFactor, sheetSurface = SHEET_SURFACE) {
+function drawStaticFormControl(context2, control, rect, palette, zoomFactor, sheetSurface = SHEET_SURFACE) {
   const label = resolveFormControlLabel(control);
   const stroke = paletteIsDark(palette) ? "#cbd5e1" : "#475569";
   const textColor = control.textColor ?? "#000000";
@@ -24233,88 +24659,88 @@ function drawStaticFormControl(context, control, rect, palette, zoomFactor, shee
   const iconSize = Math.min(14 * zoomFactor, Math.max(0, rect.height - 4 * zoomFactor));
   const controlChecked = isFormControlChecked(control);
   const controlMixed = isFormControlMixed(control);
-  context.save();
-  context.font = `400 ${fontSizePx}px ${control.fontFamily ?? "Calibri, sans-serif"}`;
-  context.textBaseline = "middle";
-  context.fillStyle = textColor;
-  context.strokeStyle = stroke;
-  context.lineWidth = Math.max(1, zoomFactor);
+  context2.save();
+  context2.font = `400 ${fontSizePx}px ${control.fontFamily ?? "Calibri, sans-serif"}`;
+  context2.textBaseline = "middle";
+  context2.fillStyle = textColor;
+  context2.strokeStyle = stroke;
+  context2.lineWidth = Math.max(1, zoomFactor);
   if (control.kind === "group-box") {
     const labelInset = label ? Math.max(7, fontSizePx * 0.5) : 0;
-    drawCanvasRoundedRect(context, rect.left, rect.top + labelInset, rect.width, Math.max(0, rect.height - labelInset), 2 * zoomFactor);
-    context.stroke();
+    drawCanvasRoundedRect(context2, rect.left, rect.top + labelInset, rect.width, Math.max(0, rect.height - labelInset), 2 * zoomFactor);
+    context2.stroke();
     if (label) {
-      context.fillStyle = sheetSurface;
-      const labelWidth = Math.min(rect.width - 16 * zoomFactor, measureCanvasTextWidth(context, label) + 8 * zoomFactor);
-      context.fillRect(rect.left + 8 * zoomFactor, rect.top, labelWidth, fontSizePx * 1.2);
-      context.fillStyle = textColor;
-      context.textAlign = "left";
-      context.fillText(label, rect.left + 12 * zoomFactor, rect.top + fontSizePx * 0.55);
+      context2.fillStyle = sheetSurface;
+      const labelWidth = Math.min(rect.width - 16 * zoomFactor, measureCanvasTextWidth(context2, label) + 8 * zoomFactor);
+      context2.fillRect(rect.left + 8 * zoomFactor, rect.top, labelWidth, fontSizePx * 1.2);
+      context2.fillStyle = textColor;
+      context2.textAlign = "left";
+      context2.fillText(label, rect.left + 12 * zoomFactor, rect.top + fontSizePx * 0.55);
     }
-    context.restore();
+    context2.restore();
     return;
   }
   if (control.kind === "button" || control.kind === "dropdown" || control.kind === "editbox" || control.kind === "listbox" || control.kind === "scrollbar" || control.kind === "spinner" || control.kind === "unknown") {
     if (control.kind === "button") {
-      const gradient = context.createLinearGradient(rect.left, rect.top, rect.left, rect.top + rect.height);
+      const gradient = context2.createLinearGradient(rect.left, rect.top, rect.left, rect.top + rect.height);
       gradient.addColorStop(0, "#f8fafc");
       gradient.addColorStop(1, "#e2e8f0");
-      context.fillStyle = gradient;
+      context2.fillStyle = gradient;
     } else {
-      context.fillStyle = "transparent";
+      context2.fillStyle = "transparent";
     }
-    drawCanvasRoundedRect(context, rect.left, rect.top, rect.width, rect.height, control.kind === "button" ? 4 * zoomFactor : 2 * zoomFactor);
+    drawCanvasRoundedRect(context2, rect.left, rect.top, rect.width, rect.height, control.kind === "button" ? 4 * zoomFactor : 2 * zoomFactor);
     if (control.kind === "button") {
-      context.fill();
+      context2.fill();
     }
-    context.stroke();
+    context2.stroke();
   }
   let textLeft = rect.left + 2 * zoomFactor;
   const textRightInset = control.kind === "dropdown" ? 18 * zoomFactor : 6 * zoomFactor;
   if (control.kind === "checkbox") {
-    context.strokeRect(rect.left + 2 * zoomFactor, rect.top + (rect.height - iconSize) / 2, iconSize, iconSize);
+    context2.strokeRect(rect.left + 2 * zoomFactor, rect.top + (rect.height - iconSize) / 2, iconSize, iconSize);
     if (controlChecked || controlMixed) {
-      context.fillStyle = paletteIsDark(palette) ? "#60a5fa" : "#2563eb";
-      context.fillRect(rect.left + 2 * zoomFactor + 1.5, rect.top + (rect.height - iconSize) / 2 + 1.5, Math.max(0, iconSize - 3), Math.max(0, iconSize - 3));
-      context.strokeStyle = paletteIsDark(palette) ? "#020617" : "#ffffff";
-      context.beginPath();
+      context2.fillStyle = paletteIsDark(palette) ? "#60a5fa" : "#2563eb";
+      context2.fillRect(rect.left + 2 * zoomFactor + 1.5, rect.top + (rect.height - iconSize) / 2 + 1.5, Math.max(0, iconSize - 3), Math.max(0, iconSize - 3));
+      context2.strokeStyle = paletteIsDark(palette) ? "#020617" : "#ffffff";
+      context2.beginPath();
       if (controlMixed) {
-        context.moveTo(rect.left + 2 * zoomFactor + iconSize * 0.25, rect.top + rect.height / 2);
-        context.lineTo(rect.left + 2 * zoomFactor + iconSize * 0.75, rect.top + rect.height / 2);
+        context2.moveTo(rect.left + 2 * zoomFactor + iconSize * 0.25, rect.top + rect.height / 2);
+        context2.lineTo(rect.left + 2 * zoomFactor + iconSize * 0.75, rect.top + rect.height / 2);
       } else {
-        context.moveTo(rect.left + 2 * zoomFactor + iconSize * 0.24, rect.top + rect.height / 2 + iconSize * 0.06);
-        context.lineTo(rect.left + 2 * zoomFactor + iconSize * 0.45, rect.top + rect.height / 2 + iconSize * 0.26);
-        context.lineTo(rect.left + 2 * zoomFactor + iconSize * 0.8, rect.top + rect.height / 2 - iconSize * 0.2);
+        context2.moveTo(rect.left + 2 * zoomFactor + iconSize * 0.24, rect.top + rect.height / 2 + iconSize * 0.06);
+        context2.lineTo(rect.left + 2 * zoomFactor + iconSize * 0.45, rect.top + rect.height / 2 + iconSize * 0.26);
+        context2.lineTo(rect.left + 2 * zoomFactor + iconSize * 0.8, rect.top + rect.height / 2 - iconSize * 0.2);
       }
-      context.stroke();
+      context2.stroke();
     }
     textLeft += iconSize + 4 * zoomFactor;
   } else if (control.kind === "radio") {
-    context.beginPath();
-    context.arc(rect.left + 2 * zoomFactor + iconSize / 2, rect.top + rect.height / 2, iconSize / 2, 0, Math.PI * 2);
-    context.stroke();
+    context2.beginPath();
+    context2.arc(rect.left + 2 * zoomFactor + iconSize / 2, rect.top + rect.height / 2, iconSize / 2, 0, Math.PI * 2);
+    context2.stroke();
     if (controlChecked) {
-      context.fillStyle = paletteIsDark(palette) ? "#60a5fa" : "#2563eb";
-      context.beginPath();
-      context.arc(rect.left + 2 * zoomFactor + iconSize / 2, rect.top + rect.height / 2, iconSize * 0.25, 0, Math.PI * 2);
-      context.fill();
+      context2.fillStyle = paletteIsDark(palette) ? "#60a5fa" : "#2563eb";
+      context2.beginPath();
+      context2.arc(rect.left + 2 * zoomFactor + iconSize / 2, rect.top + rect.height / 2, iconSize * 0.25, 0, Math.PI * 2);
+      context2.fill();
     }
     textLeft += iconSize + 4 * zoomFactor;
   }
   if (label) {
     const maxTextWidth = Math.max(0, rect.left + rect.width - textLeft - textRightInset);
-    const text = truncateCanvasText(context, label, maxTextWidth);
-    context.fillStyle = textColor;
-    context.textAlign = control.textAlign === "right" ? "right" : control.textAlign === "center" ? "center" : "left";
-    const textX = context.textAlign === "right" ? rect.left + rect.width - textRightInset : context.textAlign === "center" ? textLeft + maxTextWidth / 2 : textLeft;
-    context.fillText(text, textX, rect.top + rect.height / 2);
+    const text = truncateCanvasText(context2, label, maxTextWidth);
+    context2.fillStyle = textColor;
+    context2.textAlign = control.textAlign === "right" ? "right" : control.textAlign === "center" ? "center" : "left";
+    const textX = context2.textAlign === "right" ? rect.left + rect.width - textRightInset : context2.textAlign === "center" ? textLeft + maxTextWidth / 2 : textLeft;
+    context2.fillText(text, textX, rect.top + rect.height / 2);
   }
   if (control.kind === "dropdown") {
-    context.fillStyle = textColor;
-    context.textAlign = "center";
-    context.fillText("\u25BC", rect.left + rect.width - 10 * zoomFactor, rect.top + rect.height / 2);
+    context2.fillStyle = textColor;
+    context2.textAlign = "center";
+    context2.fillText("\u25BC", rect.left + rect.width - 10 * zoomFactor, rect.top + rect.height / 2);
   }
-  context.restore();
+  context2.restore();
 }
 function resolveConditionalDataBarForCell(row, col, worksheet, sheet, metricsCache) {
   const rules = sheet?.conditionalFormatRules ?? [];
@@ -24940,9 +25366,12 @@ var MemoGridRow = React4.memo(GridRow, (prev, next) => {
   }
   return true;
 });
+var VALUES_PASTE_WAIT_MS = 100;
+var BORDER_DOUBLE_CLICK_MS = 500;
 function XlsxGrid({
   allowResizeInReadOnly = false,
   controller,
+  onClipboardError,
   emptyState,
   enableCanvasSelectionAnimation = true,
   errorState,
@@ -24992,6 +25421,7 @@ function XlsxGrid({
     getRowsBatchAsync,
     getClipboardData,
     getCellDisplayValue: getControllerCellDisplayValue,
+    getCellFormula: getControllerCellFormula,
     getFormControlItems,
     images,
     shapes,
@@ -25001,7 +25431,10 @@ function XlsxGrid({
     isWorkerBacked,
     maxZoomScale,
     minZoomScale,
+    autoFit,
     copySelectionToClipboard,
+    cutSelection,
+    paste,
     pasteFromClipboard,
     pasteStructuredClipboardData,
     pasteText,
@@ -25125,6 +25558,11 @@ function XlsxGrid({
   const selectionCommitFrameRef = React4.useRef(null);
   const selectionRef = React4.useRef(null);
   const editingCellRef = React4.useRef(null);
+  const valuesPasteTimerRef = React4.useRef(null);
+  React4.useEffect(() => () => {
+    if (valuesPasteTimerRef.current !== null) window.clearTimeout(valuesPasteTimerRef.current);
+  }, []);
+  const lastBorderPressRef = React4.useRef(null);
   const commitEditingRef = React4.useRef(() => {
   });
   const editingInputRef = React4.useRef(null);
@@ -26945,9 +27383,10 @@ function XlsxGrid({
       }
       selectCell(cell2);
       setEditingCell(cell2);
-      setEditingValue(initialValue ?? getControllerCellDisplayValue(cell2));
+      const formula = initialValue === void 0 ? getControllerCellFormula(cell2) : "";
+      setEditingValue(initialValue ?? (formula ? formulaText(formula) : getControllerCellDisplayValue(cell2)));
     },
-    [getControllerCellDisplayValue, readOnly, selectCell]
+    [getControllerCellDisplayValue, getControllerCellFormula, readOnly, selectCell]
   );
   const commitEditing = React4.useCallback(() => {
     if (!editingCell) {
@@ -29438,15 +29877,15 @@ function XlsxGrid({
       if (canvas.style.height !== `${height}px`) {
         canvas.style.height = `${height}px`;
       }
-      const context = canvas.getContext("2d", { alpha: false });
-      if (!context) {
+      const context2 = canvas.getContext("2d", { alpha: false });
+      if (!context2) {
         return null;
       }
-      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      context2.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (options?.clear !== false) {
-        context.clearRect(0, 0, width, height);
+        context2.clearRect(0, 0, width, height);
       }
-      return context;
+      return context2;
     }
     const bodyWidth = Math.max(0, drawingViewport.width);
     const bodyHeight = Math.max(0, drawingViewport.height);
@@ -29597,7 +30036,7 @@ function XlsxGrid({
         width: rect.width
       };
     };
-    const drawBakedShapeText = (context, shape, left, top, width, height) => {
+    const drawBakedShapeText = (context2, shape, left, top, width, height) => {
       if (shape.paragraphs.length === 0) {
         return;
       }
@@ -29620,8 +30059,8 @@ function XlsxGrid({
         );
         const widthPx = paragraph.runs.reduce((total, run) => {
           const fontSize = (run.fontSizePt ?? 11) * 96 / 72 * zoomFactor;
-          context.font = `${run.italic ? "italic " : ""}${run.bold ? "700 " : "400 "}${fontSize}px ${run.fontFamily ?? "Calibri, sans-serif"}`;
-          return total + measureCanvasTextWidth(context, run.text);
+          context2.font = `${run.italic ? "italic " : ""}${run.bold ? "700 " : "400 "}${fontSize}px ${run.fontFamily ?? "Calibri, sans-serif"}`;
+          return total + measureCanvasTextWidth(context2, run.text);
         }, 0);
         return { lineHeight, widthPx };
       });
@@ -29632,11 +30071,11 @@ function XlsxGrid({
       } else if (shape.textBox?.verticalAlign === "bottom") {
         y = textTop + Math.max(0, textHeight - totalTextHeight);
       }
-      context.save();
-      context.beginPath();
-      context.rect(textLeft, textTop, textWidth, textHeight);
-      context.clip();
-      context.textBaseline = "middle";
+      context2.save();
+      context2.beginPath();
+      context2.rect(textLeft, textTop, textWidth, textHeight);
+      context2.clip();
+      context2.textBaseline = "middle";
       shape.paragraphs.forEach((paragraph, paragraphIndex) => {
         const metric = lineMetrics[paragraphIndex] ?? { lineHeight: 14 * zoomFactor, widthPx: 0 };
         let x = textLeft;
@@ -29648,88 +30087,88 @@ function XlsxGrid({
         }
         paragraph.runs.forEach((run) => {
           const fontSize = (run.fontSizePt ?? 11) * 96 / 72 * zoomFactor;
-          context.font = `${run.italic ? "italic " : ""}${run.bold ? "700 " : "400 "}${fontSize}px ${run.fontFamily ?? "Calibri, sans-serif"}`;
-          context.fillStyle = run.color ?? "#000000";
-          context.textAlign = "left";
+          context2.font = `${run.italic ? "italic " : ""}${run.bold ? "700 " : "400 "}${fontSize}px ${run.fontFamily ?? "Calibri, sans-serif"}`;
+          context2.fillStyle = run.color ?? "#000000";
+          context2.textAlign = "left";
           const textY = y + metric.lineHeight / 2;
-          context.fillText(run.text, x, textY);
+          context2.fillText(run.text, x, textY);
           if (run.underline && run.text.length > 0) {
-            const textWidthPx = measureCanvasTextWidth(context, run.text);
-            context.strokeStyle = run.color ?? "#000000";
-            context.lineWidth = Math.max(1, zoomFactor * 0.75);
-            context.beginPath();
-            context.moveTo(x, textY + Math.max(2, fontSize * 0.28));
-            context.lineTo(x + textWidthPx, textY + Math.max(2, fontSize * 0.28));
-            context.stroke();
+            const textWidthPx = measureCanvasTextWidth(context2, run.text);
+            context2.strokeStyle = run.color ?? "#000000";
+            context2.lineWidth = Math.max(1, zoomFactor * 0.75);
+            context2.beginPath();
+            context2.moveTo(x, textY + Math.max(2, fontSize * 0.28));
+            context2.lineTo(x + textWidthPx, textY + Math.max(2, fontSize * 0.28));
+            context2.stroke();
           }
-          x += measureCanvasTextWidth(context, run.text);
+          x += measureCanvasTextWidth(context2, run.text);
         });
         y += metric.lineHeight;
       });
-      context.restore();
+      context2.restore();
     };
-    const drawBakedShape = (context, shape, rect) => {
+    const drawBakedShape = (context2, shape, rect) => {
       const fillColor = shape.fill?.none ? "transparent" : shape.fill?.color ?? "transparent";
       const strokeColor = shape.stroke?.none ? "transparent" : shape.stroke?.color ?? "transparent";
       const lineWidth = Math.max(0, (shape.stroke?.widthPx ?? (shape.geometry === "line" ? 2 : 1)) * zoomFactor);
       const vectorShape = resolveShapeVector(shape);
       const opacity = Math.min(shape.fill?.opacity ?? 1, shape.stroke?.opacity ?? 1);
-      context.save();
-      context.translate(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      context2.save();
+      context2.translate(rect.left + rect.width / 2, rect.top + rect.height / 2);
       if (shape.rotationDeg) {
-        context.rotate(shape.rotationDeg * Math.PI / 180);
+        context2.rotate(shape.rotationDeg * Math.PI / 180);
       }
-      context.scale(shape.flipH ? -1 : 1, shape.flipV ? -1 : 1);
-      context.globalAlpha *= opacity;
-      context.lineWidth = lineWidth;
-      context.strokeStyle = strokeColor;
-      context.fillStyle = fillColor;
-      applyCanvasShapeDash(context, shape.stroke?.dash, lineWidth);
+      context2.scale(shape.flipH ? -1 : 1, shape.flipV ? -1 : 1);
+      context2.globalAlpha *= opacity;
+      context2.lineWidth = lineWidth;
+      context2.strokeStyle = strokeColor;
+      context2.fillStyle = fillColor;
+      applyCanvasShapeDash(context2, shape.stroke?.dash, lineWidth);
       const localLeft = -rect.width / 2;
       const localTop = -rect.height / 2;
       if (vectorShape && typeof Path2D !== "undefined") {
-        context.save();
-        context.translate(localLeft, localTop);
-        context.scale(
+        context2.save();
+        context2.translate(localLeft, localTop);
+        context2.scale(
           rect.width / Math.max(1, vectorShape.viewBox.width),
           rect.height / Math.max(1, vectorShape.viewBox.height)
         );
         const path = getCachedCanvasPath2D(vectorShape.path);
         if (!path) {
-          context.restore();
-          context.restore();
+          context2.restore();
+          context2.restore();
           return;
         }
         if (fillColor !== "transparent") {
-          context.fill(path);
+          context2.fill(path);
         }
         if (strokeColor !== "transparent" && lineWidth > 0) {
-          context.stroke(path);
+          context2.stroke(path);
         }
-        context.restore();
+        context2.restore();
       } else if (shape.geometry === "ellipse") {
-        context.beginPath();
-        context.ellipse(0, 0, rect.width / 2, rect.height / 2, 0, 0, Math.PI * 2);
+        context2.beginPath();
+        context2.ellipse(0, 0, rect.width / 2, rect.height / 2, 0, 0, Math.PI * 2);
         if (fillColor !== "transparent") {
-          context.fill();
+          context2.fill();
         }
         if (strokeColor !== "transparent" && lineWidth > 0) {
-          context.stroke();
+          context2.stroke();
         }
       } else {
         const radius = shape.geometry === "roundRect" ? 12 * zoomFactor : 0;
-        drawCanvasRoundedRect(context, localLeft, localTop, rect.width, rect.height, radius);
+        drawCanvasRoundedRect(context2, localLeft, localTop, rect.width, rect.height, radius);
         if (fillColor !== "transparent") {
-          context.fill();
+          context2.fill();
         }
         if (strokeColor !== "transparent" && lineWidth > 0) {
-          context.stroke();
+          context2.stroke();
         }
       }
-      drawBakedShapeText(context, shape, localLeft, localTop, rect.width, rect.height);
-      context.restore();
+      drawBakedShapeText(context2, shape, localLeft, localTop, rect.width, rect.height);
+      context2.restore();
     };
-    const drawBakedCanvasDrawings = (pane, context, dirtyRects) => {
+    const drawBakedCanvasDrawings = (pane, context2, dirtyRects) => {
       if (bakedCanvasDrawingEntries.length === 0 || dirtyRects.length === 0) {
         return;
       }
@@ -29742,11 +30181,11 @@ function XlsxGrid({
           continue;
         }
         if (entry.kind === "shape") {
-          drawBakedShape(context, entry.shape, localRect);
+          drawBakedShape(context2, entry.shape, localRect);
         } else {
           const imageElement = getCanvasImage(entry.image);
           if (imageElement) {
-            context.drawImage(imageElement, localRect.left, localRect.top, localRect.width, localRect.height);
+            context2.drawImage(imageElement, localRect.left, localRect.top, localRect.width, localRect.height);
           }
         }
       }
@@ -29755,9 +30194,9 @@ function XlsxGrid({
     if (shouldRepaintBody) {
       canvasProfileBodyStart = canvasProfileTarget ? performance.now() : 0;
       for (const pane of Object.keys(bodyContexts)) {
-        const context = bodyContexts[pane];
+        const context2 = bodyContexts[pane];
         const bounds = paneBounds[pane];
-        if (!context || bounds.width <= 0 || bounds.height <= 0) {
+        if (!context2 || bounds.width <= 0 || bounds.height <= 0) {
           continue;
         }
         let dirtyRects = buildFullCanvasDirtyRect(bounds.width, bounds.height);
@@ -29768,7 +30207,7 @@ function XlsxGrid({
           if (bufferCanvas) {
             const blittedDirtyRects = blitCanvasWithScrollDelta(
               pane === "corner" ? cornerBodyCanvasRef.current : pane === "left" ? leftBodyCanvasRef.current : pane === "top" ? topBodyCanvasRef.current : scrollBodyCanvasRef.current,
-              context,
+              context2,
               bufferCanvas,
               dpr,
               bounds.width,
@@ -29781,16 +30220,16 @@ function XlsxGrid({
             }
           }
         } else {
-          context.clearRect(0, 0, bounds.width, bounds.height);
+          context2.clearRect(0, 0, bounds.width, bounds.height);
         }
         bodyDirtyRectsByPane[pane] = dirtyRects;
         canvasProfileDirtyRects += dirtyRects.length;
         if (dirtyRects.length === 0) {
           continue;
         }
-        context.fillStyle = sheetSurface;
+        context2.fillStyle = sheetSurface;
         for (const dirtyRect of dirtyRects) {
-          context.fillRect(dirtyRect.left, dirtyRect.top, dirtyRect.width, dirtyRect.height);
+          context2.fillRect(dirtyRect.left, dirtyRect.top, dirtyRect.width, dirtyRect.height);
         }
       }
       for (const pane of cellPaneOrder) {
@@ -30180,9 +30619,9 @@ function XlsxGrid({
                 );
                 paneContext.restore();
               } else if (shouldWrapText) {
-                const wrappedLines = wrapCanvasText(paneContext, rawText, maxTextWidth);
+                const wrappedLines2 = wrapCanvasText(paneContext, rawText, maxTextWidth);
                 const lineHeight = cellData.shrinkToFitFontSizePx ? resolveCanvasLineHeight(cellStyle, cellData.shrinkToFitFontSizePx) : resolveCanvasLineHeight(cellStyle, 12 * zoomFactor);
-                const textBlockHeight = wrappedLines.length * lineHeight;
+                const textBlockHeight = wrappedLines2.length * lineHeight;
                 const verticalAlign = cellStyle.verticalAlign;
                 let textBlockTop = contentTop;
                 if (verticalAlign === "middle") {
@@ -30190,7 +30629,7 @@ function XlsxGrid({
                 } else if (verticalAlign !== "top") {
                   textBlockTop = contentTop + contentHeight - textBlockHeight;
                 }
-                wrappedLines.forEach((line, lineIndex) => {
+                wrappedLines2.forEach((line, lineIndex) => {
                   const textY = textBlockTop + lineIndex * lineHeight + lineHeight / 2;
                   paneContext.fillText(line, textX, textY);
                   drawCanvasTextDecorations(paneContext, {
@@ -31794,8 +32233,30 @@ function XlsxGrid({
       value: paneDrawingNodes
     };
   }
+  function fitOnBorderDoubleClick(type, index) {
+    const now = performance.now();
+    const last = lastBorderPressRef.current;
+    lastBorderPressRef.current = { type, index, time: now };
+    if (!last || last.type !== type || last.index !== index || now - last.time > BORDER_DOUBLE_CLICK_MS) {
+      return false;
+    }
+    lastBorderPressRef.current = null;
+    const spans = selections.flatMap((region) => {
+      const range = normalizeRange2(region);
+      if (type === "column") {
+        const whole2 = range.start.row <= (firstVisibleRow ?? 0) && (range.end.row >= (lastVisibleRow ?? 0) || range.end.row >= (activeSheet?.maxUsedRow ?? 0));
+        return whole2 ? [[range.start.col, range.end.col]] : [];
+      }
+      const whole = range.start.col <= (firstVisibleCol ?? 0) && (range.end.col >= (lastVisibleCol ?? 0) || range.end.col >= (activeSheet?.maxUsedCol ?? 0));
+      return whole ? [[range.start.row, range.end.row]] : [];
+    });
+    const inSelection = spans.some(([first, end]) => index >= first && index <= end);
+    const indices = inSelection ? spans.flatMap(([first, end]) => Array.from({ length: end - first + 1 }, (_, offset) => first + offset)) : [index];
+    autoFit(type, indices);
+    return true;
+  }
   function startColumnResize(pointerId, actualCol, widthPx, startX) {
-    if (!canResizeHeaders) {
+    if (!canResizeHeaders || fitOnBorderDoubleClick("column", actualCol)) {
       return;
     }
     resizeStateRef.current = {
@@ -31814,7 +32275,7 @@ function XlsxGrid({
     document.body.style.userSelect = "none";
   }
   function startRowResize(pointerId, actualRow, heightPx, startY) {
-    if (!canResizeHeaders) {
+    if (!canResizeHeaders || fitOnBorderDoubleClick("row", actualRow)) {
       return;
     }
     resizeStateRef.current = {
@@ -32274,6 +32735,12 @@ function XlsxGrid({
       console.error("[react-xlsx] Data navigation failed", error2);
     });
   }
+  function takeValuesPaste() {
+    if (valuesPasteTimerRef.current === null) return false;
+    window.clearTimeout(valuesPasteTimerRef.current);
+    valuesPasteTimerRef.current = null;
+    return true;
+  }
   function handleGridKeyDown(event) {
     if (editingCell || event.defaultPrevented || ("isComposing" in event ? event.isComposing : event.nativeEvent.isComposing)) {
       return;
@@ -32293,6 +32760,14 @@ function XlsxGrid({
       if (normalizedKey === "y") {
         event.preventDefault();
         redo();
+        return;
+      }
+      if (normalizedKey === "v" && event.shiftKey) {
+        takeValuesPaste();
+        valuesPasteTimerRef.current = window.setTimeout(() => {
+          valuesPasteTimerRef.current = null;
+          paste({ valuesOnly: true }).catch((pasteError) => onClipboardError?.(pasteError));
+        }, VALUES_PASTE_WAIT_MS);
         return;
       }
     }
@@ -32462,6 +32937,7 @@ function XlsxGrid({
     "aria-readonly": readOnly,
     "aria-rowcount": Math.max(activeSheet?.rowCount ?? 0, displayRowLimit),
     role: "grid",
+    [GRID_SURFACE_ATTRIBUTE]: "",
     onScroll: handleScrollerScroll,
     onCopy: (event) => {
       if (editingCell) {
@@ -32476,10 +32952,19 @@ function XlsxGrid({
       if (clipboard) {
         clipboard.setData("text/plain", clipboardData.text);
         clipboard.setData("text/html", clipboardData.html);
-        clipboard.setData(INTERNAL_CLIPBOARD_MIME2, clipboardData.structured);
+        clipboard.setData(INTERNAL_CLIPBOARD_MIME, clipboardData.structured);
+        rememberCopy(clipboardData.text, clipboardData.structured);
         return;
       }
       void copySelectionToClipboard();
+    },
+    // Excel's cut: copy, then clear. Pasting it moves formulas unchanged.
+    onCut: (event) => {
+      if (editingCell || readOnly || !event.clipboardData || !getClipboardData()) {
+        return;
+      }
+      event.preventDefault();
+      void cutSelection(event.clipboardData);
     },
     onPointerDownCapture: (event) => {
       if (event.button !== 0) {
@@ -32512,17 +32997,19 @@ function XlsxGrid({
         void pasteFromClipboard();
         return;
       }
-      const structuredPayload = clipboard.getData(INTERNAL_CLIPBOARD_MIME2);
       const textPayload = clipboard.getData("text/plain");
+      const structuredPayload = clipboard.getData(INTERNAL_CLIPBOARD_MIME) || rememberedCells(textPayload);
+      const valuesOnlyPaste = takeValuesPaste();
       if (!structuredPayload && !textPayload) {
         return;
       }
       event.preventDefault();
-      if (structuredPayload) {
-        pasteStructuredClipboardData(structuredPayload);
+      const payload = structuredPayload && valuesOnlyPaste ? valuesOnly(structuredPayload) : structuredPayload;
+      if (payload) {
+        pasteStructuredClipboardData(payload);
         return;
       }
-      pasteText(textPayload);
+      pasteText(textPayload, { literal: valuesOnlyPaste });
     },
     tabIndex: 0,
     style: {
@@ -33156,6 +33643,7 @@ function XlsxGrid({
 }
 function XlsxViewerInner({
   allowResizeInReadOnly = false,
+  onClipboardError,
   className,
   controller,
   emptyState,
@@ -33228,6 +33716,7 @@ function XlsxViewerInner({
           XlsxGrid,
           {
             allowResizeInReadOnly,
+            onClipboardError,
             controller,
             emptyState,
             enableCanvasSelectionAnimation,
@@ -33278,11 +33767,11 @@ function XlsxViewerProvider({ children, controller, isDark = false, ...options }
   return /* @__PURE__ */ jsx4(XlsxViewerProviderWithInlineController, { ...options, isDark, children });
 }
 function useXlsxViewer() {
-  const context = React4.useContext(ViewerContext);
-  if (!context) {
+  const context2 = React4.useContext(ViewerContext);
+  if (!context2) {
     throw new Error("useXlsxViewer must be used inside XlsxViewer or XlsxViewerProvider.");
   }
-  return context;
+  return context2;
 }
 function useXlsxViewerSelection() {
   const {
@@ -33367,6 +33856,9 @@ function useXlsxViewerEditing() {
     getSheetFormControls,
     mergeSelection,
     pasteFromClipboard,
+    paste,
+    cutSelection,
+    autoFit,
     pasteStructuredClipboardData,
     pasteText,
     removeActiveSheet,
@@ -33408,6 +33900,9 @@ function useXlsxViewerEditing() {
       getSheetFormControls,
       mergeSelection,
       pasteFromClipboard,
+      paste,
+      cutSelection,
+      autoFit,
       pasteStructuredClipboardData,
       pasteText,
       removeActiveSheet,
@@ -33448,6 +33943,9 @@ function useXlsxViewerEditing() {
       getSheetFormControls,
       mergeSelection,
       pasteFromClipboard,
+      paste,
+      cutSelection,
+      autoFit,
       pasteStructuredClipboardData,
       pasteText,
       removeActiveSheet,
@@ -33977,8 +34475,8 @@ function useXlsxViewerThumbnails(options = {}) {
         if (!worksheet && !workerRowBatch) {
           return false;
         }
-        const context = canvas.getContext("2d", { alpha: false });
-        if (!context) {
+        const context2 = canvas.getContext("2d", { alpha: false });
+        if (!context2) {
           return false;
         }
         const dpr = typeof window === "undefined" ? 1 : Math.max(1, window.devicePixelRatio || 1);
@@ -33999,19 +34497,19 @@ function useXlsxViewerThumbnails(options = {}) {
         if (canvas.style.height !== `${outputHeight}px`) {
           canvas.style.height = `${outputHeight}px`;
         }
-        context.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
-        context.clearRect(0, 0, Math.max(1, sourceWidth), Math.max(1, sourceHeight));
+        context2.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+        context2.clearRect(0, 0, Math.max(1, sourceWidth), Math.max(1, sourceHeight));
         const thumbnailSheetSurface = resolveSheetSurface(sheet, palette);
-        context.fillStyle = palette.canvas;
-        context.fillRect(0, 0, Math.max(1, sourceWidth), Math.max(1, sourceHeight));
-        context.fillStyle = thumbnailSheetSurface;
-        context.fillRect(rowHeaderWidth, headerHeight, Math.max(1, colAxis.totalSize), Math.max(1, rowAxis.totalSize));
+        context2.fillStyle = palette.canvas;
+        context2.fillRect(0, 0, Math.max(1, sourceWidth), Math.max(1, sourceHeight));
+        context2.fillStyle = thumbnailSheetSurface;
+        context2.fillRect(rowHeaderWidth, headerHeight, Math.max(1, colAxis.totalSize), Math.max(1, rowAxis.totalSize));
         if (includeHeaders) {
-          context.fillStyle = palette.headerSurface;
-          context.fillRect(rowHeaderWidth, 0, Math.max(1, colAxis.totalSize), headerHeight);
-          context.fillStyle = palette.rowHeaderSurface;
-          context.fillRect(0, headerHeight, rowHeaderWidth, Math.max(1, rowAxis.totalSize));
-          context.fillRect(0, 0, rowHeaderWidth, headerHeight);
+          context2.fillStyle = palette.headerSurface;
+          context2.fillRect(rowHeaderWidth, 0, Math.max(1, colAxis.totalSize), headerHeight);
+          context2.fillStyle = palette.rowHeaderSurface;
+          context2.fillRect(0, headerHeight, rowHeaderWidth, Math.max(1, rowAxis.totalSize));
+          context2.fillRect(0, 0, rowHeaderWidth, headerHeight);
         }
         const conditionalFormatMetricsCache = /* @__PURE__ */ new Map();
         const cellRenderCache = /* @__PURE__ */ new Map();
@@ -34114,61 +34612,61 @@ function useXlsxViewerThumbnails(options = {}) {
               width
             };
             const canvasCellStyle = cellData.canvas ?? buildCanvasCellStyleCache(cellData.style);
-            const gradientFill = typeof cellData.style.backgroundImage === "string" ? resolveCanvasGradientFill(context, rect, cellData.style.backgroundImage) : null;
+            const gradientFill = typeof cellData.style.backgroundImage === "string" ? resolveCanvasGradientFill(context2, rect, cellData.style.backgroundImage) : null;
             const fillColor = cellData.conditionalColorScale?.color ?? (typeof cellData.style.backgroundColor === "string" ? cellData.style.backgroundColor : thumbnailSheetSurface);
-            context.fillStyle = gradientFill ?? fillColor;
-            context.fillRect(rect.left, rect.top, rect.width, rect.height);
+            context2.fillStyle = gradientFill ?? fillColor;
+            context2.fillRect(rect.left, rect.top, rect.width, rect.height);
             if (cellData.conditionalDataBar) {
               const barLeft = rect.left + 4;
               const barTop = rect.top + 4;
               const barWidth = Math.max(0, (rect.width - 8) * (cellData.conditionalDataBar.widthPercent / 100));
               const barHeight = Math.max(0, rect.height - 8);
               if (barWidth > 0 && barHeight > 0) {
-                context.fillStyle = resolveCanvasDataBarFill(
-                  context,
+                context2.fillStyle = resolveCanvasDataBarFill(
+                  context2,
                   barLeft,
                   barTop,
                   barWidth,
                   barHeight,
                   cellData.conditionalDataBar
                 );
-                context.fillRect(barLeft, barTop, barWidth, barHeight);
+                context2.fillRect(barLeft, barTop, barWidth, barHeight);
                 if (cellData.conditionalDataBar.border !== false && cellData.conditionalDataBar.borderColor) {
-                  context.strokeStyle = cellData.conditionalDataBar.borderColor;
-                  context.lineWidth = 1;
-                  context.strokeRect(barLeft + 0.5, barTop + 0.5, Math.max(0, barWidth - 1), Math.max(0, barHeight - 1));
+                  context2.strokeStyle = cellData.conditionalDataBar.borderColor;
+                  context2.lineWidth = 1;
+                  context2.strokeRect(barLeft + 0.5, barTop + 0.5, Math.max(0, barWidth - 1), Math.max(0, barHeight - 1));
                 }
               }
             }
             if (showGridLines) {
-              context.strokeStyle = palette.border;
-              context.lineWidth = 1;
-              context.beginPath();
+              context2.strokeStyle = palette.border;
+              context2.lineWidth = 1;
+              context2.beginPath();
               if (colItem.start === 0) {
-                context.moveTo(rect.left + 0.5, rect.top);
-                context.lineTo(rect.left + 0.5, rect.top + rect.height);
+                context2.moveTo(rect.left + 0.5, rect.top);
+                context2.lineTo(rect.left + 0.5, rect.top + rect.height);
               }
               if (rowItem.start === 0) {
-                context.moveTo(rect.left, rect.top + 0.5);
-                context.lineTo(rect.left + rect.width, rect.top + 0.5);
+                context2.moveTo(rect.left, rect.top + 0.5);
+                context2.lineTo(rect.left + rect.width, rect.top + 0.5);
               }
-              context.moveTo(rect.left + rect.width - 0.5, rect.top);
-              context.lineTo(rect.left + rect.width - 0.5, rect.top + rect.height);
-              context.moveTo(rect.left, rect.top + rect.height - 0.5);
-              context.lineTo(rect.left + rect.width, rect.top + rect.height - 0.5);
-              context.stroke();
+              context2.moveTo(rect.left + rect.width - 0.5, rect.top);
+              context2.lineTo(rect.left + rect.width - 0.5, rect.top + rect.height);
+              context2.moveTo(rect.left, rect.top + rect.height - 0.5);
+              context2.lineTo(rect.left + rect.width, rect.top + rect.height - 0.5);
+              context2.stroke();
             }
             if (canvasCellStyle.topBorder) {
-              strokeCanvasBorderSide(context, "top", rect, canvasCellStyle.topBorder);
+              strokeCanvasBorderSide(context2, "top", rect, canvasCellStyle.topBorder);
             }
             if (canvasCellStyle.rightBorder) {
-              strokeCanvasBorderSide(context, "right", rect, canvasCellStyle.rightBorder);
+              strokeCanvasBorderSide(context2, "right", rect, canvasCellStyle.rightBorder);
             }
             if (canvasCellStyle.bottomBorder) {
-              strokeCanvasBorderSide(context, "bottom", rect, canvasCellStyle.bottomBorder);
+              strokeCanvasBorderSide(context2, "bottom", rect, canvasCellStyle.bottomBorder);
             }
             if (canvasCellStyle.leftBorder) {
-              strokeCanvasBorderSide(context, "left", rect, canvasCellStyle.leftBorder);
+              strokeCanvasBorderSide(context2, "left", rect, canvasCellStyle.leftBorder);
             }
             const rawText = cellData.value ?? "";
             const shouldDrawThumbnailContent = cellData.checkboxState != null || cellData.sparkline || rawText.length > 0 || cellData.conditionalIcon;
@@ -34183,23 +34681,23 @@ function useXlsxViewerThumbnails(options = {}) {
             if (contentWidth <= 0 || contentHeight <= 0) {
               continue;
             }
-            context.save();
-            context.beginPath();
-            context.rect(contentLeft, contentTop, contentWidth, contentHeight);
-            context.clip();
-            context.font = canvasCellStyle.baseFont;
-            context.fillStyle = canvasCellStyle.textColor;
-            context.textBaseline = "middle";
+            context2.save();
+            context2.beginPath();
+            context2.rect(contentLeft, contentTop, contentWidth, contentHeight);
+            context2.clip();
+            context2.font = canvasCellStyle.baseFont;
+            context2.fillStyle = canvasCellStyle.textColor;
+            context2.textBaseline = "middle";
             if (cellData.checkboxState != null) {
               const boxSize = Math.min(14, contentWidth, contentHeight);
               const boxLeft = rect.left + (rect.width - boxSize) / 2;
               const boxTop = rect.top + (rect.height - boxSize) / 2;
-              context.strokeStyle = paletteIsDark(palette) ? "#cbd5e1" : "#475569";
-              context.lineWidth = 1.25;
-              context.strokeRect(boxLeft, boxTop, boxSize, boxSize);
+              context2.strokeStyle = paletteIsDark(palette) ? "#cbd5e1" : "#475569";
+              context2.lineWidth = 1.25;
+              context2.strokeRect(boxLeft, boxTop, boxSize, boxSize);
               if (cellData.checkboxState) {
-                context.fillStyle = paletteIsDark(palette) ? "#60a5fa" : "#2563eb";
-                context.fillRect(boxLeft + 1.5, boxTop + 1.5, Math.max(0, boxSize - 3), Math.max(0, boxSize - 3));
+                context2.fillStyle = paletteIsDark(palette) ? "#60a5fa" : "#2563eb";
+                context2.fillRect(boxLeft + 1.5, boxTop + 1.5, Math.max(0, boxSize - 3), Math.max(0, boxSize - 3));
               }
             } else if (cellData.sparkline) {
               const sparkline = cellData.sparkline.config;
@@ -34213,25 +34711,25 @@ function useXlsxViewerThumbnails(options = {}) {
                 const sparkWidth = Math.max(1, contentWidth - 2);
                 const sparkHeight = Math.max(1, contentHeight - 4);
                 const xStep = points.length > 1 ? sparkWidth / (points.length - 1) : 0;
-                context.strokeStyle = sparkline.color ?? "#2563eb";
-                context.lineCap = "round";
-                context.lineJoin = "round";
-                context.lineWidth = 1.25;
-                context.beginPath();
+                context2.strokeStyle = sparkline.color ?? "#2563eb";
+                context2.lineCap = "round";
+                context2.lineJoin = "round";
+                context2.lineWidth = 1.25;
+                context2.beginPath();
                 points.forEach((entry, index) => {
                   const x = sparkLeft + index * xStep;
                   const y = sparkTop + sparkHeight - clampSparklineValue(entry.value, minValue, maxValue) * sparkHeight;
                   if (index === 0) {
-                    context.moveTo(x, y);
+                    context2.moveTo(x, y);
                   } else {
-                    context.lineTo(x, y);
+                    context2.lineTo(x, y);
                   }
                 });
-                context.stroke();
+                context2.stroke();
               }
             } else if (rawText.length > 0) {
               const align = canvasCellStyle.textAlign;
-              context.textAlign = align;
+              context2.textAlign = align;
               const textX = align === "right" ? contentLeft + contentWidth : align === "center" ? contentLeft + contentWidth / 2 : contentLeft;
               const trailingInset = cellData.conditionalIcon ? 18 : 0;
               const maxTextWidth = Math.max(0, contentWidth - trailingInset);
@@ -34239,17 +34737,17 @@ function useXlsxViewerThumbnails(options = {}) {
               if (cellData.textRotationDeg) {
                 const alignedTextY = resolveCanvasTextMiddleY(cellData.style.verticalAlign, contentTop, contentHeight, singleLineHeight);
                 const rotationOriginX = contentLeft + contentWidth / 2;
-                context.save();
-                context.translate(rotationOriginX, alignedTextY);
-                context.rotate(cellData.textRotationDeg * Math.PI / 180);
-                context.fillText(
+                context2.save();
+                context2.translate(rotationOriginX, alignedTextY);
+                context2.rotate(cellData.textRotationDeg * Math.PI / 180);
+                context2.fillText(
                   rawText,
                   align === "right" ? contentWidth / 2 : align === "center" ? 0 : -(contentWidth / 2),
                   0
                 );
-                context.restore();
+                context2.restore();
               } else if (canvasCellStyle.usesWrappedText || rawText.includes("\n")) {
-                const lines = wrapCanvasText(context, rawText, maxTextWidth);
+                const lines = wrapCanvasText(context2, rawText, maxTextWidth);
                 const lineHeight = resolveCanvasLineHeight(cellData.style, 12);
                 const textBlockHeight = lines.length * lineHeight;
                 let textBlockTop = contentTop;
@@ -34259,75 +34757,75 @@ function useXlsxViewerThumbnails(options = {}) {
                   textBlockTop = contentTop + contentHeight - textBlockHeight;
                 }
                 lines.forEach((line, lineIndex) => {
-                  context.fillText(line, textX, textBlockTop + lineIndex * lineHeight + lineHeight / 2);
+                  context2.fillText(line, textX, textBlockTop + lineIndex * lineHeight + lineHeight / 2);
                 });
               } else {
-                const text = canvasCellStyle.textOverflowEllipsis ? truncateCanvasText(context, rawText, maxTextWidth) : rawText;
-                context.fillText(text, textX, resolveCanvasTextMiddleY(cellData.style.verticalAlign, contentTop, contentHeight, singleLineHeight));
+                const text = canvasCellStyle.textOverflowEllipsis ? truncateCanvasText(context2, rawText, maxTextWidth) : rawText;
+                context2.fillText(text, textX, resolveCanvasTextMiddleY(cellData.style.verticalAlign, contentTop, contentHeight, singleLineHeight));
               }
             }
             if (cellData.conditionalIcon) {
               const iconSize = 10;
               const iconX = rect.left + rect.width - (padding.right + iconSize + 4);
               const iconY = rect.top + rect.height / 2;
-              drawCanvasConditionalIcon(context, cellData.conditionalIcon, iconX + iconSize / 2, iconY, iconSize);
+              drawCanvasConditionalIcon(context2, cellData.conditionalIcon, iconX + iconSize / 2, iconY, iconSize);
             }
-            context.restore();
+            context2.restore();
           }
         }
         if (thumbnailDrawingEntries.length > 0) {
-          context.save();
-          context.beginPath();
-          context.rect(rowHeaderWidth, headerHeight, Math.max(1, colAxis.totalSize), Math.max(1, rowAxis.totalSize));
-          context.clip();
+          context2.save();
+          context2.beginPath();
+          context2.rect(rowHeaderWidth, headerHeight, Math.max(1, colAxis.totalSize), Math.max(1, rowAxis.totalSize));
+          context2.clip();
           for (const entry of thumbnailDrawingEntries) {
             if (entry.kind === "shape") {
-              drawStaticShape(context, entry.shape, entry.rect, 1);
+              drawStaticShape(context2, entry.shape, entry.rect, 1);
             } else if (entry.kind === "formControl") {
-              drawStaticFormControl(context, entry.control, entry.rect, palette, 1, thumbnailSheetSurface);
+              drawStaticFormControl(context2, entry.control, entry.rect, palette, 1, thumbnailSheetSurface);
             } else {
               const imageElement = getThumbnailImage(entry.image);
               if (imageElement) {
-                context.drawImage(imageElement, entry.rect.left, entry.rect.top, entry.rect.width, entry.rect.height);
+                context2.drawImage(imageElement, entry.rect.left, entry.rect.top, entry.rect.width, entry.rect.height);
               }
             }
           }
-          context.restore();
+          context2.restore();
         }
         if (includeHeaders) {
-          context.strokeStyle = palette.border;
-          context.lineWidth = 1;
-          context.font = "600 11px ui-sans-serif, system-ui, sans-serif";
-          context.fillStyle = palette.headerText;
-          context.textBaseline = "middle";
+          context2.strokeStyle = palette.border;
+          context2.lineWidth = 1;
+          context2.font = "600 11px ui-sans-serif, system-ui, sans-serif";
+          context2.fillStyle = palette.headerText;
+          context2.textBaseline = "middle";
           for (const colItem of colAxis.items) {
             const left = rowHeaderWidth + colItem.start;
-            context.beginPath();
-            context.moveTo(left + colItem.size - 0.5, 0);
-            context.lineTo(left + colItem.size - 0.5, headerHeight);
-            context.moveTo(left, headerHeight - 0.5);
-            context.lineTo(left + colItem.size, headerHeight - 0.5);
-            context.stroke();
-            context.textAlign = "center";
-            context.fillText(columnLabel2(colItem.actualIndex), left + colItem.size / 2, headerHeight / 2);
+            context2.beginPath();
+            context2.moveTo(left + colItem.size - 0.5, 0);
+            context2.lineTo(left + colItem.size - 0.5, headerHeight);
+            context2.moveTo(left, headerHeight - 0.5);
+            context2.lineTo(left + colItem.size, headerHeight - 0.5);
+            context2.stroke();
+            context2.textAlign = "center";
+            context2.fillText(columnLabel2(colItem.actualIndex), left + colItem.size / 2, headerHeight / 2);
           }
           for (const rowItem of rowAxis.items) {
             const top = headerHeight + rowItem.start;
-            context.beginPath();
-            context.moveTo(0, top + rowItem.size - 0.5);
-            context.lineTo(rowHeaderWidth, top + rowItem.size - 0.5);
-            context.moveTo(rowHeaderWidth - 0.5, top);
-            context.lineTo(rowHeaderWidth - 0.5, top + rowItem.size);
-            context.stroke();
-            context.textAlign = "center";
-            context.fillText(`${rowItem.actualIndex + 1}`, rowHeaderWidth / 2, top + rowItem.size / 2);
+            context2.beginPath();
+            context2.moveTo(0, top + rowItem.size - 0.5);
+            context2.lineTo(rowHeaderWidth, top + rowItem.size - 0.5);
+            context2.moveTo(rowHeaderWidth - 0.5, top);
+            context2.lineTo(rowHeaderWidth - 0.5, top + rowItem.size);
+            context2.stroke();
+            context2.textAlign = "center";
+            context2.fillText(`${rowItem.actualIndex + 1}`, rowHeaderWidth / 2, top + rowItem.size / 2);
           }
-          context.beginPath();
-          context.moveTo(rowHeaderWidth - 0.5, 0);
-          context.lineTo(rowHeaderWidth - 0.5, headerHeight);
-          context.moveTo(0, headerHeight - 0.5);
-          context.lineTo(rowHeaderWidth, headerHeight - 0.5);
-          context.stroke();
+          context2.beginPath();
+          context2.moveTo(rowHeaderWidth - 0.5, 0);
+          context2.lineTo(rowHeaderWidth - 0.5, headerHeight);
+          context2.moveTo(0, headerHeight - 0.5);
+          context2.lineTo(rowHeaderWidth, headerHeight - 0.5);
+          context2.stroke();
         }
         return true;
       };
@@ -34395,7 +34893,11 @@ export {
   XlsxViewer,
   XlsxViewerProvider,
   externalCallKey,
+  formulaProblem,
+  formulaText,
   initWasm,
+  isMerged,
+  mergesTouching,
   setWasmSource,
   useXlsxViewer,
   useXlsxViewerCharts,

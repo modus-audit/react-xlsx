@@ -1,16 +1,21 @@
 diff --git a/MODUS_PATCHES.md b/MODUS_PATCHES.md
 new file mode 100644
-index 0000000..ddaa2f4
+index 0000000..5c0681a
 --- /dev/null
 +++ b/MODUS_PATCHES.md
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,89 @@
 +# Modus React XLSX viewer
 +
 +Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.2` WASM engine.
 +
 +Preserved behavior:
 +
-+- Serializable external add-in values reach the engine in normal, worker, and deferred loads. Formula text remains intact; unresolved calls retain cached values.
++- Serializable external add-in values reach the engine in normal, worker, and deferred loads, and every later calculation uses the latest `externalFnValues`: recalculation after each edit, undo and redo. Changing them recalculates once, in place, without reloading. Formula text remains intact; unresolved calls retain cached values.
++- `readOnly` switches editing on or off in place after load, without reloading the workbook.
++- `onBeforeEdit(edit)` sees every workbook edit before it happens and can refuse it: cell content (typing, clearing, pasting, filling), style, merge, unmerge, resize, undo/redo, sheet and name changes, and drawings. Each `XlsxEdit` carries the cells it writes (a paste's extent from the active cell, a fill's target), a lazily computed net formula-count change, and for one formula entry its normalized text and any problem the engine would mishandle silently (unbalanced syntax, a missing sheet). Without a hook, formula entries with a problem are refused.
++- Excel entry: text typed into a cell that starts with `=` is a formula, and the cell editor opens a formula cell on its `=formula`.
++- The viewer remembers its last copy or cut page-wide (forgotten on any copy outside a grid), so a paste event or async-clipboard paste whose text matches it keeps formulas and formatting. `cutSelection()` copies then clears, and pasting a cut moves formulas unchanged; `paste({ valuesOnly })` is Excel's Paste Values; Ctrl/Cmd+Shift+V pastes values (reading the clipboard when the browser fires no paste event, reporting a refusal through `onClipboardError`); Ctrl/Cmd+X cuts.
++- `autoFit(axis, indices?)` fits columns or rows to their text in one undo step (by default every selected one), and double-clicking a header border fits that column or row, or the whole selection when the border belongs to it.
 +- `recalculate` accepts updated external add-in values without reloading the workbook, including
 +  worker-backed read-only workbooks. The engine (`wasm-dist-0.1.23-modus.2`) calculates serially, so the old 5,000-formula trap is gone; `autoCalculateFormulaLimit` (default 1,000) sets how many formulas a main-thread workbook may have and still recalculate on load and after edits.
 +- `controller.calculation` reports execution coverage on initial, deferred, and explicit recalculation.
@@ -40,9 +45,9 @@ index 0000000..ddaa2f4
 +
 +The app configures `initWasm` with a bundler-resolved asset URL and explicitly chooses worker mode. Upstream otherwise routes all read-only workbooks into the worker, bypassing rich conditional formatting.
 +
-+Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
++Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/excel-viewer-e2e`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 +
-+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.20`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
++After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.21`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 +
 +The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 +
@@ -205,14 +210,14 @@ index 0000000..49eac7a
 +  };
 +}
 diff --git a/packages/react-xlsx/package.json b/packages/react-xlsx/package.json
-index 6455584..31b9d19 100644
+index 6455584..cdaee6e 100644
 --- a/packages/react-xlsx/package.json
 +++ b/packages/react-xlsx/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@extend-ai/react-xlsx",
 -  "version": "0.16.4",
-+  "version": "0.16.4-modus.20",
++  "version": "0.16.4-modus.21",
    "description": "React components and hooks for viewing XLSX workbooks",
    "license": "MIT",
    "keywords": [
@@ -230,7 +235,7 @@ index 6455584..31b9d19 100644
    "scripts": {
      "build": "tsup --config tsup.config.ts && node ../../scripts/copy-duke-wasm.mjs",
 -    "test": "node --experimental-strip-types --test src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts",
-+    "test": "node --experimental-strip-types --test src/data-navigation.test.ts src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/safe-calculate.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts src/clipboard-cells.test.ts src/formula-copy.test.ts src/resize-hit-slop.test.ts src/merge-regions.test.ts src/visible-axis.test.ts build/atlas-json.test.ts",
++    "test": "node --experimental-strip-types --test src/data-navigation.test.ts src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/safe-calculate.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts src/clipboard-cells.test.ts src/formula-copy.test.ts src/resize-hit-slop.test.ts src/merge-regions.test.ts src/visible-axis.test.ts src/edit-guard.test.ts src/clipboard-memory.test.ts src/auto-fit.test.ts src/load-mode.test.ts src/external-values.test.ts build/atlas-json.test.ts",
      "typecheck": "tsc -p tsconfig.json --noEmit",
      "clean": "rm -rf dist"
    },
@@ -276,7 +281,7 @@ index 0000000..d34add8
 +  );
 +}
 diff --git a/packages/react-xlsx/src/XlsxViewer.tsx b/packages/react-xlsx/src/XlsxViewer.tsx
-index 20d313c..1d154d2 100644
+index 20d313c..9813472 100644
 --- a/packages/react-xlsx/src/XlsxViewer.tsx
 +++ b/packages/react-xlsx/src/XlsxViewer.tsx
 @@ -1,3 +1,6 @@
@@ -286,16 +291,26 @@ index 20d313c..1d154d2 100644
  import * as React from "react";
  import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
  import {
-@@ -6,6 +9,8 @@ import {
+@@ -6,6 +9,10 @@ import {
  } from "@tanstack/react-virtual";
  import { resolveBuiltinTableStyle } from "./builtin-table-styles";
  import { resolveCellTextClipOverscan } from "./cell-text-clip";
 +import { resizeHitSlopPx } from "./resize-hit-slop";
 +import { visibleSpan } from "./visible-axis";
++import { formulaText } from "./edit-guard";
++import { GRID_SURFACE_ATTRIBUTE, INTERNAL_CLIPBOARD_MIME, rememberCopy, rememberedCells, valuesOnly } from "./clipboard-memory";
  import { resolveWorkbookColor, resolveWorkbookFillStyle } from "./colors";
  import { useXlsxViewerController, XlsxFileSizeLimitExceededError } from "./controller";
  import { MemoChartSvg } from "./chart-renderer";
-@@ -78,7 +83,6 @@ const OPEN_GRID_HORIZONTAL_EDGE_PX = 480;
+@@ -60,7 +67,6 @@ const DEFAULT_ROW_HEIGHT = 24;
+ const DEFAULT_COL_WIDTH = 80;
+ const HEADER_HEIGHT = 24;
+ const ROW_HEADER_WIDTH = 40;
+-const INTERNAL_CLIPBOARD_MIME = "application/x-react-xlsx-range+json";
+ const MIN_OPEN_GRID_ROWS = 200;
+ const MIN_OPEN_GRID_COLS = 50;
+ const OPEN_GRID_ROW_PADDING = 120;
+@@ -78,7 +84,6 @@ const OPEN_GRID_HORIZONTAL_EDGE_PX = 480;
  const SELECTION_DRAG_THRESHOLD_PX = 4;
  const IMAGE_MIN_SIZE_PX = 16;
  const IMAGE_HANDLE_SIZE_PX = 10;
@@ -303,7 +318,7 @@ index 20d313c..1d154d2 100644
  const CANVAS_VIEWPORT_OVERSCAN_PX = 480;
  const CANVAS_SCROLL_BUFFER_PX = 480;
  const CANVAS_DEFERRED_VIEWPORT_SYNC_THRESHOLD_PX = CANVAS_SCROLL_BUFFER_PX - 96;
-@@ -118,6 +122,7 @@ const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = [];
+@@ -118,6 +123,7 @@ const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = [];
  
  type SelectionDragState = {
    anchor: XlsxCellAddress;
@@ -311,7 +326,7 @@ index 20d313c..1d154d2 100644
    axis: "cell" | "column" | "row";
    contentScaleX: number;
    contentScaleY: number;
-@@ -1146,6 +1151,7 @@ type BatchedCellData = {
+@@ -1146,6 +1152,7 @@ type BatchedCellData = {
  };
  
  type WorksheetBatchWindow = {
@@ -319,7 +334,7 @@ index 20d313c..1d154d2 100644
    cells: Map<string, BatchedCellData>;
    endRow: number;
    startRow: number;
-@@ -3748,18 +3754,13 @@ function canReceiveOverflowText(data: CellRenderData) {
+@@ -3748,18 +3755,13 @@ function canReceiveOverflowText(data: CellRenderData) {
    return !data.isMergedSecondary && !data.colSpan && data.value.length === 0;
  }
  
@@ -340,7 +355,7 @@ index 20d313c..1d154d2 100644
    if (cellValue.is_error) {
      return cellValue.asError() ?? "";
    }
-@@ -3770,7 +3771,7 @@ function getCellDisplayValue(worksheet: Worksheet, row: number, col: number, act
+@@ -3770,7 +3772,7 @@ function getCellDisplayValue(worksheet: Worksheet, row: number, col: number, act
    return cellValue.toString();
  }
  
@@ -349,7 +364,7 @@ index 20d313c..1d154d2 100644
    const cellValue = worksheet.getCalculatedValueAt(row, col);
    if (cellValue.is_number) {
      return cellValue.asNumber() ?? null;
-@@ -3779,7 +3780,10 @@ function getCellNumericValue(worksheet: Worksheet, row: number, col: number) {
+@@ -3779,7 +3781,10 @@ function getCellNumericValue(worksheet: Worksheet, row: number, col: number) {
      return cellValue.asBoolean() ? 1 : 0;
    }
    if (cellValue.is_empty || cellValue.is_error) {
@@ -361,7 +376,7 @@ index 20d313c..1d154d2 100644
    }
  
    const parsedValue = Number(cellValue.asText() ?? cellValue.toString());
-@@ -4277,6 +4281,37 @@ function buildWorksheetBatchWindow(
+@@ -4277,6 +4282,37 @@ function buildWorksheetBatchWindow(
    };
  }
  
@@ -399,7 +414,7 @@ index 20d313c..1d154d2 100644
  function getTableAtCell(tables: XlsxTable[], row: number, col: number) {
    return tables.find(
      (table) =>
-@@ -5248,6 +5283,7 @@ function resolveSelectionColors({
+@@ -5248,6 +5284,7 @@ function resolveSelectionColors({
  }
  
  type CellRenderData = {
@@ -407,7 +422,7 @@ index 20d313c..1d154d2 100644
    canvas?: CanvasCellStyleCache;
    chartHighlight?: CellChartHighlight | null;
    checkboxState?: boolean | null;
-@@ -5646,7 +5682,7 @@ function resolveConditionalFormulaComparable(
+@@ -5646,7 +5683,7 @@ function resolveConditionalFormulaComparable(
    worksheet: Worksheet | null | undefined,
    sheet: XlsxSheetData | null | undefined,
    batchedCells?: Map<string, BatchedCellData>
@@ -416,7 +431,7 @@ index 20d313c..1d154d2 100644
    const literal = parseConditionalFormulaLiteral(formula);
    if (typeof literal === "number") {
      return literal;
-@@ -5657,6 +5693,14 @@ function resolveConditionalFormulaComparable(
+@@ -5657,6 +5694,14 @@ function resolveConditionalFormulaComparable(
      return literal;
    }
  
@@ -431,7 +446,7 @@ index 20d313c..1d154d2 100644
    const splitReference = splitSheetFormulaReference(normalized);
    const targetSheetName = splitReference?.sheetName ?? null;
    if (targetSheetName && sheet?.name && targetSheetName !== sheet.name) {
-@@ -5674,7 +5718,7 @@ function resolveConditionalFormulaComparable(
+@@ -5674,7 +5719,7 @@ function resolveConditionalFormulaComparable(
      if (numeric !== null) {
        return numeric;
      }
@@ -440,7 +455,7 @@ index 20d313c..1d154d2 100644
    }
  
    if (batchedCells) {
-@@ -5699,17 +5743,130 @@ function normalizeConditionalTextOperand(value: string | number | null | undefin
+@@ -5699,17 +5744,130 @@ function normalizeConditionalTextOperand(value: string | number | null | undefin
    return String(value).trim().toLowerCase();
  }
  
@@ -573,7 +588,7 @@ index 20d313c..1d154d2 100644
  
    if (normalizedRuleType === "cellis") {
      return resolveConditionalCellIsMatch(rule.operator ?? "equal", left, right, numericValue, textValue);
-@@ -5720,6 +5877,17 @@ function resolveConditionalStyledRuleMatch(
+@@ -5720,6 +5878,17 @@ function resolveConditionalStyledRuleMatch(
      || normalizeConditionalTextOperand(left);
  
    switch (normalizedRuleType) {
@@ -591,7 +606,7 @@ index 20d313c..1d154d2 100644
      case "beginwith":
      case "beginswith":
        return normalizedOperand.length > 0 && normalizedCellText.startsWith(normalizedOperand);
-@@ -5789,7 +5957,7 @@ function resolveConditionalCellStyleForCell(
+@@ -5789,7 +5958,7 @@ function resolveConditionalCellStyleForCell(
      if (textValue === undefined) {
        textValue = readTextValue();
      }
@@ -600,7 +615,7 @@ index 20d313c..1d154d2 100644
        continue;
      }
  
-@@ -6711,9 +6879,9 @@ function GridRow({
+@@ -6711,9 +6880,9 @@ function GridRow({
              onPointerDown={(event) => onRowResizePointerDown(event, actualRow, rowHeight)}
              style={{
                backgroundColor: "transparent",
@@ -612,7 +627,7 @@ index 20d313c..1d154d2 100644
                left: 0,
                position: "absolute",
                width: "100%",
-@@ -6764,7 +6932,7 @@ function GridRow({
+@@ -6764,7 +6933,7 @@ function GridRow({
          if (cellData.conditionalColorScale) {
            cellStyle.backgroundColor = cellData.conditionalColorScale.color;
          }
@@ -621,7 +636,7 @@ index 20d313c..1d154d2 100644
            cellStyle.position = "relative";
          }
          if (cellData.chartHighlight) {
-@@ -6862,7 +7030,7 @@ function GridRow({
+@@ -6862,7 +7031,7 @@ function GridRow({
                width: "max-content"
              } satisfies React.CSSProperties
            : null;
@@ -630,7 +645,7 @@ index 20d313c..1d154d2 100644
            .filter((value, index, values): value is string => typeof value === "string" && value.length > 0 && values.indexOf(value) === index)
            .join("\n");
  
-@@ -6884,6 +7052,16 @@ function GridRow({
+@@ -6884,6 +7053,16 @@ function GridRow({
              style={cellStyle}
              title={title}
            >
@@ -647,7 +662,20 @@ index 20d313c..1d154d2 100644
              {cellData.chartHighlight ? (
                <div
                  aria-hidden="true"
-@@ -7110,7 +7288,9 @@ function XlsxGrid({
+@@ -7103,14 +7282,22 @@ const MemoGridRow = React.memo(GridRow, (prev, next) => {
+   return true;
+ });
+ 
++/** How long Ctrl/Cmd+Shift+V waits for the browser's own paste event before reading the clipboard. */
++const VALUES_PASTE_WAIT_MS = 100;
++/** Two presses on the same header border within this long are a double-click. */
++const BORDER_DOUBLE_CLICK_MS = 500;
++
+ function XlsxGrid({
+   allowResizeInReadOnly = false,
+   controller,
++  onClipboardError,
+   emptyState,
    enableCanvasSelectionAnimation = true,
    errorState,
    fileTooLargeState,
@@ -657,16 +685,35 @@ index 20d313c..1d154d2 100644
    loadingComponent,
    loadingState,
    onFormControlAction,
-@@ -7130,7 +7310,7 @@ function XlsxGrid({
+@@ -7130,7 +7317,7 @@ function XlsxGrid({
    showImages = true
  }: Pick<
    XlsxViewerProps,
 -  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "getCellStyle" | "loadingComponent" | "loadingState" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
-+  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "formulaErrorTooltipClassName" | "getCellStyle" | "showFormulas" | "loadingComponent" | "loadingState" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
++  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "formulaErrorTooltipClassName" | "getCellStyle" | "showFormulas" | "loadingComponent" | "loadingState" | "onClipboardError" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
  > & {
    controller: XlsxViewerController;
    palette: ViewerPalette;
-@@ -7190,6 +7370,7 @@ function XlsxGrid({
+@@ -7163,6 +7350,7 @@ function XlsxGrid({
+     getRowsBatchAsync,
+     getClipboardData,
+     getCellDisplayValue: getControllerCellDisplayValue,
++    getCellFormula: getControllerCellFormula,
+     getFormControlItems,
+     images,
+     shapes,
+@@ -7172,7 +7360,10 @@ function XlsxGrid({
+     isWorkerBacked,
+     maxZoomScale,
+     minZoomScale,
++    autoFit,
+     copySelectionToClipboard,
++    cutSelection,
++    paste,
+     pasteFromClipboard,
+     pasteStructuredClipboardData,
+     pasteText,
+@@ -7190,6 +7381,7 @@ function XlsxGrid({
      selectImage,
      selectRange,
      selection,
@@ -674,7 +721,7 @@ index 20d313c..1d154d2 100644
      setActiveSheetIndex,
      setChartRect,
      setImageRect,
-@@ -7213,10 +7394,50 @@ function XlsxGrid({
+@@ -7213,10 +7405,50 @@ function XlsxGrid({
      ))
    ), [formControls, getFormControlItems]);
    const canResizeHeaders = !readOnly || allowResizeInReadOnly;
@@ -725,7 +772,33 @@ index 20d313c..1d154d2 100644
    const gridKeyboardHandlerRef = React.useRef<((event: KeyboardEvent) => void) | null>(null);
    const axisSelectionRef = React.useRef<
      | { axis: "column"; endCol: number; startCol: number }
-@@ -9623,14 +9844,15 @@ function XlsxGrid({
+@@ -7270,6 +7502,11 @@ function XlsxGrid({
+   const selectionCommitFrameRef = React.useRef<number | null>(null);
+   const selectionRef = React.useRef<XlsxCellRange | null>(null);
+   const editingCellRef = React.useRef<XlsxCellAddress | null>(null);
++  const valuesPasteTimerRef = React.useRef<number | null>(null);
++  React.useEffect(() => () => {
++    if (valuesPasteTimerRef.current !== null) window.clearTimeout(valuesPasteTimerRef.current);
++  }, []);
++  const lastBorderPressRef = React.useRef<{ type: "column" | "row"; index: number; time: number } | null>(null);
+   const commitEditingRef = React.useRef<() => void>(() => {});
+   const editingInputRef = React.useRef<HTMLInputElement>(null);
+   const readOnlyRef = React.useRef(readOnly);
+@@ -9528,9 +9765,11 @@ function XlsxGrid({
+ 
+       selectCell(cell);
+       setEditingCell(cell);
+-      setEditingValue(initialValue ?? getControllerCellDisplayValue(cell));
++      // Excel opens a formula cell's editor on its formula.
++      const formula = initialValue === undefined ? getControllerCellFormula(cell) : "";
++      setEditingValue(initialValue ?? (formula ? formulaText(formula) : getControllerCellDisplayValue(cell)));
+     },
+-    [getControllerCellDisplayValue, readOnly, selectCell]
++    [getControllerCellDisplayValue, getControllerCellFormula, readOnly, selectCell]
+   );
+ 
+   const commitEditing = React.useCallback(() => {
+@@ -9623,14 +9862,15 @@ function XlsxGrid({
    const [, startBatchTransition] = React.useTransition();
    const [, startSelectionTransition] = React.useTransition();
    const [asyncViewportRowBatch, setAsyncViewportRowBatch] = React.useState<WorksheetBatchWindow | null>(null);
@@ -743,7 +816,7 @@ index 20d313c..1d154d2 100644
            const viewportStart = Math.max(0, drawingViewport.top - displayHeaderHeight - CANVAS_VIEWPORT_OVERSCAN_PX);
            const viewportEnd = Math.max(
              viewportStart,
-@@ -9666,11 +9888,29 @@ function XlsxGrid({
+@@ -9666,11 +9906,29 @@ function XlsxGrid({
      drawingViewport.height,
      drawingViewport.top,
      experimentalCanvas,
@@ -774,7 +847,7 @@ index 20d313c..1d154d2 100644
    const syncViewportRowBatch = React.useMemo<WorksheetBatchWindow | null>(() => {
      if (!shouldVirtualizeRows || !worksheet || getRowsBatchAsync || !viewportRequest) {
        return null;
-@@ -9745,10 +9985,52 @@ function XlsxGrid({
+@@ -9745,10 +10003,52 @@ function XlsxGrid({
      };
    }, [activeSheet, asyncViewportRowBatch, getRowsBatchAsync, shouldVirtualizeRows, startBatchTransition, viewportRequest]);
  
@@ -828,7 +901,7 @@ index 20d313c..1d154d2 100644
    }, [activeSheetIndex, revision]);
  
    const sparklinesByCell = React.useMemo(() => {
-@@ -9769,6 +10051,10 @@ function XlsxGrid({
+@@ -9769,6 +10069,10 @@ function XlsxGrid({
      [activeSheet, chartRangeHighlights]
    );
  
@@ -839,7 +912,7 @@ index 20d313c..1d154d2 100644
    const cellRenderCacheInvalidationKey = React.useMemo(
      () =>
        [
-@@ -9777,6 +10063,8 @@ function XlsxGrid({
+@@ -9777,6 +10081,8 @@ function XlsxGrid({
          displayColLimit,
          displayRowLimit,
          getCellStyle,
@@ -848,7 +921,7 @@ index 20d313c..1d154d2 100644
          palette,
          revision,
          selectedChartElement,
-@@ -9791,6 +10079,8 @@ function XlsxGrid({
+@@ -9791,6 +10097,8 @@ function XlsxGrid({
        displayColLimit,
        displayRowLimit,
        getCellStyle,
@@ -857,7 +930,7 @@ index 20d313c..1d154d2 100644
        palette,
        revision,
        selectedChartElement,
-@@ -9815,7 +10105,10 @@ function XlsxGrid({
+@@ -9815,7 +10123,10 @@ function XlsxGrid({
        return cached;
      }
  
@@ -869,7 +942,7 @@ index 20d313c..1d154d2 100644
      const batchedCell = batchCoversRow ? viewportRowBatch?.cells.get(cacheKey) : undefined;
      const worksheetMergedSecondary = worksheet?.isMergedSecondary(row, col) ?? false;
  
-@@ -9833,6 +10126,14 @@ function XlsxGrid({
+@@ -9833,6 +10144,14 @@ function XlsxGrid({
          }, zoomFactor),
          value: ""
        };
@@ -884,7 +957,7 @@ index 20d313c..1d154d2 100644
        cellRenderCacheRef.current.set(cacheKey, emptyData);
        return emptyData;
      }
-@@ -9906,7 +10207,7 @@ function XlsxGrid({
+@@ -9906,7 +10225,7 @@ function XlsxGrid({
        if (displayValue === null) {
          displayValue = batchCoversRow || !worksheet
            ? batchedCell?.value ?? ""
@@ -893,7 +966,7 @@ index 20d313c..1d154d2 100644
        }
        return displayValue;
      };
-@@ -9914,7 +10215,7 @@ function XlsxGrid({
+@@ -9914,7 +10233,7 @@ function XlsxGrid({
        row,
        col,
        activeSheet,
@@ -902,7 +975,7 @@ index 20d313c..1d154d2 100644
        readDisplayValue,
        worksheet,
        viewportRowBatch?.cells
-@@ -10005,6 +10306,23 @@ function XlsxGrid({
+@@ -10005,6 +10324,23 @@ function XlsxGrid({
            : readDisplayValue()
      };
  
@@ -926,7 +999,7 @@ index 20d313c..1d154d2 100644
      if (getCellStyle) {
        const styleOverrides = getCellStyle({
          cell: { row, col },
-@@ -10142,6 +10460,8 @@ function XlsxGrid({
+@@ -10142,6 +10478,8 @@ function XlsxGrid({
    }, [
      activeSheet,
      activeSheetChartHighlights,
@@ -935,7 +1008,7 @@ index 20d313c..1d154d2 100644
      cellRenderCacheInvalidationKey,
      colIndexByActual,
      colPrefixSums,
-@@ -10161,25 +10481,15 @@ function XlsxGrid({
+@@ -10161,25 +10499,15 @@ function XlsxGrid({
      conditionalFormatMetricsCacheRef.current.clear();
    }, [activeSheet?.conditionalFormatRules, activeSheet?.workbookSheetIndex, revision]);
  
@@ -968,7 +1041,7 @@ index 20d313c..1d154d2 100644
  
      return {
        height: sumPrefixRange(rowPrefixSums, startRowIndex, endRowIndex),
-@@ -10187,8 +10497,26 @@ function XlsxGrid({
+@@ -10187,8 +10515,26 @@ function XlsxGrid({
        top: displayHeaderHeight + sumPrefixRange(rowPrefixSums, 0, startRowIndex - 1),
        width: sumPrefixRange(colPrefixSums, startColIndex, endColIndex)
      };
@@ -996,7 +1069,7 @@ index 20d313c..1d154d2 100644
    const { fill: selectionFill, header: selectionHeaderSurface, stroke: selectionStroke } = React.useMemo(() => resolveSelectionColors({
      palette,
      selectionColor,
-@@ -10608,19 +10936,13 @@ function XlsxGrid({
+@@ -10608,19 +10954,13 @@ function XlsxGrid({
            col: startCell.col + Math.max(1, merge?.colSpan ?? 1) - 1
          }
        : normalized.end;
@@ -1021,7 +1094,7 @@ index 20d313c..1d154d2 100644
  
      let left = displayRowHeaderWidth + sumPrefixRange(colPrefixSums, 0, startColIndex - 1);
      let top = displayHeaderHeight + sumPrefixRange(rowPrefixSums, 0, startRowIndex - 1);
-@@ -10663,7 +10985,7 @@ function XlsxGrid({
+@@ -10663,7 +11003,7 @@ function XlsxGrid({
        top: Math.max(displayHeaderHeight, top),
        width: Math.max(0, width)
      };
@@ -1030,7 +1103,7 @@ index 20d313c..1d154d2 100644
  
    const resolveMountedRangeOverlayRect = React.useCallback((range: XlsxCellRange, geometryRect: {
      height: number;
-@@ -11215,9 +11537,15 @@ function XlsxGrid({
+@@ -11215,9 +11555,15 @@ function XlsxGrid({
    function finishPendingSelectionDrag() {
      const pendingState = pendingSelectionDragRef.current;
      clearPendingSelectionDrag();
@@ -1038,17 +1111,17 @@ index 20d313c..1d154d2 100644
 -      commitSelectionRange(pendingState.previewRange);
 +    if (!pendingState || pendingState.committedOnPointerDown) {
 +      return;
-+    }
+     }
 +    if (pendingState.append) {
 +      selectRange(pendingState.previewRange, { toggle: true });
 +      selectionPreviewRangeRef.current = null;
 +      return;
-     }
++    }
 +    commitSelectionRange(pendingState.previewRange);
    }
  
    function promotePendingSelectionDrag(clientX: number, clientY: number) {
-@@ -11383,7 +11711,13 @@ function XlsxGrid({
+@@ -11383,7 +11729,13 @@ function XlsxGrid({
          } else {
            axisSelectionRef.current = null;
          }
@@ -1063,7 +1136,7 @@ index 20d313c..1d154d2 100644
        } else if (!nextRange) {
          selectionPreviewRangeRef.current = null;
        }
-@@ -11525,6 +11859,10 @@ function XlsxGrid({
+@@ -11525,6 +11877,10 @@ function XlsxGrid({
        event.currentTarget.colSpan > 1 || event.currentTarget.rowSpan > 1
          ? resolvePointerCellFromGeometry(event.clientX, event.clientY) ?? cell
          : cell;
@@ -1074,7 +1147,7 @@ index 20d313c..1d154d2 100644
      const currentSelection = selectionRef.current;
      const anchor = event.shiftKey && currentSelection ? currentSelection.start : targetCell;
      const initialRange = normalizeRange({ start: anchor, end: targetCell });
-@@ -11575,7 +11913,8 @@ function XlsxGrid({
+@@ -11575,7 +11931,8 @@ function XlsxGrid({
      resolveCellPointerOriginFromClient,
      resolveMountedCellOverlayRect,
      resolveOverlayRect,
@@ -1084,7 +1157,7 @@ index 20d313c..1d154d2 100644
    ]);
  
    const handleRowPointerDown = React.useCallback((
-@@ -11588,6 +11927,7 @@ function XlsxGrid({
+@@ -11588,6 +11945,7 @@ function XlsxGrid({
  
      event.preventDefault();
      focusGrid();
@@ -1092,7 +1165,7 @@ index 20d313c..1d154d2 100644
      const currentSelection = selectionRef.current;
      const anchorRow = event.shiftKey && currentSelection ? currentSelection.start.row : actualRow;
      const initialRange = normalizeRange({
-@@ -11607,13 +11947,16 @@ function XlsxGrid({
+@@ -11607,13 +11965,16 @@ function XlsxGrid({
        { row: actualRow, col: firstVisibleCol },
        pointerOrigin,
        null,
@@ -1112,7 +1185,7 @@ index 20d313c..1d154d2 100644
    }, [commitSelectionRange, firstVisibleCol, focusGrid, lastVisibleCol, resolveRowPointerOrigin]);
  
    const handleColumnPointerDown = React.useCallback((
-@@ -11626,6 +11969,7 @@ function XlsxGrid({
+@@ -11626,6 +11987,7 @@ function XlsxGrid({
  
      event.preventDefault();
      focusGrid();
@@ -1120,7 +1193,7 @@ index 20d313c..1d154d2 100644
      const currentSelection = selectionRef.current;
      const anchorCol =
        event.shiftKey && currentSelection ? currentSelection.start.col : actualCol;
-@@ -11646,13 +11990,16 @@ function XlsxGrid({
+@@ -11646,13 +12008,16 @@ function XlsxGrid({
        { row: firstVisibleRow, col: actualCol },
        pointerOrigin,
        null,
@@ -1140,7 +1213,7 @@ index 20d313c..1d154d2 100644
    }, [commitSelectionRange, firstVisibleRow, focusGrid, lastVisibleRow, resolveColumnPointerOrigin]);
  
    const handleRowResizePointerDown = React.useCallback((
-@@ -11856,7 +12203,7 @@ function XlsxGrid({
+@@ -11856,7 +12221,7 @@ function XlsxGrid({
  
      const localX = clientX - scrollerRect.left;
      for (const column of canvasColumnHeaderCells) {
@@ -1149,7 +1222,7 @@ index 20d313c..1d154d2 100644
          return { actualCol: column.actualCol, width: column.width };
        }
      }
-@@ -11891,7 +12238,7 @@ function XlsxGrid({
+@@ -11891,7 +12256,7 @@ function XlsxGrid({
  
      const localY = clientY - scrollerRect.top;
      for (const row of canvasRowHeaderCells) {
@@ -1158,7 +1231,7 @@ index 20d313c..1d154d2 100644
          return { actualRow: row.actualRow, height: row.height };
        }
      }
-@@ -11951,6 +12298,35 @@ function XlsxGrid({
+@@ -11951,6 +12316,35 @@ function XlsxGrid({
      event.preventDefault();
      focusGrid();
      axisSelectionRef.current = null;
@@ -1194,7 +1267,7 @@ index 20d313c..1d154d2 100644
      const currentSelection = selectionRef.current;
      const anchor = event.shiftKey && currentSelection ? currentSelection.start : cell;
      const initialRange = normalizeRange({ start: anchor, end: cell });
-@@ -12000,6 +12376,60 @@ function XlsxGrid({
+@@ -12000,6 +12394,60 @@ function XlsxGrid({
      startCellSelection
    ]);
  
@@ -1255,7 +1328,7 @@ index 20d313c..1d154d2 100644
    const handleCanvasBodyClick = React.useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
      const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
      if (!cell) {
-@@ -12022,6 +12452,30 @@ function XlsxGrid({
+@@ -12022,6 +12470,30 @@ function XlsxGrid({
      startEditing(cell);
    }, [readOnly, resolvePointerCellFromClient, startEditing]);
  
@@ -1286,7 +1359,7 @@ index 20d313c..1d154d2 100644
    const handleCanvasColumnHeaderPointerDown = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
      if (event.button !== 0 || firstVisibleRow === undefined || lastVisibleRow === undefined) {
        return;
-@@ -12042,6 +12496,8 @@ function XlsxGrid({
+@@ -12042,6 +12514,8 @@ function XlsxGrid({
  
      event.preventDefault();
      focusGrid();
@@ -1295,7 +1368,7 @@ index 20d313c..1d154d2 100644
      const currentSelection = selectionRef.current;
      const anchorCol = event.shiftKey && currentSelection ? currentSelection.start.col : actualCol;
      const initialRange = normalizeRange({
-@@ -12066,13 +12522,16 @@ function XlsxGrid({
+@@ -12066,13 +12540,16 @@ function XlsxGrid({
          originContentY: rowPrefixSums[0] ?? 0
        },
        null,
@@ -1315,7 +1388,7 @@ index 20d313c..1d154d2 100644
    }, [
      colIndexByActual,
      colPrefixSums,
-@@ -12106,6 +12565,7 @@ function XlsxGrid({
+@@ -12106,6 +12583,7 @@ function XlsxGrid({
  
      event.preventDefault();
      focusGrid();
@@ -1323,7 +1396,7 @@ index 20d313c..1d154d2 100644
      const currentSelection = selectionRef.current;
      const anchorRow = event.shiftKey && currentSelection ? currentSelection.start.row : actualRow;
      const initialRange = normalizeRange({
-@@ -12130,13 +12590,16 @@ function XlsxGrid({
+@@ -12130,13 +12608,16 @@ function XlsxGrid({
          originContentY: rowPrefixSums[anchorRowIndex] ?? 0
        },
        null,
@@ -1343,7 +1416,7 @@ index 20d313c..1d154d2 100644
    }, [
      colPrefixSums,
      commitSelectionRange,
-@@ -13008,6 +13471,20 @@ function XlsxGrid({
+@@ -13008,6 +13489,20 @@ function XlsxGrid({
              }
            }
  
@@ -1364,7 +1437,7 @@ index 20d313c..1d154d2 100644
            const rawText = cellData.value ?? "";
            const shouldDrawCanvasContent = (
              cellData.checkboxState != null
-@@ -13917,16 +14394,14 @@ function XlsxGrid({
+@@ -13917,16 +14412,14 @@ function XlsxGrid({
      whiteSpace: "nowrap",
      zIndex: canvasHeaderOverlayZIndex
    }, zoomFactor);
@@ -1383,7 +1456,7 @@ index 20d313c..1d154d2 100644
    const canvasBodyViewportLayerStyle: React.CSSProperties = {
      height: 0,
      left: 0,
-@@ -14018,7 +14493,7 @@ function XlsxGrid({
+@@ -14018,7 +14511,7 @@ function XlsxGrid({
    const canvasCornerHeaderStyle: React.CSSProperties = {
      display: drawingViewport.width > 0 && drawingViewport.height > 0 ? "block" : "none",
      left: 0,
@@ -1392,7 +1465,55 @@ index 20d313c..1d154d2 100644
      position: "absolute",
      top: 0,
      transformOrigin: "0 0",
-@@ -15075,12 +15550,14 @@ function XlsxGrid({
+@@ -15017,8 +15510,37 @@ function XlsxGrid({
+     };
+   }
+ 
++  /** Excel's double-click on a header border fits that column or row, or every selected one when
++   *  the border belongs to a whole-column (or whole-row) selection. */
++  function fitOnBorderDoubleClick(type: "column" | "row", index: number): boolean {
++    const now = performance.now();
++    const last = lastBorderPressRef.current;
++    lastBorderPressRef.current = { type, index, time: now };
++    if (!last || last.type !== type || last.index !== index || now - last.time > BORDER_DOUBLE_CLICK_MS) {
++      return false;
++    }
++    lastBorderPressRef.current = null;
++    const spans = selections.flatMap((region): Array<[number, number]> => {
++      const range = normalizeRange(region);
++      if (type === "column") {
++        const whole = range.start.row <= (firstVisibleRow ?? 0)
++          && (range.end.row >= (lastVisibleRow ?? 0) || range.end.row >= (activeSheet?.maxUsedRow ?? 0));
++        return whole ? [[range.start.col, range.end.col]] : [];
++      }
++      const whole = range.start.col <= (firstVisibleCol ?? 0)
++        && (range.end.col >= (lastVisibleCol ?? 0) || range.end.col >= (activeSheet?.maxUsedCol ?? 0));
++      return whole ? [[range.start.row, range.end.row]] : [];
++    });
++    const inSelection = spans.some(([first, end]) => index >= first && index <= end);
++    const indices = inSelection
++      ? spans.flatMap(([first, end]) => Array.from({ length: end - first + 1 }, (_, offset) => first + offset))
++      : [index];
++    autoFit(type, indices);
++    return true;
++  }
++
+   function startColumnResize(pointerId: number, actualCol: number, widthPx: number, startX: number) {
+-    if (!canResizeHeaders) {
++    if (!canResizeHeaders || fitOnBorderDoubleClick("column", actualCol)) {
+       return;
+     }
+ 
+@@ -15039,7 +15561,7 @@ function XlsxGrid({
+   }
+ 
+   function startRowResize(pointerId: number, actualRow: number, heightPx: number, startY: number) {
+-    if (!canResizeHeaders) {
++    if (!canResizeHeaders || fitOnBorderDoubleClick("row", actualRow)) {
+       return;
+     }
+ 
+@@ -15075,12 +15597,14 @@ function XlsxGrid({
      committedOnPointerDown: boolean,
      initialRange: XlsxCellRange,
      startClientX: number,
@@ -1408,7 +1529,7 @@ index 20d313c..1d154d2 100644
        axis,
        contentScaleX: pointerOrigin.contentScaleX,
        contentScaleY: pointerOrigin.contentScaleY,
-@@ -15418,6 +15895,46 @@ function XlsxGrid({
+@@ -15418,6 +15942,46 @@ function XlsxGrid({
      syncDrawingViewport(scroller, { immediate: true });
    }
  
@@ -1455,7 +1576,7 @@ index 20d313c..1d154d2 100644
    function moveSelection(nextRowIndex: number, nextColIndex: number, extend: boolean) {
      const clampedRowIndex = Math.max(0, Math.min(nextRowIndex, visibleRows.length - 1));
      const clampedColIndex = Math.max(0, Math.min(nextColIndex, visibleCols.length - 1));
-@@ -15436,6 +15953,26 @@ function XlsxGrid({
+@@ -15436,6 +16000,26 @@ function XlsxGrid({
      ensureCellVisible(clampedRowIndex, clampedColIndex);
    }
  
@@ -1482,7 +1603,7 @@ index 20d313c..1d154d2 100644
    function resolvePageRowIndex(currentRowIndex: number, direction: 1 | -1) {
      const scroller = scrollRef.current;
      const viewportHeight = Math.max(
-@@ -15514,8 +16051,33 @@ function XlsxGrid({
+@@ -15514,8 +16098,40 @@ function XlsxGrid({
      return { colIndex, rowIndex };
    }
  
@@ -1511,13 +1632,38 @@ index 20d313c..1d154d2 100644
 +    });
 +  }
 +
++  function takeValuesPaste() {
++    if (valuesPasteTimerRef.current === null) return false;
++    window.clearTimeout(valuesPasteTimerRef.current);
++    valuesPasteTimerRef.current = null;
++    return true;
++  }
++
    function handleGridKeyDown(event: React.KeyboardEvent<HTMLDivElement> | KeyboardEvent) {
 -    if (editingCell) {
 +    if (editingCell || event.defaultPrevented || ("isComposing" in event ? event.isComposing : event.nativeEvent.isComposing)) {
        return;
      }
  
-@@ -15548,6 +16110,14 @@ function XlsxGrid({
+@@ -15538,6 +16154,17 @@ function XlsxGrid({
+         redo();
+         return;
+       }
++
++      // Paste values. Windows browsers follow it with a paste event that carries the clipboard;
++      // where none comes (Chrome on a Mac), the timer reads the clipboard instead.
++      if (normalizedKey === "v" && event.shiftKey) {
++        takeValuesPaste();
++        valuesPasteTimerRef.current = window.setTimeout(() => {
++          valuesPasteTimerRef.current = null;
++          paste({ valuesOnly: true }).catch((pasteError: unknown) => onClipboardError?.(pasteError));
++        }, VALUES_PASTE_WAIT_MS);
++        return;
++      }
+     }
+ 
+     const currentCell = resolveCurrentCell();
+@@ -15548,6 +16175,14 @@ function XlsxGrid({
      const currentRowIndex = rowIndexByActual.get(currentCell.row) ?? 0;
      const currentColIndex = colIndexByActual.get(currentCell.col) ?? 0;
      const isCommandNavigation = event.ctrlKey || event.metaKey;
@@ -1532,7 +1678,7 @@ index 20d313c..1d154d2 100644
  
      if (!readOnly && isPrintableKey(event)) {
        event.preventDefault();
-@@ -15566,9 +16136,7 @@ function XlsxGrid({
+@@ -15566,9 +16201,7 @@ function XlsxGrid({
            }
          }
          moveSelection(
@@ -1543,7 +1689,7 @@ index 20d313c..1d154d2 100644
            currentColIndex,
            event.shiftKey
          );
-@@ -15583,9 +16151,7 @@ function XlsxGrid({
+@@ -15583,9 +16216,7 @@ function XlsxGrid({
            }
          }
          moveSelection(
@@ -1554,7 +1700,7 @@ index 20d313c..1d154d2 100644
            currentColIndex,
            event.shiftKey
          );
-@@ -15601,9 +16167,7 @@ function XlsxGrid({
+@@ -15601,9 +16232,7 @@ function XlsxGrid({
          }
          moveSelection(
            currentRowIndex,
@@ -1565,7 +1711,7 @@ index 20d313c..1d154d2 100644
            event.shiftKey
          );
          break;
-@@ -15618,9 +16182,7 @@ function XlsxGrid({
+@@ -15618,9 +16247,7 @@ function XlsxGrid({
          }
          moveSelection(
            currentRowIndex,
@@ -1576,7 +1722,7 @@ index 20d313c..1d154d2 100644
            event.shiftKey
          );
          break;
-@@ -15710,7 +16272,7 @@ function XlsxGrid({
+@@ -15710,11 +16337,12 @@ function XlsxGrid({
    const scrollerViewportProps: XlsxScrollerRenderProps["viewportProps"] = {
      ref: scrollRef,
      "aria-colcount": Math.max(activeSheet?.colCount ?? 0, displayColLimit),
@@ -1585,7 +1731,61 @@ index 20d313c..1d154d2 100644
      "aria-label": activeSheet ? `${activeSheet.name} worksheet grid` : "Workbook grid",
      "aria-readonly": readOnly,
      "aria-rowcount": Math.max(activeSheet?.rowCount ?? 0, displayRowLimit),
-@@ -15848,6 +16410,7 @@ function XlsxGrid({
+     role: "grid",
++    [GRID_SURFACE_ATTRIBUTE as string]: "",
+     onScroll: handleScrollerScroll,
+     onCopy: (event) => {
+       if (editingCell) {
+@@ -15732,11 +16360,21 @@ function XlsxGrid({
+         clipboard.setData("text/plain", clipboardData.text);
+         clipboard.setData("text/html", clipboardData.html);
+         clipboard.setData(INTERNAL_CLIPBOARD_MIME, clipboardData.structured);
++        rememberCopy(clipboardData.text, clipboardData.structured);
+         return;
+       }
+ 
+       void copySelectionToClipboard();
+     },
++    // Excel's cut: copy, then clear. Pasting it moves formulas unchanged.
++    onCut: (event) => {
++      if (editingCell || readOnly || !event.clipboardData || !getClipboardData()) {
++        return;
++      }
++
++      event.preventDefault();
++      void cutSelection(event.clipboardData);
++    },
+     onPointerDownCapture: (event) => {
+       if (event.button !== 0) {
+         return;
+@@ -15772,19 +16410,22 @@ function XlsxGrid({
+         return;
+       }
+ 
+-      const structuredPayload = clipboard.getData(INTERNAL_CLIPBOARD_MIME);
+       const textPayload = clipboard.getData("text/plain");
++      // A copy made through the async clipboard (a menu) lacks the cells' format; use the memory.
++      const structuredPayload = clipboard.getData(INTERNAL_CLIPBOARD_MIME) || rememberedCells(textPayload);
++      const valuesOnlyPaste = takeValuesPaste();
+       if (!structuredPayload && !textPayload) {
+         return;
+       }
+ 
+       event.preventDefault();
+-      if (structuredPayload) {
+-        pasteStructuredClipboardData(structuredPayload);
++      const payload = structuredPayload && valuesOnlyPaste ? valuesOnly(structuredPayload) : structuredPayload;
++      if (payload) {
++        pasteStructuredClipboardData(payload);
+         return;
+       }
+ 
+-      pasteText(textPayload);
++      pasteText(textPayload, { literal: valuesOnlyPaste });
+     },
+     tabIndex: 0,
+     style: {
+@@ -15848,6 +16489,7 @@ function XlsxGrid({
                      onClick={handleCanvasBodyClick}
                      onDoubleClick={handleCanvasBodyDoubleClick}
                      onPointerDown={handleCanvasBodyPointerDown}
@@ -1593,7 +1793,7 @@ index 20d313c..1d154d2 100644
                      style={canvasScrollBodyStyle}
                    />
                    <canvas
-@@ -15855,6 +16418,7 @@ function XlsxGrid({
+@@ -15855,6 +16497,7 @@ function XlsxGrid({
                      onClick={handleCanvasBodyClick}
                      onDoubleClick={handleCanvasBodyDoubleClick}
                      onPointerDown={handleCanvasBodyPointerDown}
@@ -1601,7 +1801,7 @@ index 20d313c..1d154d2 100644
                      style={canvasTopBodyStyle}
                    />
                    <canvas
-@@ -15862,6 +16426,7 @@ function XlsxGrid({
+@@ -15862,6 +16505,7 @@ function XlsxGrid({
                      onClick={handleCanvasBodyClick}
                      onDoubleClick={handleCanvasBodyDoubleClick}
                      onPointerDown={handleCanvasBodyPointerDown}
@@ -1609,7 +1809,7 @@ index 20d313c..1d154d2 100644
                      style={canvasLeftBodyStyle}
                    />
                    <canvas
-@@ -15869,6 +16434,7 @@ function XlsxGrid({
+@@ -15869,6 +16513,7 @@ function XlsxGrid({
                      onClick={handleCanvasBodyClick}
                      onDoubleClick={handleCanvasBodyDoubleClick}
                      onPointerDown={handleCanvasBodyPointerDown}
@@ -1617,7 +1817,7 @@ index 20d313c..1d154d2 100644
                      style={canvasCornerBodyStyle}
                    />
                    {hasCanvasDomDrawingOverlays ? (
-@@ -15973,7 +16539,7 @@ function XlsxGrid({
+@@ -15973,7 +16618,7 @@ function XlsxGrid({
                      onPointerDown={handleCanvasRowHeaderPointerDown}
                      style={canvasLeftScrollHeaderStyle}
                    />
@@ -1626,7 +1826,7 @@ index 20d313c..1d154d2 100644
                  </div>
                  {editingCell && editingOverlayRect ? (() => {
                    const editingCellStyle = getCellData(editingCell.row, editingCell.col).style;
-@@ -16096,6 +16662,7 @@ function XlsxGrid({
+@@ -16096,6 +16741,7 @@ function XlsxGrid({
                  <thead style={{ position: "sticky", top: 0, zIndex: canvasHeaderOverlayZIndex }}>
                    <tr>
                      <th
@@ -1634,7 +1834,7 @@ index 20d313c..1d154d2 100644
                        style={{
                          ...headerCellStyle,
                          backgroundColor: palette.headerSurface,
-@@ -16144,7 +16711,11 @@ function XlsxGrid({
+@@ -16144,7 +16790,11 @@ function XlsxGrid({
                                  event.clientX
                                );
                              }}
@@ -1647,7 +1847,7 @@ index 20d313c..1d154d2 100644
                            />
                          </div>
                        </th>
-@@ -16233,6 +16804,25 @@ function XlsxGrid({
+@@ -16233,6 +16883,25 @@ function XlsxGrid({
                  zIndex: 24
                }}
              >
@@ -1673,7 +1873,7 @@ index 20d313c..1d154d2 100644
                <div
                  ref={selectionOverlayRef}
                  style={{
-@@ -16277,6 +16867,7 @@ function XlsxGrid({
+@@ -16277,6 +16946,7 @@ function XlsxGrid({
                </div>
                <div
                  ref={fillHandleRef}
@@ -1681,7 +1881,7 @@ index 20d313c..1d154d2 100644
                  onPointerDown={(event) => {
                    if (readOnly || event.button !== 0 || !normalizedSelection || !resolvedSelectionOverlay) {
                      return;
-@@ -16367,10 +16958,13 @@ function XlsxGrid({
+@@ -16367,16 +17037,20 @@ function XlsxGrid({
    );
  
    return (
@@ -1696,7 +1896,14 @@ index 20d313c..1d154d2 100644
      </div>
    );
  }
-@@ -16385,7 +16979,9 @@ function XlsxViewerInner({
+ 
+ function XlsxViewerInner({
+   allowResizeInReadOnly = false,
++  onClipboardError,
+   className,
+   controller,
+   emptyState,
+@@ -16385,7 +17059,9 @@ function XlsxViewerInner({
    errorState,
    experimentalCanvas = true,
    fileTooLargeState,
@@ -1706,7 +1913,15 @@ index 20d313c..1d154d2 100644
    headerBackgroundColor,
    headerTextColor,
    height,
-@@ -16463,7 +17059,9 @@ function XlsxViewerInner({
+@@ -16456,6 +17132,7 @@ function XlsxViewerInner({
+             <div style={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
+               <XlsxGrid
+                 allowResizeInReadOnly={allowResizeInReadOnly}
++                onClipboardError={onClipboardError}
+                 controller={controller}
+                 emptyState={emptyState}
+                 enableCanvasSelectionAnimation={enableCanvasSelectionAnimation}
+@@ -16463,7 +17140,9 @@ function XlsxViewerInner({
                  errorState={errorState}
                  experimentalCanvas={experimentalCanvas}
                  fileTooLargeState={fileTooLargeState}
@@ -1716,7 +1931,7 @@ index 20d313c..1d154d2 100644
                  loadingComponent={loadingComponent}
                  loadingState={loadingState}
                  onFormControlAction={onFormControlAction}
-@@ -16539,7 +17137,8 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
+@@ -16539,7 +17218,8 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
      selectedRangeAddress,
      selectCell,
      selectRange,
@@ -1726,7 +1941,7 @@ index 20d313c..1d154d2 100644
    } = useXlsxViewer();
  
    return React.useMemo(
-@@ -16550,9 +17149,10 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
+@@ -16550,9 +17230,10 @@ export function useXlsxViewerSelection(): XlsxViewerSelection {
        selectedRangeAddress,
        selectCell,
        selectRange,
@@ -1739,7 +1954,37 @@ index 20d313c..1d154d2 100644
    );
  }
  
-@@ -17369,7 +17969,7 @@ export function useXlsxViewerThumbnails(
+@@ -16616,6 +17297,9 @@ export function useXlsxViewerEditing(): XlsxViewerEditing {
+     getSheetFormControls,
+     mergeSelection,
+     pasteFromClipboard,
++    paste,
++    cutSelection,
++    autoFit,
+     pasteStructuredClipboardData,
+     pasteText,
+     removeActiveSheet,
+@@ -16658,6 +17342,9 @@ export function useXlsxViewerEditing(): XlsxViewerEditing {
+       getSheetFormControls,
+       mergeSelection,
+       pasteFromClipboard,
++      paste,
++      cutSelection,
++      autoFit,
+       pasteStructuredClipboardData,
+       pasteText,
+       removeActiveSheet,
+@@ -16698,6 +17385,9 @@ export function useXlsxViewerEditing(): XlsxViewerEditing {
+       getSheetFormControls,
+       mergeSelection,
+       pasteFromClipboard,
++      paste,
++      cutSelection,
++      autoFit,
+       pasteStructuredClipboardData,
+       pasteText,
+       removeActiveSheet,
+@@ -17369,7 +18059,7 @@ export function useXlsxViewerThumbnails(
              col,
              sheet,
              () => (worksheet ? getCellNumericValue(worksheet, row, col) : getBatchedCellNumericValue(batchedCell)),
@@ -1748,7 +1993,7 @@ index 20d313c..1d154d2 100644
              worksheet,
              workerRowBatch?.cells
            );
-@@ -17430,7 +18030,7 @@ export function useXlsxViewerThumbnails(
+@@ -17430,7 +18120,7 @@ export function useXlsxViewerThumbnails(
                : checkboxState !== null
                  ? ""
                  : worksheet
@@ -1757,6 +2002,227 @@ index 20d313c..1d154d2 100644
                    : batchedCell?.value ?? ""
            };
  
+diff --git a/packages/react-xlsx/src/auto-fit.test.ts b/packages/react-xlsx/src/auto-fit.test.ts
+new file mode 100644
+index 0000000..cc2fb2c
+--- /dev/null
++++ b/packages/react-xlsx/src/auto-fit.test.ts
+@@ -0,0 +1,47 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { autoFitSizes, type FitSheet, fittedColumnWidth, fittedRowHeight } from "./auto-fit.ts";
++
++// 1px per character keeps the arithmetic readable.
++const measure = (text: string) => text.length;
++
++function sheet(cells: Record<string, { text: string; wrap?: boolean; size?: number }>, merged: string[] = []): FitSheet {
++  return {
++    usedRange: () => [0, 0, 3, 3],
++    getFormattedValueAt: (row, col) => cells[`${row}:${col}`]?.text ?? "",
++    getCellStyleAt: (row, col) => {
++      const cell = cells[`${row}:${col}`];
++      return { font: { size: cell?.size ?? 12 }, alignment: { wrapText: cell?.wrap === true } };
++    },
++    getMergeSpan: () => null,
++    isMergedSecondary: (row, col) => merged.includes(`${row}:${col}`)
++  };
++}
++
++test("a column fits its widest unwrapped text, ignoring merged cells", () => {
++  const cells = { "0:1": { text: "x".repeat(40) }, "1:1": { text: "x".repeat(90) }, "2:1": { text: "x".repeat(300) } };
++  assert.equal(fittedColumnWidth(sheet(cells, ["2:1"]), 1, measure), 110);
++});
++
++test("a column keeps the padding spaces accounting formats draw", () => {
++  assert.equal(fittedColumnWidth(sheet({ "0:0": { text: " $(150,078)" } }), 0, measure), 11 + 20);
++});
++
++test("a row counts wrapped lines at the column's width; an empty row has no fit", () => {
++  // 12pt = 16px; three 30px words in a 50px-wide column (42px after padding) wrap to 3 lines.
++  const words = ["a".repeat(30), "b".repeat(30), "c".repeat(30)].join(" ");
++  assert.equal(fittedRowHeight(sheet({ "1:0": { text: words, wrap: true } }), 1, () => 50, measure), Math.ceil(3 * 16 * 1.2 + 2));
++  assert.equal(fittedRowHeight(sheet({ "0:2": { text: "Total" } }), 0, () => 80, measure), Math.ceil(16 * 1.2 + 2));
++  assert.equal(fittedRowHeight(sheet({}), 0, () => 80, measure), null);
++});
++
++test("autofit skips hidden and already-fitting indices, resets empty rows and keeps empty columns", () => {
++  const fitSheet = sheet({ "0:0": { text: "x".repeat(40) }, "0:1": { text: "x".repeat(40) } });
++  const base = { sheet: fitSheet, columnWidthPx: () => 64, rowHeightPx: () => 40, defaultRowHeightPx: 20, gridlinePx: 1, measure };
++  assert.deepEqual(autoFitSizes({ ...base, axis: "column", indices: [0, 1, 2, 0], hidden: new Set([1]) }), [{ index: 0, sizePx: 60 }]);
++  // Row 0 fits its text; row 2 is empty and returns to the default height.
++  assert.deepEqual(autoFitSizes({ ...base, axis: "row", indices: [0, 2], hidden: new Set() }), [
++    { index: 0, sizePx: Math.ceil(16 * 1.2 + 2) },
++    { index: 2, sizePx: 21 }
++  ]);
++});
+diff --git a/packages/react-xlsx/src/auto-fit.ts b/packages/react-xlsx/src/auto-fit.ts
+new file mode 100644
+index 0000000..a66c1fe
+--- /dev/null
++++ b/packages/react-xlsx/src/auto-fit.ts
+@@ -0,0 +1,162 @@
++/** Column widths and row heights that fit the displayed text, like Excel's AutoFit. */
++
++/** The grid's 4px cell padding on each side. */
++const CELL_PADDING_PX = 8;
++/** Room Excel leaves after the widest text when it fits a column. */
++const FIT_GAP_PX = 12;
++const MIN_WIDTH_PX = 24;
++const MAX_WIDTH_PX = 640;
++const MIN_HEIGHT_PX = 15;
++const MAX_HEIGHT_PX = 409;
++const LINE_HEIGHT = 1.2;
++const ROW_PADDING_PX = 2;
++
++export interface FitSheet {
++  usedRange(): unknown;
++  getFormattedValueAt(row: number, col: number): string;
++  getCellStyleAt(row: number, col: number): unknown;
++  getMergeSpan(row: number, col: number): unknown;
++  isMergedSecondary(row: number, col: number): boolean;
++}
++
++export type MeasureText = (text: string, font: string) => number;
++
++function record(value: unknown, key: string): Record<string, unknown> | null {
++  if (typeof value !== "object" || value === null || !(key in value)) return null;
++  const inner: unknown = (value as Record<string, unknown>)[key];
++  return typeof inner === "object" && inner !== null ? (inner as Record<string, unknown>) : null;
++}
++
++function fontPx(style: unknown): number {
++  const size = record(style, "font")?.size;
++  return ((typeof size === "number" ? size : 11) * 96) / 72;
++}
++
++function cssFont(style: unknown): string {
++  const font = record(style, "font");
++  const name = typeof font?.name === "string" ? font.name : "Calibri";
++  return `${font?.italic === true ? "italic " : ""}${font?.bold === true ? "bold " : ""}${fontPx(style)}px "${name}", sans-serif`;
++}
++
++function usedEnd(sheet: FitSheet, index: 2 | 3): number {
++  const range = sheet.usedRange();
++  return Array.isArray(range) && typeof range[index] === "number" ? range[index] : -1;
++}
++
++/** A cell that covers more than one row or column; AutoFit skips those, as Excel does. */
++export function isMerged(sheet: Pick<FitSheet, "getMergeSpan" | "isMergedSecondary">, row: number, col: number): boolean {
++  if (sheet.isMergedSecondary(row, col)) return true;
++  const span = sheet.getMergeSpan(row, col);
++  return (
++    typeof span === "object" &&
++    span !== null &&
++    (("colSpan" in span && Number(span.colSpan) > 1) || ("rowSpan" in span && Number(span.rowSpan) > 1))
++  );
++}
++
++function wraps(style: unknown): boolean {
++  return record(style, "alignment")?.wrapText === true;
++}
++
++/** Lines `text` takes when wrapped at word breaks within `widthPx`. */
++function wrappedLines(text: string, font: string, widthPx: number, measure: MeasureText): number {
++  let lines = 0;
++  for (const paragraph of text.split("\n")) {
++    let line = "";
++    lines += 1;
++    for (const word of paragraph.split(" ")) {
++      const next = line ? `${line} ${word}` : word;
++      if (line && measure(next, font) > widthPx) {
++        lines += 1;
++        line = word;
++      } else {
++        line = next;
++      }
++    }
++  }
++  return lines;
++}
++
++/** Pixel width for `col`, or null when the column holds no fittable text. Skips merged and wrapped cells. */
++export function fittedColumnWidth(sheet: FitSheet, col: number, measure: MeasureText): number | null {
++  let widest = 0;
++  const lastRow = usedEnd(sheet, 2);
++  for (let row = 0; row <= lastRow; row += 1) {
++    // Untrimmed: accounting formats pad with spaces (`_(` and `_)`) that the grid draws too.
++    const text = sheet.getFormattedValueAt(row, col);
++    if (!text.trim() || isMerged(sheet, row, col)) continue;
++    const style = sheet.getCellStyleAt(row, col);
++    if (!style || wraps(style)) continue;
++    widest = Math.max(widest, measure(text, cssFont(style)));
++  }
++  return widest > 0
++    ? Math.min(MAX_WIDTH_PX, Math.max(MIN_WIDTH_PX, Math.ceil(widest + CELL_PADDING_PX + FIT_GAP_PX)))
++    : null;
++}
++
++/** Pixel height for `row`: the tallest cell, counting wrapped lines at each column's width.
++ *  Null when the row holds no text. Skips merged cells. */
++export function fittedRowHeight(
++  sheet: FitSheet,
++  row: number,
++  columnWidthPx: (col: number) => number,
++  measure: MeasureText
++): number | null {
++  let tallest = 0;
++  const lastCol = usedEnd(sheet, 3);
++  for (let col = 0; col <= lastCol; col += 1) {
++    const text = sheet.getFormattedValueAt(row, col).trim();
++    if (!text || isMerged(sheet, row, col)) continue;
++    const style = sheet.getCellStyleAt(row, col);
++    const lines = wraps(style)
++      ? wrappedLines(text, cssFont(style), columnWidthPx(col) - CELL_PADDING_PX, measure)
++      : text.split("\n").length;
++    tallest = Math.max(tallest, lines * fontPx(style) * LINE_HEIGHT);
++  }
++  return tallest > 0 ? Math.min(MAX_HEIGHT_PX, Math.max(MIN_HEIGHT_PX, Math.ceil(tallest + ROW_PADDING_PX))) : null;
++}
++
++let context: CanvasRenderingContext2D | null | undefined;
++let contextFont = "";
++
++export function measureText(text: string, font: string): number {
++  context ??= typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
++  if (!context) return text.length * 7;
++  // Setting the canvas font parses it each time; cells in a column mostly share one.
++  if (font !== contextFont) {
++    context.font = font;
++    contextFont = font;
++  }
++  return context.measureText(text).width;
++}
++
++/** The sizes AutoFit would set for `indices` along `axis`, in grid pixels (gridline included),
++ *  skipping hidden ones and those already within a pixel. An empty row returns to the default
++ *  height; an empty column keeps its width. */
++export function autoFitSizes(input: {
++  axis: "column" | "row";
++  indices: Iterable<number>;
++  sheet: FitSheet;
++  hidden: ReadonlySet<number>;
++  /** Current content sizes (no gridline) in pixels. */
++  columnWidthPx: (col: number) => number;
++  rowHeightPx: (row: number) => number;
++  defaultRowHeightPx: number;
++  gridlinePx: number;
++  measure?: MeasureText;
++}): Array<{ index: number; sizePx: number }> {
++  const { axis, sheet, hidden, gridlinePx, measure = measureText } = input;
++  const sizes: Array<{ index: number; sizePx: number }> = [];
++  const seen = new Set<number>();
++  for (const index of input.indices) {
++    if (seen.has(index) || hidden.has(index)) continue;
++    seen.add(index);
++    const fitted =
++      axis === "column"
++        ? fittedColumnWidth(sheet, index, measure)
++        : (fittedRowHeight(sheet, index, input.columnWidthPx, measure) ?? input.defaultRowHeightPx + gridlinePx);
++    const current = (axis === "column" ? input.columnWidthPx(index) : input.rowHeightPx(index)) + gridlinePx;
++    if (fitted !== null && Math.abs(fitted - current) >= 1) sizes.push({ index, sizePx: fitted });
++  }
++  return sizes;
++}
 diff --git a/packages/react-xlsx/src/calculation-diagnostics.ts b/packages/react-xlsx/src/calculation-diagnostics.ts
 new file mode 100644
 index 0000000..d767dd7
@@ -2179,8 +2645,164 @@ index 0000000..bd96b92
 +    worksheet.setCellStyleAt(row, col, styleToRestore(styles[cell.styleIndex], plain));
 +  }
 +}
+diff --git a/packages/react-xlsx/src/clipboard-memory.test.ts b/packages/react-xlsx/src/clipboard-memory.test.ts
+new file mode 100644
+index 0000000..d922ee3
+--- /dev/null
++++ b/packages/react-xlsx/src/clipboard-memory.test.ts
+@@ -0,0 +1,54 @@
++import assert from "node:assert/strict";
++import { afterEach, test } from "node:test";
++import { cutPayload, cutStillApplies, forgetCopy, rememberCopy, rememberedCells, valuesOnly, withoutCopyOrigins } from "./clipboard-memory.ts";
++
++const copied = JSON.stringify({
++  rows: 1,
++  cols: 2,
++  merges: [{ rowOffset: 0, colOffset: 0, rowSpan: 1, colSpan: 2 }],
++  styles: [{ font: { bold: true } }],
++  cells: [
++    { rowOffset: 0, colOffset: 0, formula: "=A1*2", value: "29,081.00", raw: 29081, styleIndex: 0, source: { row: 4, col: 0 } },
++    { rowOffset: 0, colOffset: 1, formula: null, value: "", styleOnly: true, styleIndex: 0 }
++  ]
++});
++
++afterEach(forgetCopy);
++
++test("paste values keeps each cell's value and drops formulas, formatting, merges and merged cells", () => {
++  assert.deepEqual(JSON.parse(valuesOnly(copied) ?? "null"), {
++    rows: 1,
++    cols: 2,
++    merges: [],
++    styles: [],
++    cells: [{ rowOffset: 0, colOffset: 0, value: "29,081.00", raw: 29081, formula: null }]
++  });
++  assert.equal(valuesOnly("not json"), null);
++  assert.equal(valuesOnly(JSON.stringify({ cells: "nope" })), null);
++});
++
++test("a cut keeps formulas unrelocated by dropping copy origins", () => {
++  const cut = JSON.parse(withoutCopyOrigins(copied) ?? "null");
++  assert.equal(cut.cells[0].source, undefined);
++  assert.equal(cut.cells[0].formula, "=A1*2");
++});
++
++test("the remembered copy is used only while the clipboard text is that copy", () => {
++  rememberCopy("29,081.00", copied);
++  assert.equal(rememberedCells("29,081.00\r\n"), copied);
++  assert.equal(rememberedCells("something else"), null);
++  forgetCopy();
++  assert.equal(rememberedCells("29,081.00"), null);
++});
++
++test("a cut whose clear is refused copies instead, so pasting it still relocates formulas", () => {
++  assert.equal(cutPayload(copied, false), copied);
++  assert.equal(JSON.parse(cutPayload(copied, true)).cells[0].source, undefined);
++});
++
++test("an async cut leaves the cells when the sheet or workbook changed during the clipboard write", () => {
++  const source = { sheet: 0, generation: 3 };
++  assert.equal(cutStillApplies(source, { sheet: 0, generation: 3 }), true);
++  assert.equal(cutStillApplies(source, { sheet: 1, generation: 3 }), false);
++  assert.equal(cutStillApplies(source, { sheet: 0, generation: 4 }), false);
++});
+diff --git a/packages/react-xlsx/src/clipboard-memory.ts b/packages/react-xlsx/src/clipboard-memory.ts
+new file mode 100644
+index 0000000..da8f9e8
+--- /dev/null
++++ b/packages/react-xlsx/src/clipboard-memory.ts
+@@ -0,0 +1,90 @@
++/** The viewer's last copy or cut, page-wide like the system clipboard it shadows. Browsers keep the
++ *  viewer's own cell format out of the async clipboard (it takes plain text and HTML only), so a
++ *  menu paste, or a paste event without that format, uses the remembered cells when the clipboard
++ *  text still matches them. */
++
++export const INTERNAL_CLIPBOARD_MIME = "application/x-react-xlsx-range+json";
++/** Marks a grid, so a copy anywhere else on the page forgets the remembered cells. */
++export const GRID_SURFACE_ATTRIBUTE = "data-react-xlsx-grid";
++
++let lastCopy: { text: string; structured: string } | null = null;
++let watching = false;
++
++export function forgetCopy() {
++  lastCopy = null;
++}
++
++function watchOtherCopies() {
++  if (watching || typeof document === "undefined") return;
++  watching = true;
++  const forget = (event: Event) => {
++    const target = event.target;
++    const inGrid =
++      typeof Element !== "undefined" && target instanceof Element && target.closest(`[${GRID_SURFACE_ATTRIBUTE}]`);
++    if (!inGrid) forgetCopy();
++  };
++  document.addEventListener("copy", forget, true);
++  document.addEventListener("cut", forget, true);
++}
++
++export function rememberCopy(text: string, structured: string) {
++  watchOtherCopies();
++  lastCopy = { text, structured };
++}
++
++const sameText = (a: string, b: string) => a.replace(/\r\n/g, "\n").trimEnd() === b.replace(/\r\n/g, "\n").trimEnd();
++
++/** The remembered cells, when `text` is what was copied with them. */
++export function rememberedCells(text: string): string | null {
++  return lastCopy && sameText(text, lastCopy.text) ? lastCopy.structured : null;
++}
++
++type PayloadCell = Record<string, unknown>;
++
++function payloadCells(structured: string): { payload: Record<string, unknown>; cells: PayloadCell[] } | null {
++  try {
++    const payload: unknown = JSON.parse(structured);
++    if (typeof payload !== "object" || payload === null || !("cells" in payload) || !Array.isArray(payload.cells)) {
++      return null;
++    }
++    const cells = payload.cells.filter((cell): cell is PayloadCell => typeof cell === "object" && cell !== null);
++    return { payload: payload as Record<string, unknown>, cells };
++  } catch {
++    return null;
++  }
++}
++
++/** A cut moves formulas unchanged: without source coordinates, paste does not relocate them. */
++export function withoutCopyOrigins(structured: string): string | null {
++  const parsed = payloadCells(structured);
++  if (!parsed) return null;
++  const cells = parsed.cells.map(({ source: _source, ...cell }) => cell);
++  return JSON.stringify({ ...parsed.payload, cells });
++}
++
++/** What a cut puts on the clipboard: the move payload when its clear goes ahead, else the copy. */
++export function cutPayload(structured: string, clearAllowed: boolean): string {
++  return (clearAllowed && withoutCopyOrigins(structured)) || structured;
++}
++
++/** Whether a cut's clear still belongs to what's on screen after its clipboard write: the same
++ *  workbook load and the same sheet. */
++export function cutStillApplies(
++  source: { sheet: number | undefined; generation: number },
++  now: { sheet: number | undefined; generation: number }
++): boolean {
++  return source.sheet === now.sheet && source.generation === now.generation;
++}
++
++/** Excel's Paste Values: values only, no formulas, formatting or merges. */
++export function valuesOnly(structured: string): string | null {
++  const parsed = payloadCells(structured);
++  if (!parsed) return null;
++  const cells = parsed.cells.flatMap((cell) => {
++    const { rowOffset, colOffset } = cell;
++    if (cell.styleOnly === true || typeof rowOffset !== "number" || typeof colOffset !== "number") return [];
++    const value = typeof cell.value === "string" ? cell.value : "";
++    return [{ rowOffset, colOffset, value, raw: cell.raw, formula: null }];
++  });
++  return JSON.stringify({ ...parsed.payload, cells, merges: [], styles: [] });
++}
 diff --git a/packages/react-xlsx/src/controller.tsx b/packages/react-xlsx/src/controller.tsx
-index 23933bc..5c9298a 100644
+index 23933bc..c6eb756 100644
 --- a/packages/react-xlsx/src/controller.tsx
 +++ b/packages/react-xlsx/src/controller.tsx
 @@ -1,3 +1,5 @@
@@ -2197,7 +2819,15 @@ index 23933bc..5c9298a 100644
    Workbook
  } from "@dukelib/sheets-wasm";
  import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-@@ -46,9 +49,13 @@ import {
+@@ -31,6 +34,7 @@ import {
+   rectToImageAnchor,
+   refreshWorkbookFormControls,
+   resolveContentSheetAxisPixels,
++  resolveDeviceGridlineThicknessPx,
+   resolveWorksheetDefaultColumnWidthPixels,
+   resolveWorksheetDefaultRowHeightPixels,
+   resolveWorksheetHiddenCols,
+@@ -46,16 +50,37 @@ import {
    type WorkbookImageAssets,
    type WorkbookImageSheetOrigin
  } from "./images";
@@ -2210,9 +2840,25 @@ index 23933bc..5c9298a 100644
  import { XlsxWorkerClient } from "./worker-client";
 +import { mergesTouching, mergeTarget } from "./merge-regions";
  import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
++import {
++  clipboardTextGrid,
++  isPastedFormula,
++  fillWrites,
++  formulaDelta,
++  formulaProblem,
++  formulaText,
++  payloadWrites,
++  rangeFrom,
++  textWrites,
++  type XlsxEdit
++} from "./edit-guard";
++import { cutPayload, cutStillApplies, INTERNAL_CLIPBOARD_MIME, rememberCopy, rememberedCells, valuesOnly } from "./clipboard-memory";
++import { needsMainThreadReload } from "./load-mode";
++import { externalValuesState } from "./external-values";
++import { autoFitSizes } from "./auto-fit";
  import type {
    UseXlsxViewerControllerOptions,
-@@ -56,6 +63,7 @@ import type {
+   XlsxChart,
    XlsxChartElementSelection,
    XlsxChartsheet,
    XlsxCellAddress,
@@ -2220,7 +2866,7 @@ index 23933bc..5c9298a 100644
    XlsxCellRange,
    XlsxCellStyleColorInput,
    XlsxCellStyleInput,
-@@ -85,7 +93,6 @@ import type {
+@@ -85,7 +110,6 @@ import type {
    XlsxWorkbookTab
  } from "./types";
  
@@ -2228,7 +2874,15 @@ index 23933bc..5c9298a 100644
  const DEFAULT_ROW_HEIGHT = 24;
  const DEFAULT_COL_WIDTH = 80;
  const XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-@@ -369,13 +376,6 @@ export class XlsxFileSizeLimitExceededError extends Error {
+@@ -95,7 +119,6 @@ const MIN_ROW_HEIGHT_PX = 16;
+ const GRID_HEADER_HEIGHT = 24;
+ const GRID_ROW_HEADER_WIDTH = 40;
+ const HISTORY_LIMIT = 100;
+-const INTERNAL_CLIPBOARD_MIME = "application/x-react-xlsx-range+json";
+ const DEFAULT_DEFER_LOADING_ABOVE_BYTES = 0;
+ const DEFAULT_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
+ const MAX_INTERACTIVE_WORKSHEET_XML_BYTES = 200 * 1024 * 1024;
+@@ -369,13 +392,6 @@ export class XlsxFileSizeLimitExceededError extends Error {
  
  type HistoryEntry = SnapshotHistoryEntry | CellEditHistoryEntry | RangeEditHistoryEntry;
  
@@ -2242,7 +2896,7 @@ index 23933bc..5c9298a 100644
  type ClipboardMerge = {
    colSpan: number;
    colOffset: number;
-@@ -388,6 +388,8 @@ type ClipboardPayload = {
+@@ -388,6 +404,8 @@ type ClipboardPayload = {
    cols: number;
    merges: ClipboardMerge[];
    rows: number;
@@ -2251,7 +2905,7 @@ index 23933bc..5c9298a 100644
  };
  
  function resolveDisplayFileName(src?: string, fileName?: string): string {
-@@ -1085,6 +1087,17 @@ function normalizeRange(range: XlsxCellRange): XlsxCellRange {
+@@ -1085,6 +1103,17 @@ function normalizeRange(range: XlsxCellRange): XlsxCellRange {
    };
  }
  
@@ -2269,7 +2923,7 @@ index 23933bc..5c9298a 100644
  function rangeToA1(range: XlsxCellRange): string {
    const normalized = normalizeRange(range);
    const start = cellAddressToA1(normalized.start);
-@@ -1356,7 +1369,8 @@ function coerceUserEnteredValue(value: string): unknown {
+@@ -1356,7 +1385,8 @@ function coerceUserEnteredValue(value: string): unknown {
  function applyCellMutationState(
    worksheet: ReturnType<Workbook["getSheet"]>,
    cell: XlsxCellAddress,
@@ -2279,7 +2933,7 @@ index 23933bc..5c9298a 100644
  ) {
    if (state.formula) {
      worksheet.setFormula(cellAddressToA1(cell), state.formula);
-@@ -1364,8 +1378,9 @@ function applyCellMutationState(
+@@ -1364,8 +1394,9 @@ function applyCellMutationState(
      worksheet.setCell(cellAddressToA1(cell), normalizeCellValue(state.value));
    }
  
@@ -2291,7 +2945,25 @@ index 23933bc..5c9298a 100644
    }
  }
  
-@@ -1439,29 +1454,33 @@ async function resolveWorkbookBuffer(
+@@ -1378,17 +1409,6 @@ function escapeHtml(value: string) {
+     .replace(/'/g, "&#39;");
+ }
+ 
+-function parseClipboardText(text: string): string[][] {
+-  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+-  const rows = normalized.split("\n");
+-
+-  if (rows.length > 1 && rows[rows.length - 1] === "") {
+-    rows.pop();
+-  }
+-
+-  return rows.map((row) => row.split("\t"));
+-}
+-
+ function createAbortError() {
+   if (typeof DOMException !== "undefined") {
+     return new DOMException("Aborted", "AbortError");
+@@ -1439,29 +1459,33 @@ async function resolveWorkbookBuffer(
    return buffer;
  }
  
@@ -2335,7 +3007,7 @@ index 23933bc..5c9298a 100644
      workbook: result.workbook
    };
  }
-@@ -1870,7 +1889,9 @@ function downloadUrl(src: string, fileName: string) {
+@@ -1870,10 +1894,13 @@ function downloadUrl(src: string, fileName: string) {
  export function useXlsxViewerController(options: UseXlsxViewerControllerOptions): XlsxViewerController {
    const {
      allowResizeInReadOnly = false,
@@ -2345,17 +3017,30 @@ index 23933bc..5c9298a 100644
      file,
      fileName,
      maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES,
-@@ -1881,6 +1902,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
++    onBeforeEdit,
+     readOnly: requestedReadOnly = false,
+     readOnlyAboveBytes = 0,
+     showHiddenSheets = false,
+@@ -1881,6 +1908,18 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      src,
      useWorker = true
    } = options;
 +  // Read when a workbook loads or recalculates, so changing the limit never reloads the file.
 +  const autoCalculateFormulaLimitRef = React.useRef(autoCalculateFormulaLimit);
 +  autoCalculateFormulaLimitRef.current = autoCalculateFormulaLimit;
++  // Read when a workbook loads or recalculates, so new values recalculate in place.
++  const externalFnValuesRef = React.useRef(externalFnValues);
++  externalFnValuesRef.current = externalFnValues;
++  const [externalValues] = React.useState(externalValuesState);
++  const onBeforeEditRef = React.useRef(onBeforeEdit);
++  onBeforeEditRef.current = onBeforeEdit;
++  // Read when a workbook loads, so switching read-only on or off never reloads it.
++  const requestedReadOnlyRef = React.useRef(requestedReadOnly);
++  requestedReadOnlyRef.current = requestedReadOnly;
    const [isLoading, setIsLoading] = React.useState(Boolean(file ?? src));
    const [error, setError] = React.useState<Error | null>(null);
    const [workbook, setWorkbook] = React.useState<Workbook | null>(null);
-@@ -1898,10 +1922,32 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -1898,10 +1937,32 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    const [zoomScaleOverridesByTabId, setZoomScaleOverridesByTabId] = React.useState<Record<string, number>>({});
    const [activeCell, setActiveCell] = React.useState<XlsxCellAddress | null>(null);
    const [selection, setSelection] = React.useState<XlsxCellRange | null>(null);
@@ -2388,7 +3073,12 @@ index 23933bc..5c9298a 100644
    const selectionAnchorRef = React.useRef<XlsxCellAddress | null>(null);
    const undoStackRef = React.useRef<HistoryEntry[]>([]);
    const redoStackRef = React.useRef<HistoryEntry[]>([]);
-@@ -1915,12 +1961,17 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -1912,27 +1973,35 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+   const [isWorkerBacked, setIsWorkerBacked] = React.useState(false);
+   const [sortState, setSortState] = React.useState<XlsxTableSortState | null>(null);
+   const [forcedReadOnly, setForcedReadOnly] = React.useState(false);
++  /** Bumped to load the same file again, e.g. onto the main thread when editing turns on. */
++  const [loadGeneration, setLoadGeneration] = React.useState(0);
    const deferredBufferRef = React.useRef<ArrayBuffer | null>(null);
    const [deferredLoadFileSize, setDeferredLoadFileSize] = React.useState<number | null>(null);
    const imageAssetsRef = React.useRef<WorkbookImageAssets | null>(null);
@@ -2406,8 +3096,27 @@ index 23933bc..5c9298a 100644
 +  const workerCellSnapshotCacheRef = React.useRef(new Map<string, { displayValue: string; formula: string; diagnostic: XlsxCellCalculationDiagnostic }>());
    const displayFileName = React.useMemo(() => resolveDisplayFileName(src, fileName), [fileName, src]);
    const shouldDeferLoading = deferLoadingAboveBytes > 0;
-   const readOnly = requestedReadOnly || forcedReadOnly;
-@@ -2140,7 +2191,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+-  const readOnly = requestedReadOnly || forcedReadOnly;
++  // The worker can't edit, so a worker-backed workbook stays read-only until it reloads on the
++  // main thread (see the effect after the load).
++  const readOnly = requestedReadOnly || forcedReadOnly || isWorkerBacked;
+   const canResizeReadOnly = requestedReadOnly && allowResizeInReadOnly && !forcedReadOnly;
+   const workerSupported = useWorker && typeof Worker !== "undefined" && canUseConfiguredWasmSourceInWorker();
+-  const canUseWorkerForRequestedReadOnly = requestedReadOnly;
+   const shouldForceReadOnlyForBuffer = React.useCallback((bufferByteLength: number) => (
+-    !requestedReadOnly && readOnlyAboveBytes > 0 && bufferByteLength > readOnlyAboveBytes
+-  ), [readOnlyAboveBytes, requestedReadOnly]);
++    !requestedReadOnlyRef.current && readOnlyAboveBytes > 0 && bufferByteLength > readOnlyAboveBytes
++  ), [readOnlyAboveBytes]);
+   const shouldUseWorkerForReadOnlyLoad = React.useCallback((willForceReadOnly: boolean) => (
+-    workerSupported && (willForceReadOnly || canUseWorkerForRequestedReadOnly)
+-  ), [canUseWorkerForRequestedReadOnly, workerSupported]);
++    workerSupported && (willForceReadOnly || requestedReadOnlyRef.current)
++  ), [workerSupported]);
+ 
+   const disposeWorkerClient = React.useCallback(() => {
+     workerClientRef.current?.dispose();
+@@ -2140,7 +2209,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        return;
      }
  
@@ -2416,25 +3125,17 @@ index 23933bc..5c9298a 100644
        .then((result) => {
          if (workerTimeoutHandle !== null) {
            window.clearTimeout(workerTimeoutHandle);
-@@ -2170,7 +2221,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2170,7 +2239,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    }, [getWorkerClient, hasIncompleteWorkerChartSnapshot, setChartAssets, showHiddenSheets, skipXmlParsing, workerSupported]);
  
    const loadWorkbookOnMainThread = React.useCallback(async (buffer: ArrayBuffer) => {
 -    const nextParsedWorkbook = await parseWorkbookBuffer(buffer);
-+    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValues, autoCalculateFormulaLimitRef.current);
++    externalValues.loaded(externalFnValuesRef.current);
++    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValuesRef.current, autoCalculateFormulaLimitRef.current);
      const bytes = new Uint8Array(buffer);
      const nextImageAssets = loadWorkbookImageAssets(
        bytes,
-@@ -2181,7 +2232,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
-       imageAssets: nextImageAssets,
-       parsedWorkbook: nextParsedWorkbook
-     };
--  }, [skipXmlParsing]);
-+  }, [externalFnValues, skipXmlParsing]);
- 
-   const refreshWorkbookState = React.useCallback((targetWorkbook: Workbook) => {
-     const currentFormControls = imageAssetsRef.current?.formControlsByWorkbookSheetIndex ?? [];
-@@ -2224,6 +2275,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2224,6 +2294,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
    React.useEffect(() => {
      if (!file && !src) {
@@ -2447,7 +3148,7 @@ index 23933bc..5c9298a 100644
        disposeWorkerClient();
        setForcedReadOnly(false);
        setWorkbook(null);
-@@ -2257,6 +2314,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2257,6 +2333,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      }
  
      let isCurrent = true;
@@ -2458,7 +3159,7 @@ index 23933bc..5c9298a 100644
      const abortController = new AbortController();
      setIsLoading(true);
      setError(null);
-@@ -2296,6 +2357,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2296,6 +2376,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          }
  
          buffer = normalizeWorkbookArrayBuffer(buffer);
@@ -2466,7 +3167,7 @@ index 23933bc..5c9298a 100644
  
          const preflight = preflightWorkbookBuffer(buffer);
          if (preflight?.tooLarge) {
-@@ -2310,6 +2372,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2310,6 +2391,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          if (shouldDeferLoading && buffer.byteLength > deferLoadingAboveBytes) {
            deferredBufferRef.current = buffer;
            setDeferredLoadFileSize(buffer.byteLength);
@@ -2474,16 +3175,17 @@ index 23933bc..5c9298a 100644
            setWorkbook(null);
            setSheets([]);
            clearChartAssets();
-@@ -2320,7 +2383,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2320,7 +2402,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
          if (shouldUseWorkerForLoad) {
            try {
 -            const snapshot = await getWorkerClient().loadWorkbook(buffer, effectiveSkipXmlParsing, showHiddenSheets);
-+            const snapshot = await getWorkerClient().loadWorkbook(buffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValues);
++            externalValues.loaded(externalFnValuesRef.current);
++            const snapshot = await getWorkerClient().loadWorkbook(buffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValuesRef.current);
              if (!isCurrent || abortController.signal.aborted) {
                return;
              }
-@@ -2343,6 +2406,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2343,6 +2426,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
              setFormControlsByWorkbookSheetIndex(snapshot.formControlsByWorkbookSheetIndex);
              setWorkbook(null);
              setSheets(snapshot.sheets);
@@ -2493,7 +3195,7 @@ index 23933bc..5c9298a 100644
              setChartsByWorkbookSheetIndex(snapshot.chartsByWorkbookSheetIndex);
              setChartsheets(snapshot.chartsheets);
              setTabs(snapshot.tabs);
-@@ -2374,6 +2440,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2374,6 +2460,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
          setImageAssets(nextImageAssets);
          setWorkbook(nextParsedWorkbook.workbook);
@@ -2503,7 +3205,7 @@ index 23933bc..5c9298a 100644
          const nextSheets = buildSheetList(
            nextParsedWorkbook.workbook,
            nextImageAssets.sheetStatesByWorkbookSheetIndex,
-@@ -2405,15 +2474,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2405,15 +2494,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          setIsWorkerBacked(false);
          setSortState(null);
          setError(nextError instanceof Error ? nextError : new Error("Could not load workbook."));
@@ -2524,7 +3226,33 @@ index 23933bc..5c9298a 100644
      clearChartAssets,
      clearImageAssets,
      deferLoadingAboveBytes,
-@@ -2534,10 +2608,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2430,13 +2524,24 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     shouldForceReadOnlyForBuffer,
+     shouldUseWorkerForReadOnlyLoad,
+     src,
+-    showHiddenSheets
++    showHiddenSheets,
++    loadGeneration
+   ]);
+ 
++  // The worker can't edit: turning read-only off reloads a worker-backed workbook on the main thread.
++  React.useEffect(() => {
++    if (needsMainThreadReload({ isWorkerBacked, isLoading, requestedReadOnly, forcedReadOnly })) {
++      setLoadGeneration((generation) => generation + 1);
++    }
++  }, [forcedReadOnly, isLoading, isWorkerBacked, requestedReadOnly]);
++
+   const activeTab = tabs[activeTabIndex] ?? null;
+   const activeSheet = activeTab?.kind === "sheet"
+     ? sheets[activeTab.sheetIndex ?? -1] ?? null
+     : null;
++  /** Read after an await, to tell whether the user moved to another sheet meanwhile. */
++  const activeSheetRef = React.useRef(activeSheet);
++  activeSheetRef.current = activeSheet;
+   const deferredMetadataCell = React.useDeferredValue(activeCell);
+   const deferredMetadataSheet = React.useDeferredValue(activeSheet);
+   const activeZoomTabKey = activeTab?.id ?? DEFAULT_ZOOM_TAB_KEY;
+@@ -2534,10 +2639,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
    const continueDeferredLoad = React.useCallback(() => {
      const deferredBuffer = deferredBufferRef.current;
@@ -2539,7 +3267,7 @@ index 23933bc..5c9298a 100644
      setIsLoading(true);
      setError(null);
  
-@@ -2552,6 +2629,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2552,6 +2660,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        setShouldAutoCalculate(false);
        setIsWorkerBacked(false);
        setSortState(null);
@@ -2547,7 +3275,7 @@ index 23933bc..5c9298a 100644
        setError(new XlsxFileSizeLimitExceededError(deferredBuffer.byteLength, maxFileSizeBytes));
        setIsLoading(false);
        return;
-@@ -2569,6 +2647,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2569,6 +2678,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        setShouldAutoCalculate(false);
        setIsWorkerBacked(false);
        setSortState(null);
@@ -2555,18 +3283,19 @@ index 23933bc..5c9298a 100644
        setError(createWorkbookTooLargeError(preflight));
        setIsLoading(false);
        return;
-@@ -2580,8 +2659,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2580,8 +2690,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      const effectiveSkipXmlParsing = shouldSkipXmlParsingForWorkbook(new Uint8Array(deferredBuffer), skipXmlParsing);
  
      if (shouldUseWorkerForLoad) {
 -      void getWorkerClient().loadWorkbook(deferredBuffer, effectiveSkipXmlParsing, showHiddenSheets)
-+      void getWorkerClient().loadWorkbook(deferredBuffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValues)
++      externalValues.loaded(externalFnValuesRef.current);
++      void getWorkerClient().loadWorkbook(deferredBuffer, effectiveSkipXmlParsing, showHiddenSheets, externalFnValuesRef.current)
          .then((snapshot) => {
 +          if (!isCurrent()) return;
            if (!effectiveSkipXmlParsing && hasIncompleteWorkerChartSnapshot(snapshot)) {
              throw new Error("Worker chart payload incomplete");
            }
-@@ -2596,6 +2676,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2596,6 +2708,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
            setDeferredLoadFileSize(null);
            setWorkbook(null);
            setSheets(snapshot.sheets);
@@ -2576,7 +3305,7 @@ index 23933bc..5c9298a 100644
            setChartsByWorkbookSheetIndex(snapshot.chartsByWorkbookSheetIndex);
            setChartsheets(snapshot.chartsheets);
            setTabs(snapshot.tabs);
-@@ -2609,6 +2692,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2609,6 +2724,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
            setIsLoading(false);
          })
          .catch(async (workerError: unknown) => {
@@ -2584,7 +3313,7 @@ index 23933bc..5c9298a 100644
            if (isAbortError(workerError)) {
              return;
            }
-@@ -2618,10 +2702,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2618,10 +2734,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
            disposeWorkerClient();
            const { imageAssets: nextImageAssets, parsedWorkbook: nextParsedWorkbook } = await loadWorkbookOnMainThread(deferredBuffer);
@@ -2599,7 +3328,7 @@ index 23933bc..5c9298a 100644
            const nextSheets = buildSheetList(
              nextParsedWorkbook.workbook,
              nextImageAssets.sheetStatesByWorkbookSheetIndex,
-@@ -2640,6 +2728,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2640,6 +2760,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
            setIsLoading(false);
          })
          .catch((nextError: unknown) => {
@@ -2607,7 +3336,7 @@ index 23933bc..5c9298a 100644
            deferredBufferRef.current = null;
            setDeferredLoadFileSize(null);
            setWorkbook(null);
-@@ -2651,13 +2740,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2651,13 +2772,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
            setIsWorkerBacked(false);
            setSortState(null);
            setError(nextError instanceof Error ? nextError : new Error("Could not load workbook."));
@@ -2618,13 +3347,14 @@ index 23933bc..5c9298a 100644
      }
  
 -    void parseWorkbookBuffer(deferredBuffer)
-+    void parseWorkbookBuffer(deferredBuffer, externalFnValues, autoCalculateFormulaLimitRef.current)
++    externalValues.loaded(externalFnValuesRef.current);
++    void parseWorkbookBuffer(deferredBuffer, externalFnValuesRef.current, autoCalculateFormulaLimitRef.current)
        .then((nextParsedWorkbook) => {
 +        if (!isCurrent()) { nextParsedWorkbook.workbook.free(); return; }
          const bytes = new Uint8Array(deferredBuffer);
          const nextImageAssets = loadWorkbookImageAssets(
            bytes,
-@@ -2668,6 +2759,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2668,6 +2792,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          setDeferredLoadFileSize(null);
          setImageAssets(nextImageAssets);
          setWorkbook(nextParsedWorkbook.workbook);
@@ -2634,7 +3364,7 @@ index 23933bc..5c9298a 100644
          const nextSheets = buildSheetList(
            nextParsedWorkbook.workbook,
            nextImageAssets.sheetStatesByWorkbookSheetIndex,
-@@ -2686,6 +2780,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2686,6 +2813,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          setIsLoading(false);
        })
        .catch((nextError: unknown) => {
@@ -2642,7 +3372,7 @@ index 23933bc..5c9298a 100644
          deferredBufferRef.current = null;
          setDeferredLoadFileSize(null);
          setWorkbook(null);
-@@ -2697,9 +2792,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2697,9 +2825,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          setIsWorkerBacked(false);
          setSortState(null);
          setError(nextError instanceof Error ? nextError : new Error("Could not load workbook."));
@@ -2656,7 +3386,7 @@ index 23933bc..5c9298a 100644
      clearChartAssets,
      clearImageAssets,
      disposeWorkerClient,
-@@ -2715,15 +2814,21 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2715,15 +2847,21 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
    ]);
  
    const maybeRecalculateWorkbook = React.useCallback((targetWorkbook: Workbook) => {
@@ -2670,7 +3400,7 @@ index 23933bc..5c9298a 100644
      }
  
 -    const result = tryRecalculate(targetWorkbook);
-+    const result = safeCalculate(targetWorkbook);
++    const result = safeCalculate(targetWorkbook, { calcOptions: externalCalcOptions(externalValues.current()) });
 +    hasCalculatedValuesRef.current ||= result.calculated;
 +    applyCalculation(result.calculation, attempt);
      if (!result.calculated) {
@@ -2681,7 +3411,22 @@ index 23933bc..5c9298a 100644
  
    const getActiveWorksheet = React.useCallback(() => {
      if (!workbook || !activeSheet) {
-@@ -2761,13 +2866,24 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -2733,6 +2871,14 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     return workbook.getSheet(activeSheet.workbookSheetIndex);
+   }, [activeSheet, workbook]);
+ 
++  /** Asks the host's `onBeforeEdit` about an edit to the active sheet; without one, refuses only
++   *  a formula the engine would mishandle. */
++  const allowEdit = React.useCallback((edit: Omit<XlsxEdit, "sheetIndex">) => {
++    const full: XlsxEdit = { ...edit, sheetIndex: activeSheet?.workbookSheetIndex ?? 0 };
++    const hook = onBeforeEditRef.current;
++    return hook ? hook(full) : !full.formulaProblem;
++  }, [activeSheet]);
++
+   const getFormControlWorksheet = React.useCallback((sheetIndex = activeSheetIndex) => {
+     const targetSheet = sheets[sheetIndex];
+     if (!workbook || !targetSheet) {
+@@ -2761,13 +2907,24 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      if (!isWorkerBacked) {
        return Promise.resolve({
          displayValue: "",
@@ -2707,7 +3452,7 @@ index 23933bc..5c9298a 100644
    const getRowsBatchAsync = React.useCallback((workbookSheetIndex: number, startRow: number, rowCount: number) => {
      if (!isWorkerBacked) {
        return Promise.resolve(null);
-@@ -3045,17 +3161,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3045,17 +3202,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        return "";
      }
  
@@ -2726,7 +3471,7 @@ index 23933bc..5c9298a 100644
      if (calculated.is_error) {
        return calculated.asError() ?? "";
      }
-@@ -3066,6 +3177,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3066,6 +3218,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      return calculated.toString();
    }, [activeSheet, getActiveWorksheet]);
  
@@ -2743,7 +3488,7 @@ index 23933bc..5c9298a 100644
    const getCellFormula = React.useCallback((cell?: XlsxCellAddress | null) => {
      if (cell && activeSheet) {
        const workerSnapshot = workerCellSnapshotCacheRef.current.get(`${activeSheet.workbookSheetIndex}:${cell.row}:${cell.col}`);
-@@ -3092,11 +3213,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3092,11 +3254,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      const normalized = normalizeRange(targetRange);
      const rows: string[] = [];
      const htmlRows: string[] = [];
@@ -2758,7 +3503,7 @@ index 23933bc..5c9298a 100644
      };
  
      for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
-@@ -3104,20 +3227,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3104,20 +3268,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        const htmlCells: string[] = [];
  
        for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
@@ -2783,7 +3528,7 @@ index 23933bc..5c9298a 100644
          const cellStyles: string[] = [
            "padding:2px 4px",
            "white-space:pre-wrap",
-@@ -3184,12 +3307,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3184,12 +3348,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          const rowSpan = Math.min(merge?.rowSpan ?? 1, normalized.end.row - row + 1);
          const colSpan = Math.min(merge?.colSpan ?? 1, normalized.end.col - col + 1);
  
@@ -2799,7 +3544,7 @@ index 23933bc..5c9298a 100644
  
          if (rowSpan > 1 || colSpan > 1) {
            payload.merges.push({
-@@ -3237,22 +3357,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3237,22 +3398,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          workerCellSnapshotCacheRef.current.set(cacheKey, snapshot);
          setWorkerCellSnapshotRevision((current) => current + 1);
        })
@@ -2825,7 +3570,7 @@ index 23933bc..5c9298a 100644
  
    const activeCellAddress = React.useMemo(() => (activeCell ? cellAddressToA1(activeCell) : null), [activeCell]);
    const selectedRangeAddress = React.useMemo(() => (selection ? rangeToA1(selection) : null), [selection]);
-@@ -3350,6 +3461,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3350,6 +3502,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      setIsLoading(false);
      setImageAssets(nextImageAssets);
      setWorkbook(nextWorkbook);
@@ -2835,7 +3580,7 @@ index 23933bc..5c9298a 100644
      setSheets(nextSheets);
      const nextChartAssets = loadWorkbookChartAssets(nextWorkbook, nextImageAssets, buildVisibleSheetIndexMap(nextSheets), showHiddenSheets);
      setChartAssets(nextChartAssets);
-@@ -3362,7 +3476,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3362,7 +3517,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      setSelection(entry.selection);
      selectionAnchorRef.current = entry.selection ? normalizeRange(entry.selection).start : entry.activeCell;
      setRevision((current) => current + 1);
@@ -2844,7 +3589,7 @@ index 23933bc..5c9298a 100644
  
    const applyCellEditHistoryEntry = React.useCallback((
      entry: CellEditHistoryEntry,
-@@ -3377,7 +3491,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3377,7 +3532,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      const targetState = direction === "undo" ? entry.before : entry.after;
  
      isApplyingHistoryRef.current = true;
@@ -2853,7 +3598,7 @@ index 23933bc..5c9298a 100644
      maybeRecalculateWorkbook(workbook);
      refreshWorkbookState(workbook);
  
-@@ -3390,7 +3504,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3390,7 +3545,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      setSelection(nextSelection);
      selectionAnchorRef.current = nextSelection ? normalizeRange(nextSelection).start : nextActiveCell;
      isApplyingHistoryRef.current = false;
@@ -2862,7 +3607,7 @@ index 23933bc..5c9298a 100644
  
    const applyRangeEditHistoryEntry = React.useCallback((
      entry: RangeEditHistoryEntry,
-@@ -3404,8 +3518,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3404,8 +3559,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      const visibleSheetIndex = sheets.findIndex((sheet) => sheet.workbookSheetIndex === entry.sheetIndex);
  
      isApplyingHistoryRef.current = true;
@@ -2873,7 +3618,7 @@ index 23933bc..5c9298a 100644
      }
      maybeRecalculateWorkbook(workbook);
      refreshWorkbookState(workbook);
-@@ -3419,7 +3534,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3419,7 +3575,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      setSelection(nextSelection);
      selectionAnchorRef.current = nextSelection ? normalizeRange(nextSelection).start : nextActiveCell;
      isApplyingHistoryRef.current = false;
@@ -2882,7 +3627,66 @@ index 23933bc..5c9298a 100644
  
    const recordHistoryBeforeMutation = React.useCallback(() => {
      if (isApplyingHistoryRef.current) {
-@@ -3694,7 +3809,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3438,7 +3594,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+ 
+   const addFormControl = React.useCallback((input: XlsxFormControlInput, sheetIndex = activeSheetIndex) => {
+     const target = getFormControlWorksheet(sheetIndex);
+-    if (readOnly || !workbook || !target) {
++    if (readOnly || !workbook || !target || !allowEdit({ kind: "structure" })) {
+       return null;
+     }
+ 
+@@ -3457,7 +3613,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     maybeRecalculateWorkbook(workbook);
+     refreshWorkbookState(workbook);
+     return controlIndex;
+-  }, [activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
++  }, [allowEdit, activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+ 
+   const updateFormControl = React.useCallback((
+     controlIndex: number,
+@@ -3466,7 +3622,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+   ) => {
+     const target = getFormControlWorksheet(sheetIndex);
+     const currentControl = target?.worksheet.formControls[controlIndex];
+-    if (readOnly || !workbook || !target || !currentControl) {
++    if (readOnly || !workbook || !target || !currentControl || !allowEdit({ kind: "structure" })) {
+       return false;
+     }
+ 
+@@ -3538,11 +3694,11 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     maybeRecalculateWorkbook(workbook);
+     refreshWorkbookState(workbook);
+     return true;
+-  }, [activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
++  }, [allowEdit, activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+ 
+   const removeFormControl = React.useCallback((controlIndex: number, sheetIndex = activeSheetIndex) => {
+     const target = getFormControlWorksheet(sheetIndex);
+-    if (readOnly || !workbook || !target || !target.worksheet.formControls[controlIndex]) {
++    if (readOnly || !workbook || !target || !target.worksheet.formControls[controlIndex] || !allowEdit({ kind: "structure" })) {
+       return false;
+     }
+ 
+@@ -3556,7 +3712,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     }
+     refreshWorkbookState(workbook);
+     return true;
+-  }, [activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
++  }, [allowEdit, activeSheetIndex, getFormControlWorksheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, workbook]);
+ 
+   const recordCellEditHistory = React.useCallback((
+     cell: XlsxCellAddress,
+@@ -3607,7 +3763,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+   const sortTable = React.useCallback((tableName: string, columnIndex: number, direction: XlsxTableSortDirection) => {
+     const worksheet = getActiveWorksheet();
+     const targetTable = tables.find((table) => table.name === tableName || table.displayName === tableName);
+-    if (!worksheet || !workbook || !activeSheet || !targetTable) {
++    if (!worksheet || !workbook || !activeSheet || !targetTable || !allowEdit({ kind: "structure" })) {
+       return;
+     }
+ 
+@@ -3694,7 +3850,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
          }
  
          const cell = { row: targetRow, col: startCol + colOffset };
@@ -2891,7 +3695,16 @@ index 23933bc..5c9298a 100644
          mutations.push({
            after,
            before,
-@@ -3717,7 +3832,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3707,7 +3863,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     refreshWorkbookState(workbook);
+     setSortState({ columnIndex, direction, tableName: targetTable.name });
+     recordRangeEditHistory(mutations, selection, activeCell);
+-  }, [
++  }, [allowEdit, 
+     activeCell,
+     activeSheet,
+     getActiveWorksheet,
+@@ -3717,7 +3873,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      refreshWorkbookState,
      selection,
      tables,
@@ -2901,14 +3714,15 @@ index 23933bc..5c9298a 100644
    ]);
  
    const download = React.useCallback(() => {
-@@ -3748,82 +3864,88 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3748,82 +3905,98 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      downloadText(workbook.saveCsvString(), `${fileStem(displayFileName)}-${activeSheetName}.csv`, CSV_MIME_TYPE);
    }, [activeSheet?.name, displayFileName, workbook]);
  
 -  const recalculate = React.useCallback(() => {
 -    if (!workbook) {
-+  const recalculate = React.useCallback((externalFnValues?: ExternalFnValues) => {
++  const recalculate = React.useCallback((values?: ExternalFnValues) => {
 +    if (isLoading || (!isWorkerBacked && !workbook)) return;
++    const externalFnValues = externalValues.recalculated(values);
 +    const attempt = beginCalculation();
 +    const generation = workbookGenerationRef.current;
 +    const isCurrent = () => generation === workbookGenerationRef.current && attempt === calculationAttemptRef.current;
@@ -2956,7 +3770,12 @@ index 23933bc..5c9298a 100644
 -    // don't crash reading cells from it.
 -    setShouldAutoCalculate(false);
 -  }, [refreshWorkbookState, workbook]);
--
++  // New external values recalculate the loaded workbook in place, once.
++  React.useEffect(() => {
++    if (isLoading || !externalValues.propChanged(externalFnValues)) return;
++    recalculate(externalFnValues);
++  }, [externalFnValues, isLoading, recalculate]);
+ 
 -  const applyReadOnlyResizeOverride = React.useCallback((
 +  const applyReadOnlyResizeOverrides = React.useCallback((
      axis: "column" | "row",
@@ -3030,6 +3849,9 @@ index 23933bc..5c9298a 100644
 -    if ((readOnly && !canResizeReadOnly) || !activeSheet) {
 +  const resizeAxis = React.useCallback((axis: "column" | "row", sizes: ReadonlyArray<XlsxAxisSize>) => {
 +    if ((readOnly && !canResizeReadOnly) || !activeSheet || sizes.length === 0) {
++      return;
++    }
++    if (!allowEdit({ kind: "resize", axis, indices: sizes.map((size) => size.index) })) {
        return;
      }
  
@@ -3039,7 +3861,7 @@ index 23933bc..5c9298a 100644
        return;
      }
  
-@@ -3833,46 +3955,18 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3833,14 +4006,19 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
      recordHistoryBeforeMutation();
      const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
@@ -3047,30 +3869,6 @@ index 23933bc..5c9298a 100644
 -      col,
 -      pxToSheetColumnWidth(resolveContentSheetAxisPixels(widthPx, activeSheet.showGridLines))
 -    );
--    refreshWorkbookState(workbook);
--  }, [
--    activeSheet,
--    applyReadOnlyResizeOverride,
--    canResizeReadOnly,
--    isWorkerBacked,
--    readOnly,
--    recordHistoryBeforeMutation,
--    refreshWorkbookState,
--    workbook
--  ]);
--
--  const resizeRow = React.useCallback((row: number, heightPx: number) => {
--    if ((readOnly && !canResizeReadOnly) || !activeSheet) {
--      return;
--    }
--
--    if (isWorkerBacked) {
--      applyReadOnlyResizeOverride("row", row, heightPx);
--      return;
--    }
--
--    if (!workbook) {
--      return;
 +    for (const { index, sizePx } of sizes) {
 +      const contentPx = resolveContentSheetAxisPixels(sizePx, activeSheet.showGridLines);
 +      if (axis === "column") {
@@ -3078,23 +3876,17 @@ index 23933bc..5c9298a 100644
 +      } else {
 +        worksheet.setRowHeight(index, pxToSheetRowHeight(contentPx));
 +      }
-     }
--
--    recordHistoryBeforeMutation();
--    const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
--    worksheet.setRowHeight(
--      row,
--      pxToSheetRowHeight(resolveContentSheetAxisPixels(heightPx, activeSheet.showGridLines))
--    );
++    }
      refreshWorkbookState(workbook);
    }, [
      activeSheet,
 -    applyReadOnlyResizeOverride,
++    allowEdit,
 +    applyReadOnlyResizeOverrides,
      canResizeReadOnly,
      isWorkerBacked,
      readOnly,
-@@ -3880,6 +3974,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3848,38 +4026,50 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      refreshWorkbookState,
      workbook
    ]);
@@ -3109,11 +3901,134 @@ index 23933bc..5c9298a 100644
 +  const resizeColumns = React.useCallback((sizes: ReadonlyArray<XlsxAxisSize>) => resizeAxis("column", sizes), [resizeAxis]);
 +  const resizeRows = React.useCallback((sizes: ReadonlyArray<XlsxAxisSize>) => resizeAxis("row", sizes), [resizeAxis]);
  
+-  const resizeRow = React.useCallback((row: number, heightPx: number) => {
+-    if ((readOnly && !canResizeReadOnly) || !activeSheet) {
+-      return;
+-    }
+-
+-    if (isWorkerBacked) {
+-      applyReadOnlyResizeOverride("row", row, heightPx);
+-      return;
+-    }
+-
+-    if (!workbook) {
++  const autoFit = React.useCallback((axis: "column" | "row", indices?: Iterable<number>) => {
++    const worksheet = getActiveWorksheet();
++    const sheet = activeSheet;
++    if (!worksheet || !sheet) {
+       return;
+     }
+ 
+-    recordHistoryBeforeMutation();
+-    const worksheet = workbook.getSheet(activeSheet.workbookSheetIndex);
+-    worksheet.setRowHeight(
+-      row,
+-      pxToSheetRowHeight(resolveContentSheetAxisPixels(heightPx, activeSheet.showGridLines))
+-    );
+-    refreshWorkbookState(workbook);
+-  }, [
+-    activeSheet,
+-    applyReadOnlyResizeOverride,
+-    canResizeReadOnly,
+-    isWorkerBacked,
+-    readOnly,
+-    recordHistoryBeforeMutation,
+-    refreshWorkbookState,
+-    workbook
+-  ]);
++    const selected = function* () {
++      for (const region of selectionsRef.current.length > 0 ? selectionsRef.current : selection ? [selection] : []) {
++        const range = normalizeRange(region);
++        const [first, last] = axis === "column" ? [range.start.col, range.end.col] : [range.start.row, range.end.row];
++        for (let index = first; index <= last; index += 1) yield index;
++      }
++    };
++    const visibleColIndex = new Map(sheet.visibleCols.map((col, index) => [col, index]));
++    const columnWidthPx = (col: number) => sheet.colWidths[visibleColIndex.get(col) ?? -1] ?? sheet.defaultColWidthPx;
++    const rowHeightPx = (row: number) => {
++      // The sheet lists heights for its used rows only; a row resized below them has its own height.
++      const points = worksheet.getRowHeight(row);
++      return points === undefined ? sheet.defaultRowHeightPx : (points * 96) / 72;
++    };
++    const sizes = autoFitSizes({
++      axis,
++      indices: indices ?? selected(),
++      sheet: worksheet,
++      hidden: new Set((axis === "column" ? sheet.hiddenCols : sheet.hiddenRows) ?? []),
++      columnWidthPx,
++      rowHeightPx,
++      defaultRowHeightPx: sheet.defaultRowHeightPx,
++      gridlinePx: sheet.showGridLines ? resolveDeviceGridlineThicknessPx() : 0
++    });
++    resizeAxis(axis, sizes);
++  }, [activeSheet, getActiveWorksheet, resizeAxis, selection]);
+ 
    const resolveAnchoredObjectRect = React.useCallback((
      anchor: XlsxImage["anchor"],
-@@ -4229,29 +4333,84 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -3939,7 +4129,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+       readOnly,
+       rect
+     });
+-    if (readOnly || !workbook || !activeSheet || !imageAssetsRef.current || !hydratedChartAssets) {
++    if (readOnly || !workbook || !activeSheet || !imageAssetsRef.current || !hydratedChartAssets || !allowEdit({ kind: "drawing" })) {
+       return;
+     }
+ 
+@@ -3975,7 +4165,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+       sheetCharts.map((chart) => chart.id === id ? { ...chart, anchor: nextAnchor } : chart)
+     )));
+     setRevision((current) => current + 1);
+-  }, [
++  }, [allowEdit, 
+     activeSheet,
+     getChartById,
+     getColumnWidthPx,
+@@ -3988,7 +4178,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+   ]);
+ 
+   const setImageRect = React.useCallback((id: string, rect: XlsxImageRect, layout?: XlsxDrawingLayout) => {
+-    if (readOnly || !workbook || !activeSheet || !imageAssetsRef.current) {
++    if (readOnly || !workbook || !activeSheet || !imageAssetsRef.current || !allowEdit({ kind: "drawing" })) {
+       return;
+     }
+ 
+@@ -4012,7 +4202,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+ 
+     setImagesByWorkbookSheetIndex([...imageAssetsRef.current.imagesByWorkbookSheetIndex]);
+     setRevision((current) => current + 1);
+-  }, [
++  }, [allowEdit, 
+     activeSheet,
+     getColumnWidthPx,
+     getImageById,
+@@ -4180,7 +4370,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+   const updateChart = React.useCallback((id: string, patch: Partial<XlsxChart>) => {
+     const currentChart = getChartById(id);
+     const hydratedChartAssets = ensureChartAssetsHydrated(workbook, sheets);
+-    if (readOnly || !currentChart) {
++    if (readOnly || !currentChart || !allowEdit({ kind: "drawing" })) {
+       return;
+     }
+ 
+@@ -4196,10 +4386,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+       sheetCharts.map((chart) => chart.id === id ? { ...chart, ...patch } : chart)
+     )));
+     setRevision((current) => current + 1);
+-  }, [ensureChartAssetsHydrated, getChartById, readOnly, recordHistoryBeforeMutation, sheets, workbook]);
++  }, [allowEdit, ensureChartAssetsHydrated, getChartById, readOnly, recordHistoryBeforeMutation, sheets, workbook]);
+ 
+   const setChartSeriesFormula = React.useCallback((chartId: string, seriesIndex: number, formula: string) => {
+-    if (readOnly) {
++    if (readOnly || !allowEdit({ kind: "drawing" })) {
+       return false;
+     }
+ 
+@@ -4227,31 +4417,86 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+       ));
+     }
      return true;
-   }, [getChartById, readOnly, updateChart, workbook]);
+-  }, [getChartById, readOnly, updateChart, workbook]);
++  }, [allowEdit, getChartById, readOnly, updateChart, workbook]);
  
 -  const selectCell = React.useCallback((cell: XlsxCellAddress, options?: { extend?: boolean }) => {
 +  const selectCell = React.useCallback((cell: XlsxCellAddress, options?: { extend?: boolean; append?: boolean }) => {
@@ -3208,15 +4123,188 @@ index 23933bc..5c9298a 100644
  
    const clearSelection = React.useCallback(() => {
      selectionAnchorRef.current = null;
-@@ -4476,6 +4635,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4262,14 +4507,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     setSelectedImageId(null);
+   }, []);
+ 
+-  const clearSelectedCells = React.useCallback(() => {
++  /** Authorizes clearing the selection; returns the clear to run, or null when refused. */
++  const prepareClear = React.useCallback((): (() => void) | null => {
+     const worksheet = getActiveWorksheet();
+     const targetRange = selection ?? (activeCell ? { start: activeCell, end: activeCell } : null);
+     if (readOnly || !worksheet || !workbook || !targetRange) {
+-      return;
++      return null;
+     }
+ 
+     const normalized = normalizeRange(targetRange);
++    // A clear can't add formulas, so it carries no formula forecast.
++    if (!allowEdit({ kind: "content", range: normalized })) {
++      return null;
++    }
++    return () => {
+     const mutations: RangeCellMutation[] = [];
+     for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
+       for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
+@@ -4299,8 +4550,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     maybeRecalculateWorkbook(workbook);
+     refreshWorkbookState(workbook);
+     recordRangeEditHistory(mutations, normalized, activeCell ?? normalized.start);
++    };
+   }, [
+     activeCell,
++    allowEdit,
+     captureCellMutationState,
+     getActiveWorksheet,
+     maybeRecalculateWorkbook,
+@@ -4311,19 +4564,41 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     workbook
+   ]);
+ 
+-  const setCellValue = React.useCallback((cell: XlsxCellAddress, value: string) => {
++  const clearSelectedCells = React.useCallback(() => {
++    const clear = prepareClear();
++    clear?.();
++    return clear !== null;
++  }, [prepareClear]);
++
++  const setCellFormula = React.useCallback((cell: XlsxCellAddress, formula: string) => {
+     const worksheet = getActiveWorksheet();
+     if (readOnly || !worksheet || !workbook) {
        return;
      }
+ 
++    const trimmedFormula = formula.trim();
++    const entry = trimmedFormula ? formulaText(trimmedFormula) : undefined;
++    const hadFormula = Boolean(worksheet.getFormulaAt(cell.row, cell.col));
++    if (!allowEdit({
++      kind: "content",
++      range: { start: cell, end: cell },
++      formula: entry,
++      formulaProblem: entry ? formulaProblem(entry, workbook.sheetNames) : undefined,
++      formulaDelta: () => Number(Boolean(entry)) - Number(hadFormula)
++    })) {
++      return;
++    }
++
+     const before = captureCellMutationState(cell);
+     if (!before) {
+       return;
+     }
+ 
+-    const nextValue = coerceUserEnteredValue(value);
+-    worksheet.setCell(cellAddressToA1(cell), nextValue);
++    if (!entry) {
++      worksheet.setCell(cellAddressToA1(cell), "");
++    } else {
++      worksheet.setFormula(cellAddressToA1(cell), entry);
++    }
+     const after = captureCellMutationState(cell);
+     if (!after) {
+       return;
+@@ -4331,25 +4606,29 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     maybeRecalculateWorkbook(workbook);
+     refreshWorkbookState(workbook);
+     recordCellEditHistory(cell, before, after);
+-  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
++  }, [allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
+ 
+-  const setCellFormula = React.useCallback((cell: XlsxCellAddress, formula: string) => {
++  /** Excel entry: text starting with `=` is a formula. */
++  const setCellValue = React.useCallback((cell: XlsxCellAddress, value: string) => {
++    if (value.trim().startsWith("=")) {
++      setCellFormula(cell, value);
++      return;
++    }
+     const worksheet = getActiveWorksheet();
+     if (readOnly || !worksheet || !workbook) {
+       return;
+     }
+ 
++    if (!allowEdit({ kind: "content", range: { start: cell, end: cell } })) {
++      return;
++    }
+     const before = captureCellMutationState(cell);
+     if (!before) {
+       return;
+     }
+ 
+-    const trimmedFormula = formula.trim();
+-    if (!formula.trim()) {
+-      worksheet.setCell(cellAddressToA1(cell), "");
+-    } else {
+-      worksheet.setFormula(cellAddressToA1(cell), formula);
+-    }
++    const nextValue = coerceUserEnteredValue(value);
++    worksheet.setCell(cellAddressToA1(cell), nextValue);
+     const after = captureCellMutationState(cell);
+     if (!after) {
+       return;
+@@ -4357,7 +4636,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     maybeRecalculateWorkbook(workbook);
+     refreshWorkbookState(workbook);
+     recordCellEditHistory(cell, before, after);
+-  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
++  }, [allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, setCellFormula, workbook]);
+ 
+   const setCellStyle = React.useCallback((cell: XlsxCellAddress, style: XlsxCellStyleInput) => {
+     const worksheet = getActiveWorksheet();
+@@ -4365,6 +4644,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+       return;
+     }
+ 
++    if (!allowEdit({ kind: "style", range: { start: cell, end: cell } })) {
++      return;
++    }
+     const before = captureCellMutationState(cell);
+     if (!before) {
+       return;
+@@ -4378,7 +4660,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+ 
+     refreshWorkbookState(workbook);
+     recordCellEditHistory(cell, before, after);
+-  }, [captureCellMutationState, getActiveWorksheet, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
++  }, [allowEdit, captureCellMutationState, getActiveWorksheet, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
+ 
+   const setSelectedCellValue = React.useCallback((value: string) => {
+     if (!activeCell) {
+@@ -4424,6 +4706,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     }
+ 
+     const normalized = normalizeRange(range);
++    if (!allowEdit({ kind: "style", range: normalized })) {
++      return;
++    }
+     const beforeStates: Array<{ before: CellMutationState; cell: XlsxCellAddress }> = [];
+     for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
+       for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
+@@ -4459,7 +4744,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+ 
+     refreshWorkbookState(workbook);
+     recordRangeEditHistory(mutations, selection, activeCell);
+-  }, [activeCell, captureCellMutationState, getActiveWorksheet, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
++  }, [activeCell, allowEdit, captureCellMutationState, getActiveWorksheet, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
+ 
+   const fillSelection = React.useCallback((targetRange: XlsxCellRange) => {
+     const worksheet = getActiveWorksheet();
+@@ -4475,7 +4760,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     if (sourceHeight <= 0 || sourceWidth <= 0) {
+       return;
+     }
++    const hasFormula = (row: number, col: number) => Boolean(worksheet.getFormulaAt(row, col));
++    if (!allowEdit({
++      kind: "content",
++      range: nextRange,
++      formulaDelta: () => formulaDelta(fillWrites(sourceRange, nextRange, hasFormula), hasFormula)
++    })) {
++      return;
++    }
  
 +    const plain = plainStyle();
      const mutations: RangeCellMutation[] = [];
      for (let row = nextRange.start.row; row <= nextRange.end.row; row += 1) {
        for (let col = nextRange.start.col; col <= nextRange.end.col; col += 1) {
-@@ -4489,21 +4649,19 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4489,21 +4783,19 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
            continue;
          }
  
@@ -3242,12 +4330,12 @@ index 23933bc..5c9298a 100644
  
          const after = captureCellMutationState(targetCell);
          if (!after) {
-@@ -4523,18 +4681,30 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4523,18 +4815,33 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      setActiveCell(nextRange.end);
      selectionAnchorRef.current = nextRange.start;
      recordRangeEditHistory(mutations, nextRange, nextRange.end);
 -  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
-+  }, [captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook, plainStyle]);
++  }, [allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook, plainStyle]);
  
 -  const mergeSelection = React.useCallback(() => {
 +  const mergeSelection = React.useCallback((): XlsxCellRange | null => {
@@ -3262,6 +4350,9 @@ index 23933bc..5c9298a 100644
 +    if (target.range.start.row === target.range.end.row && target.range.start.col === target.range.end.col) {
 +      return null;
 +    }
++    if (!allowEdit({ kind: "merge", range: target.range })) {
++      return null;
++    }
      recordHistoryBeforeMutation();
 -    worksheet.mergeCells(rangeToA1(selection));
 +    for (const merge of target.merges) {
@@ -3274,16 +4365,16 @@ index 23933bc..5c9298a 100644
 +    selectRange(target.range);
 +    setActiveCell(target.range.start);
 +    return target.range;
-+  }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selectRange, selection, workbook]);
++  }, [allowEdit, getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selectRange, selection, workbook]);
  
    const unmergeSelection = React.useCallback(() => {
      const worksheet = getActiveWorksheet();
-@@ -4542,8 +4712,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4542,13 +4849,20 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        return;
      }
  
 +    const merges = mergesTouching(worksheet.mergedRegions, selection);
-+    if (merges.length === 0) {
++    if (merges.length === 0 || !allowEdit({ kind: "unmerge", range: normalizeRange(selection) })) {
 +      return;
 +    }
 +
@@ -3293,9 +4384,16 @@ index 23933bc..5c9298a 100644
 +      worksheet.unmergeCells(merge);
 +    }
      refreshWorkbookState(workbook);
-   }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
+-  }, [getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
++  }, [allowEdit, getActiveWorksheet, readOnly, recordHistoryBeforeMutation, refreshWorkbookState, selection, workbook]);
  
-@@ -4562,6 +4739,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+   const addSheet = React.useCallback((name?: string) => {
+-    if (readOnly || !workbook) {
++    if (readOnly || !workbook || !allowEdit({ kind: "structure" })) {
+       return;
+     }
+ 
+@@ -4562,6 +4876,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      }
  
      workbook.addSheet(candidate);
@@ -3303,16 +4401,18 @@ index 23933bc..5c9298a 100644
      sheetOriginsRef.current = [...sheetOriginsRef.current, null];
      setFormControlsByWorkbookSheetIndex((current) => [...current, []]);
      setImagesByWorkbookSheetIndex((current) => [...current, []]);
-@@ -4595,7 +4773,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4595,15 +4910,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        setActiveTabIndexState(nextTabIndex);
      }
      setRevision((current) => current + 1);
 -  }, [readOnly, recordHistoryBeforeMutation, setChartAssets, workbook]);
-+  }, [maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
++  }, [allowEdit, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
  
    const removeActiveSheet = React.useCallback(() => {
-     if (readOnly || !workbook || !activeSheet) {
-@@ -4604,6 +4782,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+-    if (readOnly || !workbook || !activeSheet) {
++    if (readOnly || !workbook || !activeSheet || !allowEdit({ kind: "structure" })) {
+       return;
+     }
  
      recordHistoryBeforeMutation();
      workbook.removeSheet(activeSheet.workbookSheetIndex);
@@ -3320,27 +4420,101 @@ index 23933bc..5c9298a 100644
      sheetOriginsRef.current = sheetOriginsRef.current.filter((_, index) => index !== activeSheet.workbookSheetIndex);
      setFormControlsByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
      setImagesByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
-@@ -4631,7 +4810,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4631,10 +4947,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      }
      setActiveSheetIndexState((current) => Math.max(0, Math.min(current, nextSheets.length - 1)));
      setRevision((current) => current + 1);
 -  }, [activeSheet, readOnly, recordHistoryBeforeMutation, setChartAssets, workbook]);
-+  }, [activeSheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
++  }, [allowEdit, activeSheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
  
    const defineNamedRange = React.useCallback((name: string, range?: XlsxCellRange | null) => {
-     if (readOnly || !workbook) {
-@@ -4650,8 +4829,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+-    if (readOnly || !workbook) {
++    if (readOnly || !workbook || !allowEdit({ kind: "structure" })) {
+       return;
+     }
+ 
+@@ -4650,20 +4966,31 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
  
      recordHistoryBeforeMutation();
      workbook.defineName(trimmed, rangeToA1(targetRange));
 +    maybeRecalculateWorkbook(workbook);
      setRevision((current) => current + 1);
 -  }, [readOnly, recordHistoryBeforeMutation, selection, workbook]);
-+  }, [maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, selection, workbook]);
++  }, [allowEdit, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, selection, workbook]);
  
-   const pasteText = React.useCallback((text: string) => {
+-  const pasteText = React.useCallback((text: string) => {
++  /** Pastes tab-separated text at the active cell. `literal` (Paste Values) writes `=…` as text. */
++  const pasteText = React.useCallback((text: string, options?: { literal?: boolean }) => {
++    const literal = options?.literal === true;
      const worksheet = getActiveWorksheet();
-@@ -4744,6 +4924,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     const targetCell = activeCell ?? selection?.start ?? null;
+     if (readOnly || !worksheet || !workbook || !targetCell || !text) {
+       return false;
+     }
+ 
+-    const grid = parseClipboardText(text);
++    const grid = clipboardTextGrid(text);
+     if (grid.length === 0 || grid.every((row) => row.length === 0)) {
+       return false;
+     }
++    const pastedRange = rangeFrom(targetCell, grid.length, Math.max(...grid.map((row) => row.length), 1));
++    if (!allowEdit({
++      kind: "content",
++      range: pastedRange,
++      formulaDelta: () => formulaDelta(textWrites(targetCell, grid, literal), (row, col) => Boolean(worksheet.getFormulaAt(row, col)))
++    })) {
++      return false;
++    }
+ 
+     const mutations: RangeCellMutation[] = [];
+     for (let rowIndex = 0; rowIndex < grid.length; rowIndex += 1) {
+@@ -4678,7 +5005,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+         if (!before) {
+           continue;
+         }
+-        if (rawValue.startsWith("=") && rawValue.length > 1) {
++        if (isPastedFormula(rawValue, literal)) {
+           worksheet.setFormula(cellAddressToA1(nextCell), rawValue);
+           const after = captureCellMutationState(nextCell);
+           if (!after) {
+@@ -4707,19 +5034,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+ 
+     maybeRecalculateWorkbook(workbook);
+     refreshWorkbookState(workbook);
+-    const nextRange = normalizeRange({
+-      start: targetCell,
+-      end: {
+-        col: targetCell.col + Math.max(0, Math.max(...grid.map((row) => row.length), 1) - 1),
+-        row: targetCell.row + grid.length - 1
+-      }
+-    });
+     setActiveCell(targetCell);
+-    setSelection(nextRange);
++    setSelection(pastedRange);
+     selectionAnchorRef.current = targetCell;
+-    recordRangeEditHistory(mutations, nextRange, targetCell);
++    recordRangeEditHistory(mutations, pastedRange, targetCell);
+     return true;
+-  }, [activeCell, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
++  }, [activeCell, allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
+ 
+   const pasteStructuredClipboardData = React.useCallback((serializedPayload: string) => {
+     const worksheet = getActiveWorksheet();
+@@ -4738,12 +5058,21 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     if (!Array.isArray(payload.cells) || payload.cells.length === 0) {
+       return false;
+     }
++    const pastedRange = rangeFrom(targetCell, payload.rows ?? 1, payload.cols ?? 1);
++    if (!allowEdit({
++      kind: "content",
++      range: pastedRange,
++      formulaDelta: () => formulaDelta(payloadWrites(targetCell, payload.cells), (row, col) => Boolean(worksheet.getFormulaAt(row, col)))
++    })) {
++      return false;
++    }
+ 
+     const hasMergeOperations = Array.isArray(payload.merges) && payload.merges.some((merge) => (merge.rowSpan ?? 1) > 1 || (merge.colSpan ?? 1) > 1);
+     const mutations: RangeCellMutation[] = [];
      if (hasMergeOperations) {
        recordHistoryBeforeMutation();
      }
@@ -3348,7 +4522,7 @@ index 23933bc..5c9298a 100644
      for (const cell of payload.cells) {
        const nextCell = {
          col: targetCell.col + cell.colOffset,
-@@ -4751,32 +4932,17 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4751,32 +5080,17 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        };
        const before = hasMergeOperations ? null : captureCellMutationState(nextCell);
  
@@ -3391,7 +4565,33 @@ index 23933bc..5c9298a 100644
        }
      }
  
-@@ -4826,7 +4992,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4802,22 +5116,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+ 
+     maybeRecalculateWorkbook(workbook);
+     refreshWorkbookState(workbook);
+-    const nextRange = normalizeRange({
+-      start: targetCell,
+-      end: {
+-        col: targetCell.col + Math.max((payload.cols ?? 1) - 1, 0),
+-        row: targetCell.row + Math.max((payload.rows ?? 1) - 1, 0)
+-      }
+-    });
+     setActiveCell(targetCell);
+-    setSelection(nextRange);
++    setSelection(pastedRange);
+     selectionAnchorRef.current = targetCell;
+     if (!hasMergeOperations) {
+-      recordRangeEditHistory(mutations, nextRange, targetCell);
++      recordRangeEditHistory(mutations, pastedRange, targetCell);
+     }
+     return true;
+   }, [
+     activeCell,
++    allowEdit,
+     captureCellMutationState,
+     getActiveWorksheet,
+     maybeRecalculateWorkbook,
+@@ -4826,18 +5134,19 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
      recordRangeEditHistory,
      refreshWorkbookState,
      selection,
@@ -3400,20 +4600,143 @@ index 23933bc..5c9298a 100644
 +    plainStyle
    ]);
  
-   const copySelectionToClipboard = React.useCallback(async () => {
-@@ -4835,9 +5002,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+-  const copySelectionToClipboard = React.useCallback(async () => {
+-    const clipboardData = getClipboardData();
+-    if (!clipboardData || typeof navigator === "undefined" || !navigator.clipboard) {
++  const writeClipboard = React.useCallback(async (clipboardData: XlsxClipboardData) => {
++    if (typeof navigator === "undefined" || !navigator.clipboard) {
        return false;
      }
  
-+    // Browsers refuse custom types here (Chrome: "not supported on write"), which made this copy
-+    // nothing at all. The cells' own format travels only through copy events.
++    // Browsers refuse custom types here (Chrome: "not supported on write"), so the cells' own
++    // format travels through copy events, or the remembered copy.
      if (typeof ClipboardItem === "function" && navigator.clipboard.write) {
        const item = new ClipboardItem({
 -        [INTERNAL_CLIPBOARD_MIME]: new Blob([clipboardData.structured], { type: INTERNAL_CLIPBOARD_MIME }),
          "text/html": new Blob([clipboardData.html], { type: "text/html" }),
          "text/plain": new Blob([clipboardData.text], { type: "text/plain" })
        });
-@@ -4948,6 +5116,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -4847,35 +5156,81 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+ 
+     await navigator.clipboard.writeText(clipboardData.text);
+     return true;
+-  }, [getClipboardData]);
++  }, []);
++
++  const copySelectionToClipboard = React.useCallback(async () => {
++    const clipboardData = getClipboardData();
++    if (!clipboardData) {
++      return false;
++    }
++    rememberCopy(clipboardData.text, clipboardData.structured);
++    return writeClipboard(clipboardData);
++  }, [getClipboardData, writeClipboard]);
++
++  /** Excel's cut: copy, then clear. Pasting a cut moves formulas unchanged; when the clear is
++   *  refused the cells stay, so it is an ordinary copy. Writes to `clipboard` (a cut event's)
++   *  synchronously when given, else to the system clipboard. Resolves whether the cells were cut. */
++  const cutSelection = React.useCallback(async (clipboard?: DataTransfer) => {
++    const clipboardData = readOnly ? null : getClipboardData();
++    if (!clipboardData) {
++      return false;
++    }
++    // The clear is authorized, and its cells fixed, before any await: it empties exactly the cells
++    // copied, even if the selection moves while the browser writes the clipboard.
++    const clear = prepareClear();
++    const source = { sheet: activeSheetRef.current?.workbookSheetIndex, generation: workbookGenerationRef.current };
++    rememberCopy(clipboardData.text, cutPayload(clipboardData.structured, clear !== null));
++    if (clipboard) {
++      clipboard.setData("text/plain", clipboardData.text);
++      clipboard.setData("text/html", clipboardData.html);
++      clipboard.setData(INTERNAL_CLIPBOARD_MIME, cutPayload(clipboardData.structured, clear !== null));
++    } else if (!(await writeClipboard(clipboardData))) {
++      return false;
++    }
++    const moved = !cutStillApplies(source, {
++      sheet: activeSheetRef.current?.workbookSheetIndex,
++      generation: workbookGenerationRef.current
++    });
++    if (!clear || moved) {
++      // Another sheet or workbook is showing now: leave the cells, and paste it as a copy.
++      if (moved) rememberCopy(clipboardData.text, clipboardData.structured);
++      return false;
++    }
++    clear();
++    return true;
++  }, [getClipboardData, prepareClear, readOnly, writeClipboard]);
+ 
+-  const pasteFromClipboard = React.useCallback(async () => {
++  const paste = React.useCallback(async (options?: { valuesOnly?: boolean }) => {
+     if (readOnly || typeof navigator === "undefined" || !navigator.clipboard) {
+       return false;
+     }
+ 
+-    if (navigator.clipboard.read) {
+-      const items = await navigator.clipboard.read();
+-      for (const item of items) {
++    let structured: string | null = null;
++    let text: string | null = null;
++    if (navigator.clipboard.read && !options?.valuesOnly) {
++      for (const item of await navigator.clipboard.read()) {
+         if (item.types.includes(INTERNAL_CLIPBOARD_MIME)) {
+-          const blob = await item.getType(INTERNAL_CLIPBOARD_MIME);
+-          return pasteStructuredClipboardData(await blob.text());
++          structured = await (await item.getType(INTERNAL_CLIPBOARD_MIME)).text();
++          break;
+         }
+-      }
+-
+-      for (const item of items) {
+-        if (item.types.includes("text/plain")) {
+-          const blob = await item.getType("text/plain");
+-          return pasteText(await blob.text());
++        if (text === null && item.types.includes("text/plain")) {
++          text = await (await item.getType("text/plain")).text();
+         }
+       }
+     }
+-
+-    return pasteText(await navigator.clipboard.readText());
++    text ??= structured === null ? await navigator.clipboard.readText() : "";
++    structured ??= rememberedCells(text);
++    if (options?.valuesOnly) {
++      const values = structured && valuesOnly(structured);
++      return values ? pasteStructuredClipboardData(values) : pasteText(text, { literal: true });
++    }
++    return structured ? pasteStructuredClipboardData(structured) : pasteText(text);
+   }, [pasteStructuredClipboardData, pasteText, readOnly]);
+ 
++  const pasteFromClipboard = React.useCallback(() => paste(), [paste]);
++
+   const undo = React.useCallback(() => {
+-    if (readOnly || !workbook || undoStackRef.current.length === 0) {
++    if (readOnly || !workbook || undoStackRef.current.length === 0 || !allowEdit({ kind: "history" })) {
+       return;
+     }
+ 
+@@ -4904,10 +5259,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     }
+     setHistoryRevision((current) => current + 1);
+     void restoreHistoryEntry(entry);
+-  }, [applyCellEditHistoryEntry, applyRangeEditHistoryEntry, createHistoryEntry, readOnly, restoreHistoryEntry, workbook]);
++  }, [allowEdit, applyCellEditHistoryEntry, applyRangeEditHistoryEntry, createHistoryEntry, readOnly, restoreHistoryEntry, workbook]);
+ 
+   const redo = React.useCallback(() => {
+-    if (readOnly || !workbook || redoStackRef.current.length === 0) {
++    if (readOnly || !workbook || redoStackRef.current.length === 0 || !allowEdit({ kind: "history" })) {
+       return;
+     }
+ 
+@@ -4936,7 +5291,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+     }
+     setHistoryRevision((current) => current + 1);
+     void restoreHistoryEntry(entry);
+-  }, [applyCellEditHistoryEntry, applyRangeEditHistoryEntry, createHistoryEntry, readOnly, restoreHistoryEntry, workbook]);
++  }, [allowEdit, applyCellEditHistoryEntry, applyRangeEditHistoryEntry, createHistoryEntry, readOnly, restoreHistoryEntry, workbook]);
+ 
+   return React.useMemo(
+     () => ({
+@@ -4948,6 +5303,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        activeTabIndex,
        addFormControl,
        addSheet,
@@ -3422,7 +4745,17 @@ index 23933bc..5c9298a 100644
        canRedo,
        canDownload: Boolean(file ?? src),
        canExport: Boolean(workbook),
-@@ -5013,7 +5183,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5001,6 +5358,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+       moveChartBy,
+       moveImageBy,
+       pasteFromClipboard,
++      paste,
++      cutSelection,
++      autoFit,
+       pasteStructuredClipboardData,
+       pasteText,
+       removeActiveSheet,
+@@ -5013,7 +5373,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        resizeChartBy,
        resizeImageBy,
        resizeColumn,
@@ -3432,7 +4765,7 @@ index 23933bc..5c9298a 100644
        setCellFormula,
        setCellStyle,
        setCellValue,
-@@ -5035,11 +5207,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5035,11 +5397,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        selectedRangeAddress,
        selectedValue,
        selectCell,
@@ -3448,7 +4781,7 @@ index 23933bc..5c9298a 100644
        setActiveSheetIndex,
        setActiveTabIndex,
        setSelectedCellFormula,
-@@ -5071,6 +5247,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5071,6 +5437,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        addFormControl,
        addSheet,
        canLoadDeferred,
@@ -3457,7 +4790,17 @@ index 23933bc..5c9298a 100644
        canRedo,
        canUndo,
        canZoomIn,
-@@ -5131,7 +5309,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5120,6 +5488,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+       moveChartBy,
+       moveImageBy,
+       pasteFromClipboard,
++      paste,
++      cutSelection,
++      autoFit,
+       pasteStructuredClipboardData,
+       pasteText,
+       removeActiveSheet,
+@@ -5131,7 +5502,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        resizeChartBy,
        resizeImageBy,
        resizeColumn,
@@ -3467,7 +4810,7 @@ index 23933bc..5c9298a 100644
        setCellFormula,
        setCellStyle,
        setCellValue,
-@@ -5153,11 +5333,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
+@@ -5153,11 +5526,15 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
        selectedRangeAddress,
        selectedValue,
        selectCell,
@@ -3579,6 +4922,239 @@ index 0000000..7896efb
 +    value.free();
 +  }
 +}
+diff --git a/packages/react-xlsx/src/edit-guard.test.ts b/packages/react-xlsx/src/edit-guard.test.ts
+new file mode 100644
+index 0000000..70c3486
+--- /dev/null
++++ b/packages/react-xlsx/src/edit-guard.test.ts
+@@ -0,0 +1,67 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { clipboardTextGrid, isPastedFormula, fillWrites, formulaDelta, formulaProblem, formulaText, payloadWrites, rangeFrom, textWrites } from "./edit-guard.ts";
++
++test("a formula entry gets one leading =", () => {
++  assert.equal(formulaText("A1*2"), "=A1*2");
++  assert.equal(formulaText("=A1"), "=A1");
++});
++
++test("malformed formulas are a syntax problem", () => {
++  for (const formula of ["=RoundD24:D26)", "=ROUND(A1", '="open', "=A1+", "=SUM(A1,"]) {
++    assert.deepEqual(formulaProblem(formula, []), { kind: "syntax" }, formula);
++  }
++  for (const formula of [
++    "=ROUND(D24,0)",
++    '=IF(A1>1,"(",B1)',
++    '=ROUND([1]!TBLink("Interim 3/31 Combined - TB Database","FINAL[7]","4600","1","1"),0)'
++  ]) {
++    assert.equal(formulaProblem(formula, []), undefined, formula);
++  }
++});
++
++test("a formula naming a sheet the workbook lacks is a problem; other workbooks are not checked", () => {
++  const sheets = ["Lead", "Rev (2)"];
++  assert.deepEqual(formulaProblem("=Leads!A1+1", sheets), { kind: "missingSheet", sheetName: "Leads" });
++  assert.deepEqual(formulaProblem("='Gone Sheet'!A1", sheets), { kind: "missingSheet", sheetName: "Gone Sheet" });
++  assert.equal(formulaProblem("=Lead!A1+'Rev (2)'!B2", sheets), undefined);
++  assert.equal(formulaProblem("=[1]Summary!A1+'[Book.xlsx]Other'!A1", sheets), undefined);
++  assert.equal(formulaProblem('="Nope!"&Lead!A1', sheets), undefined);
++});
++
++test("formula delta counts each cell once and replacements as no growth", () => {
++  const existing = new Set(["0:0"]);
++  const hasFormula = (row: number, col: number) => existing.has(`${row}:${col}`);
++  const start = { row: 0, col: 0 };
++  // Replacing A1's formula and adding B1's grows by one; a typed value in A2 adds nothing.
++  assert.equal(formulaDelta(textWrites(start, clipboardTextGrid("=2\t=3\n7\n")), hasFormula), 1);
++  // Clearing A1 by pasting a value makes room.
++  assert.equal(formulaDelta(textWrites(start, clipboardTextGrid("7")), hasFormula), -1);
++  const cells = [
++    { rowOffset: 0, colOffset: 1, formula: "=A1" },
++    { rowOffset: 0, colOffset: 2, formula: null, styleOnly: true }
++  ];
++  assert.equal(formulaDelta(payloadWrites(start, cells), hasFormula), 1);
++});
++
++test("a fill repeats the source's formulas across the target, outside the source", () => {
++  const hasFormula = (row: number, col: number) => row === 0 && col === 0;
++  const source = { start: { row: 0, col: 0 }, end: { row: 0, col: 1 } };
++  const target = { start: { row: 0, col: 0 }, end: { row: 2, col: 1 } };
++  const writes = [...fillWrites(source, target, hasFormula)];
++  assert.equal(writes.length, 4);
++  assert.equal(writes.filter((write) => write.formula).length, 2);
++});
++
++test("a paste's range runs from the start over the copied extent", () => {
++  assert.deepEqual(rangeFrom({ row: 2, col: 1 }, 2, 3), { start: { row: 2, col: 1 }, end: { row: 3, col: 3 } });
++  assert.deepEqual(clipboardTextGrid("a\tb\r\nc\n"), [["a", "b"], ["c"]]);
++});
++
++test("values-only plain text pastes =… as text, adding no formulas", () => {
++  assert.equal(isPastedFormula("=1+2"), true);
++  assert.equal(isPastedFormula("=1+2", true), false);
++  assert.equal(isPastedFormula("="), false);
++  const writes = [...textWrites({ row: 0, col: 0 }, clipboardTextGrid("=1+2\t=A1"), true)];
++  assert.deepEqual(writes.map((write) => write.formula), [false, false]);
++});
+diff --git a/packages/react-xlsx/src/edit-guard.ts b/packages/react-xlsx/src/edit-guard.ts
+new file mode 100644
+index 0000000..7b644c8
+--- /dev/null
++++ b/packages/react-xlsx/src/edit-guard.ts
+@@ -0,0 +1,154 @@
++/** What an edit is about to change, for `onBeforeEdit`, and the formula checks it carries. Pure:
++ *  the controller supplies the worksheet reads. */
++
++export interface EditAddress {
++  row: number;
++  col: number;
++}
++
++export interface EditRange {
++  start: EditAddress;
++  end: EditAddress;
++}
++
++/** A formula the engine would mishandle silently: it leaves a malformed formula blank and stops
++ *  recalculating on one that names a missing sheet. */
++export type XlsxFormulaProblem = { kind: "syntax" } | { kind: "missingSheet"; sheetName: string };
++
++export type XlsxEditKind =
++  /** Cell values or formulas: typing, clearing, pasting, filling. */
++  | "content"
++  | "style"
++  | "merge"
++  | "unmerge"
++  | "resize"
++  /** Undo or redo. */
++  | "history"
++  /** Sheets, defined names, table sorts and form controls. */
++  | "structure"
++  /** Charts and images. */
++  | "drawing";
++
++/** An edit the viewer is about to make. `onBeforeEdit` returning false refuses it, before any change. */
++export interface XlsxEdit {
++  kind: XlsxEditKind;
++  /** The workbook sheet the edit changes. */
++  sheetIndex: number;
++  /** The cells the edit writes (for a paste, from the active cell to the copied extent). */
++  range?: EditRange;
++  /** The net change in the workbook's formula count, counting replaced formulas once. Computed on
++   *  call, so a host that refuses on `range` first never pays for it. Absent when the edit can't
++   *  add formulas (a clear, a typed value). */
++  formulaDelta?: () => number;
++  /** A single formula entry, normalized to one leading `=`. */
++  formula?: string;
++  formulaProblem?: XlsxFormulaProblem;
++  axis?: "row" | "column";
++  /** The rows or columns a resize changes. */
++  indices?: number[];
++}
++
++/** A formula as the user sees it, with one leading `=`. */
++export function formulaText(formula: string): string {
++  return `=${formula.replace(/^=/, "")}`;
++}
++
++function syntaxProblem(formula: string): boolean {
++  let depth = 0;
++  let quote: '"' | "'" | null = null;
++  for (const char of formula) {
++    if (quote) {
++      if (char === quote) quote = null;
++    } else if (char === '"' || char === "'") quote = char;
++    else if (char === "(") depth += 1;
++    else if (char === ")") depth -= 1;
++    if (depth < 0) return true;
++  }
++  return quote !== null || depth !== 0 || /[+\-*/^&=<>,(]\s*$/.test(formula.slice(1));
++}
++
++const SHEET_REFERENCE = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-￿][\w.\u0080-￿]*)!/g;
++
++/** A sheet the formula names that the workbook lacks. References into other workbooks
++ *  (`[1]Sheet!A1`, `'[Book.xlsx]Sheet'!A1`) are not checked. */
++function missingSheet(formula: string, known: readonly string[]): string | null {
++  const names = new Set(known);
++  const text = formula.replace(/"[^"]*"/g, "");
++  for (const match of text.matchAll(SHEET_REFERENCE)) {
++    const name = (match[1] ?? match[2] ?? "").replace(/''/g, "'");
++    if (name.startsWith("[") || text[(match.index ?? 0) - 1] === "]") continue;
++    if (!names.has(name)) return name;
++  }
++  return null;
++}
++
++/** Unbalanced parentheses or quotes, a trailing operator, or a sheet the workbook lacks. */
++export function formulaProblem(formula: string, sheetNames: readonly string[]): XlsxFormulaProblem | undefined {
++  if (syntaxProblem(formula)) return { kind: "syntax" };
++  const sheetName = missingSheet(formula, sheetNames);
++  return sheetName === null ? undefined : { kind: "missingSheet", sheetName };
++}
++
++/** Same tab/newline reading as the viewer's plain-text paste. */
++export function clipboardTextGrid(text: string): string[][] {
++  const rows = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
++  if (rows.length > 1 && rows[rows.length - 1] === "") rows.pop();
++  return rows.map((row) => row.split("\t"));
++}
++
++export function rangeFrom(start: EditAddress, rows: number, cols: number): EditRange {
++  return { start, end: { row: start.row + Math.max(rows, 1) - 1, col: start.col + Math.max(cols, 1) - 1 } };
++}
++
++/** Whether a cell currently holds a formula. */
++export type HasFormula = (row: number, col: number) => boolean;
++
++/** Net formula-count change from writing `writes`, counting each cell once (the last write wins). */
++export function formulaDelta(writes: Iterable<EditAddress & { formula: boolean }>, hasFormula: HasFormula): number {
++  const last = new Map<string, EditAddress & { formula: boolean }>();
++  for (const write of writes) last.set(`${write.row}:${write.col}`, write);
++  let delta = 0;
++  for (const { row, col, formula } of last.values()) delta += Number(formula) - Number(hasFormula(row, col));
++  return delta;
++}
++
++/** Whether a pasted text field becomes a formula: `=…`, unless pasting values only. */
++export function isPastedFormula(value: string, literal = false): boolean {
++  return !literal && value.startsWith("=") && value.length > 1;
++}
++
++export function* textWrites(start: EditAddress, grid: string[][], literal = false) {
++  for (let row = 0; row < grid.length; row += 1) {
++    const line = grid[row] ?? [];
++    for (let col = 0; col < line.length; col += 1) {
++      const value = line[col] ?? "";
++      yield { row: start.row + row, col: start.col + col, formula: isPastedFormula(value, literal) };
++    }
++  }
++}
++
++export function* payloadWrites(
++  start: EditAddress,
++  cells: ReadonlyArray<{ rowOffset: number; colOffset: number; formula: string | null; styleOnly?: boolean }>
++) {
++  for (const cell of cells) {
++    if (cell.styleOnly) continue;
++    yield { row: start.row + cell.rowOffset, col: start.col + cell.colOffset, formula: Boolean(cell.formula) };
++  }
++}
++
++/** The cells a fill writes from `source` across `target` (outside the source), and whether each
++ *  takes a formula. */
++export function* fillWrites(source: EditRange, target: EditRange, hasFormula: HasFormula) {
++  const height = source.end.row - source.start.row + 1;
++  const width = source.end.col - source.start.col + 1;
++  const wrap = (index: number, start: number, size: number) => start + ((((index - start) % size) + size) % size);
++  for (let row = target.start.row; row <= target.end.row; row += 1) {
++    for (let col = target.start.col; col <= target.end.col; col += 1) {
++      const inSource =
++        row >= source.start.row && row <= source.end.row && col >= source.start.col && col <= source.end.col;
++      if (inSource) continue;
++      yield { row, col, formula: hasFormula(wrap(row, source.start.row, height), wrap(col, source.start.col, width)) };
++    }
++  }
++}
 diff --git a/packages/react-xlsx/src/external-fn.ts b/packages/react-xlsx/src/external-fn.ts
 new file mode 100644
 index 0000000..17c353f
@@ -3616,6 +5192,65 @@ index 0000000..17c353f
 +/** Builds the calculation options shared by main-thread, worker, and deferred recalculation paths. */
 +export function externalCalcOptions(values?: ExternalFnValues): ExternalCalcOptions | undefined {
 +  return values ? { externalFnFn: makeExternalFn(values) } : undefined;
++}
+diff --git a/packages/react-xlsx/src/external-values.test.ts b/packages/react-xlsx/src/external-values.test.ts
+new file mode 100644
+index 0000000..c9ee2f6
+--- /dev/null
++++ b/packages/react-xlsx/src/external-values.test.ts
+@@ -0,0 +1,19 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { externalValuesState } from "./external-values.ts";
++
++test("an explicit recalculation's values hold until the prop itself changes", () => {
++  const state = externalValuesState();
++  const prop = { key: 1 };
++  state.loaded(prop);
++  assert.equal(state.propChanged(prop), false);
++  const override = { key: 2 };
++  state.recalculated(override);
++  // The render after the explicit recalculation still sees the same prop: no revert.
++  assert.equal(state.propChanged(prop), false);
++  assert.equal(state.current(), override);
++  assert.equal(state.recalculated(undefined), override);
++  const next = { key: 3 };
++  assert.equal(state.propChanged(next), true);
++  assert.equal(state.recalculated(next), next);
++});
+diff --git a/packages/react-xlsx/src/external-values.ts b/packages/react-xlsx/src/external-values.ts
+new file mode 100644
+index 0000000..0cb2552
+--- /dev/null
++++ b/packages/react-xlsx/src/external-values.ts
+@@ -0,0 +1,28 @@
++import type { ExternalFnValues } from "./external-fn";
++
++/** Which external add-in values the workbook calculates with: the `externalFnValues` prop, or the
++ *  values of the last explicit `recalculate(values)` until the prop itself changes. */
++export function externalValuesState() {
++  let prop: ExternalFnValues | undefined;
++  let current: ExternalFnValues | undefined;
++  return {
++    /** The values for a calculation: a load, an edit, undo or redo. */
++    current: () => current,
++    /** A load takes the prop's values. */
++    loaded(values: ExternalFnValues | undefined) {
++      prop = values;
++      current = values;
++    },
++    /** An explicit recalculation; without values it keeps the current ones. */
++    recalculated(values: ExternalFnValues | undefined) {
++      if (values !== undefined) current = values;
++      return current;
++    },
++    /** Whether a render's prop is new, and so should recalculate the loaded workbook. */
++    propChanged(values: ExternalFnValues | undefined) {
++      if (values === prop) return false;
++      prop = values;
++      return true;
++    },
++  };
 +}
 diff --git a/packages/react-xlsx/src/formula-copy.test.ts b/packages/react-xlsx/src/formula-copy.test.ts
 new file mode 100644
@@ -3781,19 +5416,33 @@ index 0000000..7a6d358
 +export function formulaErrorTooltip(error: string) {
 +  return Object.hasOwn(descriptions, error) ? descriptions[error] : "This formula could not be calculated.";
 +}
+diff --git a/packages/react-xlsx/src/images.ts b/packages/react-xlsx/src/images.ts
+index 3dddc86..654e63f 100644
+--- a/packages/react-xlsx/src/images.ts
++++ b/packages/react-xlsx/src/images.ts
+@@ -48,7 +48,7 @@ const DEFAULT_COLUMN_CHARACTER_WIDTH_PX = 7;
+ const columnCharacterWidthCache = new Map<string, number>();
+ type DukeWorksheet = ReturnType<Workbook["getSheet"]>;
+ 
+-function resolveDeviceGridlineThicknessPx() {
++export function resolveDeviceGridlineThicknessPx() {
+   if (typeof window === "undefined") {
+     return 1;
+   }
 diff --git a/packages/react-xlsx/src/index.ts b/packages/react-xlsx/src/index.ts
-index f1d5da5..18080ed 100644
+index f1d5da5..ffeb3f2 100644
 --- a/packages/react-xlsx/src/index.ts
 +++ b/packages/react-xlsx/src/index.ts
-@@ -1,5 +1,7 @@
+@@ -1,5 +1,8 @@
  export { useXlsxViewerController, XlsxFileSizeLimitExceededError } from "./controller";
  export { initWasm, setWasmSource, type XlsxWasmSource } from "./wasm";
 +export { externalCallKey, type ExternalFnValues } from "./external-fn";
++export { formulaProblem, formulaText, type XlsxEdit, type XlsxEditKind, type XlsxFormulaProblem } from "./edit-guard";
 +export type { XlsxCalculationReport, XlsxCalculationIssue, XlsxCellCalculationDiagnostic } from "./calculation-diagnostics";
  export {
    DefaultXlsxToolbar,
    useXlsxViewerCharts,
-@@ -23,6 +25,7 @@ export type {
+@@ -23,6 +26,7 @@ export type {
    XlsxChartReference,
    XlsxChartsheet,
    XlsxChartSeries,
@@ -3801,6 +5450,50 @@ index f1d5da5..18080ed 100644
    XlsxCellAddress,
    XlsxCellAlignmentInput,
    XlsxCellBorderEdgeInput,
+@@ -88,3 +92,5 @@ export type {
+   UseXlsxViewerThumbnailsOptions,
+   XlsxViewerTables
+ } from "./types";
++export { isMerged } from "./auto-fit";
++export { mergesTouching } from "./merge-regions";
+diff --git a/packages/react-xlsx/src/load-mode.test.ts b/packages/react-xlsx/src/load-mode.test.ts
+new file mode 100644
+index 0000000..b71a629
+--- /dev/null
++++ b/packages/react-xlsx/src/load-mode.test.ts
+@@ -0,0 +1,16 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { needsMainThreadReload } from "./load-mode.ts";
++
++const loaded = { isWorkerBacked: true, isLoading: false, requestedReadOnly: false, forcedReadOnly: false };
++
++test("turning read-only off reloads a worker-backed workbook on the main thread, once loaded", () => {
++  assert.equal(needsMainThreadReload(loaded), true);
++  assert.equal(needsMainThreadReload({ ...loaded, isLoading: true }), false);
++  assert.equal(needsMainThreadReload({ ...loaded, requestedReadOnly: true }), false);
++  assert.equal(needsMainThreadReload({ ...loaded, isWorkerBacked: false }), false);
++});
++
++test("a workbook forced read-only by its size stays on the worker", () => {
++  assert.equal(needsMainThreadReload({ ...loaded, forcedReadOnly: true }), false);
++});
+diff --git a/packages/react-xlsx/src/load-mode.ts b/packages/react-xlsx/src/load-mode.ts
+new file mode 100644
+index 0000000..c264200
+--- /dev/null
++++ b/packages/react-xlsx/src/load-mode.ts
+@@ -0,0 +1,10 @@
++/** The worker renders read-only; a workbook it loaded must reload on the main thread to edit. A
++ *  workbook forced read-only by its size stays on the worker. */
++export function needsMainThreadReload(state: {
++  isWorkerBacked: boolean;
++  isLoading: boolean;
++  requestedReadOnly: boolean;
++  forcedReadOnly: boolean;
++}): boolean {
++  return state.isWorkerBacked && !state.isLoading && !state.requestedReadOnly && !state.forcedReadOnly;
++}
 diff --git a/packages/react-xlsx/src/merge-regions.test.ts b/packages/react-xlsx/src/merge-regions.test.ts
 new file mode 100644
 index 0000000..19d4108
@@ -4402,16 +6095,17 @@ index 0000000..9d639ef
 +  }
 +}
 diff --git a/packages/react-xlsx/src/types.ts b/packages/react-xlsx/src/types.ts
-index 16b5350..bc1ace1 100644
+index 16b5350..b79ccff 100644
 --- a/packages/react-xlsx/src/types.ts
 +++ b/packages/react-xlsx/src/types.ts
-@@ -1,3 +1,5 @@
+@@ -1,3 +1,6 @@
 +import type { DataNavigationRequest } from "./data-navigation";
 +import type { ExternalFnValues } from "./external-fn";
++import type { XlsxEdit } from "./edit-guard";
  import type * as React from "react";
  import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
  
-@@ -159,6 +161,9 @@ export interface XlsxCellAddress {
+@@ -159,6 +162,9 @@ export interface XlsxCellAddress {
    row: number;
  }
  
@@ -4421,7 +6115,7 @@ index 16b5350..bc1ace1 100644
  export interface XlsxCellRange {
    end: XlsxCellAddress;
    start: XlsxCellAddress;
-@@ -963,6 +968,18 @@ export interface UseXlsxViewerControllerOptions {
+@@ -963,6 +969,25 @@ export interface UseXlsxViewerControllerOptions {
     * @default false
     */
    allowResizeInReadOnly?: boolean;
@@ -4434,13 +6128,30 @@ index 16b5350..bc1ace1 100644
 +  autoCalculateFormulaLimit?: number;
 +  /**
 +   * Values keyed by `externalCallKey(name, args)` resolve add-in formulas without rewriting them.
-+   * Unmapped calls preserve their cached values.
++   * Unmapped calls preserve their cached values. Every calculation uses the latest values: the
++   * load, recalculation after each edit, undo and redo. Changing them recalculates in place,
++   * without reloading the workbook.
 +   */
 +  externalFnValues?: Record<string, string | number>;
++  /**
++   * Called before every workbook edit with what it would change; return `false` to refuse it.
++   * Without it, formula entries with a `formulaProblem` are refused.
++   */
++  onBeforeEdit?: (edit: XlsxEdit) => boolean;
    /**
     * Defers loading until `continueDeferredLoad()` is called when the file is larger than this byte threshold.
     * Set to `0` to parse immediately.
-@@ -1042,6 +1059,9 @@ export interface UseXlsxViewerControllerOptions {
+@@ -999,7 +1024,8 @@ export interface UseXlsxViewerControllerOptions {
+    */
+   maxFileSizeBytes?: number;
+   /**
+-   * Disables workbook edits, paste, fill, undo/redo, and other mutation actions.
++   * Disables workbook edits, paste, fill, undo/redo, and other mutation actions. Changing it after
++   * the workbook loads switches editing on or off in place, without reloading.
+    *
+    * @default false
+    */
+@@ -1042,6 +1068,9 @@ export interface UseXlsxViewerControllerOptions {
  }
  
  export interface XlsxViewerController {
@@ -4450,7 +6161,17 @@ index 16b5350..bc1ace1 100644
    activeCell: XlsxCellAddress | null;
    activeCellAddress: string | null;
    activeSheet: XlsxSheetData | null;
-@@ -1093,6 +1113,7 @@ export interface XlsxViewerController {
+@@ -1057,7 +1086,8 @@ export interface XlsxViewerController {
+   canZoomOut: boolean;
+   /** Adds a Duke-supported form control to a visible worksheet and returns its worksheet-local index. */
+   addFormControl: (input: XlsxFormControlInput, sheetIndex?: number) => number | null;
+-  clearSelectedCells: () => void;
++  /** Clears the selection's contents; false when nothing was cleared (read-only or refused). */
++  clearSelectedCells: () => boolean;
+   clearSelection: () => void;
+   continueDeferredLoad: () => void;
+   copySelectionToClipboard: () => Promise<boolean>;
+@@ -1093,6 +1123,7 @@ export interface XlsxViewerController {
    getCellSnapshotAsync?: (workbookSheetIndex: number, row: number, col: number) => Promise<{
      displayValue: string;
      formula: string;
@@ -4458,7 +6179,7 @@ index 16b5350..bc1ace1 100644
    }>;
    isLoadDeferred: boolean;
    isLoading: boolean;
-@@ -1101,7 +1122,7 @@ export interface XlsxViewerController {
+@@ -1101,7 +1132,7 @@ export interface XlsxViewerController {
    images: XlsxImage[];
    moveChartBy: (id: string, deltaX: number, deltaY: number) => void;
    shapes: XlsxShape[];
@@ -4467,7 +6188,7 @@ index 16b5350..bc1ace1 100644
    maxZoomScale: number;
    minZoomScale: number;
    moveImageBy: (id: string, deltaX: number, deltaY: number) => void;
-@@ -1109,7 +1130,8 @@ export interface XlsxViewerController {
+@@ -1109,7 +1140,8 @@ export interface XlsxViewerController {
    /** Removes a Duke-supported control by its worksheet-local index. */
    removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
    readOnly: boolean;
@@ -4477,7 +6198,7 @@ index 16b5350..bc1ace1 100644
    revision: number;
    resetZoom: () => void;
    resizeChartBy: (
-@@ -1126,6 +1148,10 @@ export interface XlsxViewerController {
+@@ -1126,10 +1158,30 @@ export interface XlsxViewerController {
    ) => void;
    resizeColumn: (col: number, widthPx: number) => void;
    resizeRow: (row: number, heightPx: number) => void;
@@ -4488,7 +6209,28 @@ index 16b5350..bc1ace1 100644
    redo: () => void;
    pasteFromClipboard: () => Promise<boolean>;
    pasteStructuredClipboardData: (payload: string) => boolean;
-@@ -1176,11 +1202,19 @@ export interface XlsxViewerController {
+-  pasteText: (text: string) => boolean;
++  pasteText: (text: string, options?: { literal?: boolean }) => boolean;
++  /**
++   * Pastes the system clipboard at the active cell. A paste of the viewer's own last copy keeps
++   * its formulas and formatting; `valuesOnly` pastes values alone (Excel's Paste Values), leaving
++   * the destination's formatting. Rejects when the browser refuses the clipboard.
++   */
++  paste: (options?: { valuesOnly?: boolean }) => Promise<boolean>;
++  /** Copies the selection, then clears it; pasting it moves formulas unchanged. A refused clear
++   *  leaves an ordinary copy. Writes to `clipboard` (a cut event's) when given, else the system
++   *  clipboard. Resolves whether the cells were cut; rejects when the browser refuses the clipboard. */
++  cutSelection: (clipboard?: DataTransfer) => Promise<boolean>;
++  /**
++   * Fits columns or rows to their text, as Excel's AutoFit, in one undo step: by default every
++   * selected one. Hidden ones are left alone; an empty row returns to the default height and an
++   * empty column keeps its width.
++   */
++  autoFit: (axis: "column" | "row", indices?: Iterable<number>) => void;
+   selectedRangeAddress: string | null;
+   selectedValue: string;
+   selectedFormula: string;
+@@ -1176,11 +1228,19 @@ export interface XlsxViewerController {
     */
    setRangeStyle: (range: XlsxCellRange, style: XlsxCellStyleInput) => void;
    setZoomScale: (zoomScale: number) => void;
@@ -4510,7 +6252,7 @@ index 16b5350..bc1ace1 100644
    setActiveSheetIndex: (index: number) => void;
    setActiveTabIndex: (index: number) => void;
    selectedChart: XlsxChart | null;
-@@ -1233,9 +1267,11 @@ export interface XlsxViewerSelection {
+@@ -1233,9 +1293,11 @@ export interface XlsxViewerSelection {
    activeCellAddress: string | null;
    clearSelection: () => void;
    selectedRangeAddress: string | null;
@@ -4524,7 +6266,17 @@ index 16b5350..bc1ace1 100644
  }
  
  export interface XlsxViewerZoom {
-@@ -1266,7 +1302,7 @@ export interface XlsxViewerEditing {
+@@ -1256,7 +1318,8 @@ export interface XlsxViewerEditing {
+   addFormControl: (input: XlsxFormControlInput, sheetIndex?: number) => number | null;
+   canRedo: boolean;
+   canUndo: boolean;
+-  clearSelectedCells: () => void;
++  /** Clears the selection's contents; false when nothing was cleared (read-only or refused). */
++  clearSelectedCells: () => boolean;
+   copySelectionToClipboard: () => Promise<boolean>;
+   defineNamedRange: (name: string, range?: XlsxCellRange | null) => void;
+   fillSelection: (targetRange: XlsxCellRange) => void;
+@@ -1266,10 +1329,13 @@ export interface XlsxViewerEditing {
    getCellFormula: (cell?: XlsxCellAddress | null) => string;
    getFormControlItems: (controlIndex: number, sheetIndex?: number) => string[];
    getSheetFormControls: (sheetIndex?: number) => XlsxFormControl[];
@@ -4532,8 +6284,25 @@ index 16b5350..bc1ace1 100644
 +  mergeSelection: () => XlsxCellRange | null;
    pasteFromClipboard: () => Promise<boolean>;
    pasteStructuredClipboardData: (payload: string) => boolean;
-   pasteText: (text: string) => boolean;
-@@ -1547,6 +1583,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
+-  pasteText: (text: string) => boolean;
++  pasteText: (text: string, options?: { literal?: boolean }) => boolean;
++  paste: (options?: { valuesOnly?: boolean }) => Promise<boolean>;
++  cutSelection: (clipboard?: DataTransfer) => Promise<boolean>;
++  autoFit: (axis: "column" | "row", indices?: Iterable<number>) => void;
+   removeActiveSheet: () => void;
+   removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
+   readOnly: boolean;
+@@ -1511,6 +1577,9 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
+    * @default false
+    */
+   allowResizeInReadOnly?: boolean;
++  /** Called when the browser refuses the clipboard to a keyboard paste (Ctrl/Cmd+Shift+V with no
++   *  paste event, as in Chrome on a Mac). */
++  onClipboardError?: (error: unknown) => void;
+   /** Class name applied to the root viewer shell. */
+   className?: string;
+   /**
+@@ -1547,6 +1616,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
     * ```
     */
    experimentalCanvas?: boolean;
@@ -4542,7 +6311,7 @@ index 16b5350..bc1ace1 100644
    /** Content shown for non-size load errors, or a function that receives the thrown error. */
    errorState?: React.ReactNode | ((error: Error) => React.ReactNode);
    /** Content shown when `maxFileSizeBytes` rejects a file. */
-@@ -1578,6 +1616,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
+@@ -1578,6 +1649,8 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
     * ```
     */
    getCellStyle?: (context: XlsxCellStyleContext) => React.CSSProperties | null | undefined;
