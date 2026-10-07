@@ -1,5 +1,6 @@
 import type { DataNavigationRequest } from "./data-navigation";
 import type { ExternalFnValues } from "./external-fn";
+import type { XlsxEdit } from "./edit-guard";
 import type * as React from "react";
 import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
 
@@ -977,9 +978,16 @@ export interface UseXlsxViewerControllerOptions {
   autoCalculateFormulaLimit?: number;
   /**
    * Values keyed by `externalCallKey(name, args)` resolve add-in formulas without rewriting them.
-   * Unmapped calls preserve their cached values.
+   * Unmapped calls preserve their cached values. Every calculation uses the latest values: the
+   * load, recalculation after each edit, undo and redo. Changing them recalculates in place,
+   * without reloading the workbook.
    */
   externalFnValues?: Record<string, string | number>;
+  /**
+   * Called before every workbook edit with what it would change; return `false` to refuse it.
+   * Without it, formula entries with a `formulaProblem` are refused.
+   */
+  onBeforeEdit?: (edit: XlsxEdit) => boolean;
   /**
    * Defers loading until `continueDeferredLoad()` is called when the file is larger than this byte threshold.
    * Set to `0` to parse immediately.
@@ -1016,7 +1024,8 @@ export interface UseXlsxViewerControllerOptions {
    */
   maxFileSizeBytes?: number;
   /**
-   * Disables workbook edits, paste, fill, undo/redo, and other mutation actions.
+   * Disables workbook edits, paste, fill, undo/redo, and other mutation actions. Changing it after
+   * the workbook loads switches editing on or off in place, without reloading.
    *
    * @default false
    */
@@ -1156,6 +1165,21 @@ export interface XlsxViewerController {
   pasteFromClipboard: () => Promise<boolean>;
   pasteStructuredClipboardData: (payload: string) => boolean;
   pasteText: (text: string) => boolean;
+  /**
+   * Pastes the system clipboard at the active cell. A paste of the viewer's own last copy keeps
+   * its formulas and formatting; `valuesOnly` pastes values alone (Excel's Paste Values), leaving
+   * the destination's formatting. Rejects when the browser refuses the clipboard.
+   */
+  paste: (options?: { valuesOnly?: boolean }) => Promise<boolean>;
+  /** Copies the selection to the system clipboard, then clears it. Pasting it moves formulas
+   *  unchanged. Rejects when the browser refuses the clipboard. */
+  cutSelection: () => Promise<boolean>;
+  /**
+   * Fits columns or rows to their text, as Excel's AutoFit, in one undo step: by default every
+   * selected one. Hidden ones are left alone; an empty row returns to the default height and an
+   * empty column keeps its width.
+   */
+  autoFit: (axis: "column" | "row", indices?: Iterable<number>) => void;
   selectedRangeAddress: string | null;
   selectedValue: string;
   selectedFormula: string;
@@ -1306,6 +1330,9 @@ export interface XlsxViewerEditing {
   pasteFromClipboard: () => Promise<boolean>;
   pasteStructuredClipboardData: (payload: string) => boolean;
   pasteText: (text: string) => boolean;
+  paste: (options?: { valuesOnly?: boolean }) => Promise<boolean>;
+  cutSelection: () => Promise<boolean>;
+  autoFit: (axis: "column" | "row", indices?: Iterable<number>) => void;
   removeActiveSheet: () => void;
   removeFormControl: (controlIndex: number, sheetIndex?: number) => boolean;
   readOnly: boolean;
@@ -1547,6 +1574,9 @@ export interface XlsxViewerProps extends UseXlsxViewerControllerOptions {
    * @default false
    */
   allowResizeInReadOnly?: boolean;
+  /** Called when the browser refuses the clipboard to a keyboard paste (Ctrl/Cmd+Shift+V with no
+   *  paste event, as in Chrome on a Mac). */
+  onClipboardError?: (error: unknown) => void;
   /** Class name applied to the root viewer shell. */
   className?: string;
   /**

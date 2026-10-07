@@ -11,6 +11,15 @@ import { resolveBuiltinTableStyle } from "./builtin-table-styles";
 import { resolveCellTextClipOverscan } from "./cell-text-clip";
 import { resizeHitSlopPx } from "./resize-hit-slop";
 import { visibleSpan } from "./visible-axis";
+import { formulaText } from "./edit-guard";
+import {
+  GRID_SURFACE_ATTRIBUTE,
+  INTERNAL_CLIPBOARD_MIME,
+  rememberCopy,
+  rememberedCells,
+  valuesOnly,
+  withoutCopyOrigins
+} from "./clipboard-memory";
 import { resolveWorkbookColor, resolveWorkbookFillStyle } from "./colors";
 import { useXlsxViewerController, XlsxFileSizeLimitExceededError } from "./controller";
 import { MemoChartSvg } from "./chart-renderer";
@@ -65,7 +74,6 @@ const DEFAULT_ROW_HEIGHT = 24;
 const DEFAULT_COL_WIDTH = 80;
 const HEADER_HEIGHT = 24;
 const ROW_HEADER_WIDTH = 40;
-const INTERNAL_CLIPBOARD_MIME = "application/x-react-xlsx-range+json";
 const MIN_OPEN_GRID_ROWS = 200;
 const MIN_OPEN_GRID_COLS = 50;
 const OPEN_GRID_ROW_PADDING = 120;
@@ -7281,9 +7289,15 @@ const MemoGridRow = React.memo(GridRow, (prev, next) => {
   return true;
 });
 
+/** How long Ctrl/Cmd+Shift+V waits for the browser's own paste event before reading the clipboard. */
+const VALUES_PASTE_WAIT_MS = 100;
+/** Two presses on the same header border within this long are a double-click. */
+const BORDER_DOUBLE_CLICK_MS = 500;
+
 function XlsxGrid({
   allowResizeInReadOnly = false,
   controller,
+  onClipboardError,
   emptyState,
   enableCanvasSelectionAnimation = true,
   errorState,
@@ -7310,7 +7324,7 @@ function XlsxGrid({
   showImages = true
 }: Pick<
   XlsxViewerProps,
-  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "formulaErrorTooltipClassName" | "getCellStyle" | "showFormulas" | "loadingComponent" | "loadingState" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
+  "allowResizeInReadOnly" | "emptyState" | "enableCanvasSelectionAnimation" | "enableGestureZoom" | "errorState" | "experimentalCanvas" | "fileTooLargeState" | "formulaErrorTooltipClassName" | "getCellStyle" | "showFormulas" | "loadingComponent" | "loadingState" | "onClipboardError" | "onFormControlAction" | "onFormControlChange" | "renderChartLoading" | "renderFormControl" | "renderImage" | "renderImageSelection" | "renderScroller" | "renderTableHeaderMenu" | "selectionColor" | "selectionFillColor" | "selectionHeaderColor" | "showImages"
 > & {
   controller: XlsxViewerController;
   palette: ViewerPalette;
@@ -7343,6 +7357,7 @@ function XlsxGrid({
     getRowsBatchAsync,
     getClipboardData,
     getCellDisplayValue: getControllerCellDisplayValue,
+    getCellFormula: getControllerCellFormula,
     getFormControlItems,
     images,
     shapes,
@@ -7352,7 +7367,9 @@ function XlsxGrid({
     isWorkerBacked,
     maxZoomScale,
     minZoomScale,
+    autoFit,
     copySelectionToClipboard,
+    paste,
     pasteFromClipboard,
     pasteStructuredClipboardData,
     pasteText,
@@ -7491,6 +7508,11 @@ function XlsxGrid({
   const selectionCommitFrameRef = React.useRef<number | null>(null);
   const selectionRef = React.useRef<XlsxCellRange | null>(null);
   const editingCellRef = React.useRef<XlsxCellAddress | null>(null);
+  const valuesPasteTimerRef = React.useRef<number | null>(null);
+  React.useEffect(() => () => {
+    if (valuesPasteTimerRef.current !== null) window.clearTimeout(valuesPasteTimerRef.current);
+  }, []);
+  const lastBorderPressRef = React.useRef<{ type: "column" | "row"; index: number; time: number } | null>(null);
   const commitEditingRef = React.useRef<() => void>(() => {});
   const editingInputRef = React.useRef<HTMLInputElement>(null);
   const readOnlyRef = React.useRef(readOnly);
@@ -9749,9 +9771,11 @@ function XlsxGrid({
 
       selectCell(cell);
       setEditingCell(cell);
-      setEditingValue(initialValue ?? getControllerCellDisplayValue(cell));
+      // Excel opens a formula cell's editor on its formula.
+      const formula = initialValue === undefined ? getControllerCellFormula(cell) : "";
+      setEditingValue(initialValue ?? (formula ? formulaText(formula) : getControllerCellDisplayValue(cell)));
     },
-    [getControllerCellDisplayValue, readOnly, selectCell]
+    [getControllerCellDisplayValue, getControllerCellFormula, readOnly, selectCell]
   );
 
   const commitEditing = React.useCallback(() => {
@@ -15492,8 +15516,37 @@ function XlsxGrid({
     };
   }
 
+  /** Excel's double-click on a header border fits that column or row, or every selected one when
+   *  the border belongs to a whole-column (or whole-row) selection. */
+  function fitOnBorderDoubleClick(type: "column" | "row", index: number): boolean {
+    const now = performance.now();
+    const last = lastBorderPressRef.current;
+    lastBorderPressRef.current = { type, index, time: now };
+    if (!last || last.type !== type || last.index !== index || now - last.time > BORDER_DOUBLE_CLICK_MS) {
+      return false;
+    }
+    lastBorderPressRef.current = null;
+    const spans = selections.flatMap((region): Array<[number, number]> => {
+      const range = normalizeRange(region);
+      if (type === "column") {
+        const whole = range.start.row <= (firstVisibleRow ?? 0)
+          && (range.end.row >= (lastVisibleRow ?? 0) || range.end.row >= (activeSheet?.maxUsedRow ?? 0));
+        return whole ? [[range.start.col, range.end.col]] : [];
+      }
+      const whole = range.start.col <= (firstVisibleCol ?? 0)
+        && (range.end.col >= (lastVisibleCol ?? 0) || range.end.col >= (activeSheet?.maxUsedCol ?? 0));
+      return whole ? [[range.start.row, range.end.row]] : [];
+    });
+    const inSelection = spans.some(([first, end]) => index >= first && index <= end);
+    const indices = inSelection
+      ? spans.flatMap(([first, end]) => Array.from({ length: end - first + 1 }, (_, offset) => first + offset))
+      : [index];
+    autoFit(type, indices);
+    return true;
+  }
+
   function startColumnResize(pointerId: number, actualCol: number, widthPx: number, startX: number) {
-    if (!canResizeHeaders) {
+    if (!canResizeHeaders || fitOnBorderDoubleClick("column", actualCol)) {
       return;
     }
 
@@ -15514,7 +15567,7 @@ function XlsxGrid({
   }
 
   function startRowResize(pointerId: number, actualRow: number, heightPx: number, startY: number) {
-    if (!canResizeHeaders) {
+    if (!canResizeHeaders || fitOnBorderDoubleClick("row", actualRow)) {
       return;
     }
 
@@ -16076,6 +16129,13 @@ function XlsxGrid({
     });
   }
 
+  function takeValuesPaste() {
+    if (valuesPasteTimerRef.current === null) return false;
+    window.clearTimeout(valuesPasteTimerRef.current);
+    valuesPasteTimerRef.current = null;
+    return true;
+  }
+
   function handleGridKeyDown(event: React.KeyboardEvent<HTMLDivElement> | KeyboardEvent) {
     if (editingCell || event.defaultPrevented || ("isComposing" in event ? event.isComposing : event.nativeEvent.isComposing)) {
       return;
@@ -16098,6 +16158,17 @@ function XlsxGrid({
       if (normalizedKey === "y") {
         event.preventDefault();
         redo();
+        return;
+      }
+
+      // Paste values. Windows browsers follow it with a paste event that carries the clipboard;
+      // where none comes (Chrome on a Mac), the timer reads the clipboard instead.
+      if (normalizedKey === "v" && event.shiftKey) {
+        takeValuesPaste();
+        valuesPasteTimerRef.current = window.setTimeout(() => {
+          valuesPasteTimerRef.current = null;
+          paste({ valuesOnly: true }).catch((pasteError: unknown) => onClipboardError?.(pasteError));
+        }, VALUES_PASTE_WAIT_MS);
         return;
       }
     }
@@ -16277,6 +16348,7 @@ function XlsxGrid({
     "aria-readonly": readOnly,
     "aria-rowcount": Math.max(activeSheet?.rowCount ?? 0, displayRowLimit),
     role: "grid",
+    [GRID_SURFACE_ATTRIBUTE as string]: "",
     onScroll: handleScrollerScroll,
     onCopy: (event) => {
       if (editingCell) {
@@ -16294,10 +16366,30 @@ function XlsxGrid({
         clipboard.setData("text/plain", clipboardData.text);
         clipboard.setData("text/html", clipboardData.html);
         clipboard.setData(INTERNAL_CLIPBOARD_MIME, clipboardData.structured);
+        rememberCopy(clipboardData.text, clipboardData.structured);
         return;
       }
 
       void copySelectionToClipboard();
+    },
+    // Excel's cut: copy, then clear. Pasting it moves formulas unchanged.
+    onCut: (event) => {
+      if (editingCell || readOnly || !event.clipboardData) {
+        return;
+      }
+
+      const clipboardData = getClipboardData();
+      const structured = clipboardData && withoutCopyOrigins(clipboardData.structured);
+      if (!clipboardData || !structured) {
+        return;
+      }
+
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", clipboardData.text);
+      event.clipboardData.setData("text/html", clipboardData.html);
+      event.clipboardData.setData(INTERNAL_CLIPBOARD_MIME, structured);
+      rememberCopy(clipboardData.text, structured);
+      clearSelectedCells();
     },
     onPointerDownCapture: (event) => {
       if (event.button !== 0) {
@@ -16334,15 +16426,18 @@ function XlsxGrid({
         return;
       }
 
-      const structuredPayload = clipboard.getData(INTERNAL_CLIPBOARD_MIME);
       const textPayload = clipboard.getData("text/plain");
+      // A copy made through the async clipboard (a menu) lacks the cells' format; use the memory.
+      const structuredPayload = clipboard.getData(INTERNAL_CLIPBOARD_MIME) || rememberedCells(textPayload);
+      const valuesOnlyPaste = takeValuesPaste();
       if (!structuredPayload && !textPayload) {
         return;
       }
 
       event.preventDefault();
-      if (structuredPayload) {
-        pasteStructuredClipboardData(structuredPayload);
+      const payload = structuredPayload && valuesOnlyPaste ? valuesOnly(structuredPayload) : structuredPayload;
+      if (payload) {
+        pasteStructuredClipboardData(payload);
         return;
       }
 
@@ -16971,6 +17066,7 @@ function XlsxGrid({
 
 function XlsxViewerInner({
   allowResizeInReadOnly = false,
+  onClipboardError,
   className,
   controller,
   emptyState,
@@ -17052,6 +17148,7 @@ function XlsxViewerInner({
             <div style={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
               <XlsxGrid
                 allowResizeInReadOnly={allowResizeInReadOnly}
+                onClipboardError={onClipboardError}
                 controller={controller}
                 emptyState={emptyState}
                 enableCanvasSelectionAnimation={enableCanvasSelectionAnimation}
@@ -17216,6 +17313,9 @@ export function useXlsxViewerEditing(): XlsxViewerEditing {
     getSheetFormControls,
     mergeSelection,
     pasteFromClipboard,
+    paste,
+    cutSelection,
+    autoFit,
     pasteStructuredClipboardData,
     pasteText,
     removeActiveSheet,
@@ -17258,6 +17358,9 @@ export function useXlsxViewerEditing(): XlsxViewerEditing {
       getSheetFormControls,
       mergeSelection,
       pasteFromClipboard,
+      paste,
+      cutSelection,
+      autoFit,
       pasteStructuredClipboardData,
       pasteText,
       removeActiveSheet,
@@ -17298,6 +17401,9 @@ export function useXlsxViewerEditing(): XlsxViewerEditing {
       getSheetFormControls,
       mergeSelection,
       pasteFromClipboard,
+      paste,
+      cutSelection,
+      autoFit,
       pasteStructuredClipboardData,
       pasteText,
       removeActiveSheet,
