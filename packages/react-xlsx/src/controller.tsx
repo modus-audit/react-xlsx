@@ -1455,14 +1455,15 @@ async function resolveWorkbookBuffer(
 
 async function parseWorkbookBuffer(
   buffer: ArrayBuffer,
-  externalFnValues?: ExternalFnValues,
+  externalFnValues: ExternalFnValues | undefined,
+  autoCalculateFormulaLimit: number,
 ): Promise<{
   shouldAutoCalculate: boolean;
   workbook: Workbook;
 }> {
   const wasmModule = await getSheetsWasmModule();
   const initialWorkbook = wasmModule.Workbook.fromBytes(new Uint8Array(buffer));
-  const shouldAutoCalculate = countWorkbookFormulas(initialWorkbook) <= AUTO_CALCULATE_FORMULA_THRESHOLD;
+  const shouldAutoCalculate = countWorkbookFormulas(initialWorkbook) <= autoCalculateFormulaLimit;
   if (!shouldAutoCalculate) {
     return { shouldAutoCalculate, workbook: initialWorkbook };
   }
@@ -1882,6 +1883,7 @@ function downloadUrl(src: string, fileName: string) {
 export function useXlsxViewerController(options: UseXlsxViewerControllerOptions): XlsxViewerController {
   const {
     allowResizeInReadOnly = false,
+    autoCalculateFormulaLimit = AUTO_CALCULATE_FORMULA_THRESHOLD,
     deferLoadingAboveBytes = DEFAULT_DEFER_LOADING_ABOVE_BYTES,
     externalFnValues,
     file,
@@ -2196,7 +2198,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [getWorkerClient, hasIncompleteWorkerChartSnapshot, setChartAssets, showHiddenSheets, skipXmlParsing, workerSupported]);
 
   const loadWorkbookOnMainThread = React.useCallback(async (buffer: ArrayBuffer) => {
-    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValues);
+    const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValues, autoCalculateFormulaLimit);
     const bytes = new Uint8Array(buffer);
     const nextImageAssets = loadWorkbookImageAssets(
       bytes,
@@ -2207,7 +2209,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       imageAssets: nextImageAssets,
       parsedWorkbook: nextParsedWorkbook
     };
-  }, [externalFnValues, skipXmlParsing]);
+  }, [autoCalculateFormulaLimit, externalFnValues, skipXmlParsing]);
 
   const refreshWorkbookState = React.useCallback((targetWorkbook: Workbook) => {
     const currentFormControls = imageAssetsRef.current?.formControlsByWorkbookSheetIndex ?? [];
@@ -2682,7 +2684,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
-    void parseWorkbookBuffer(deferredBuffer, externalFnValues)
+    void parseWorkbookBuffer(deferredBuffer, externalFnValues, autoCalculateFormulaLimit)
       .then((nextParsedWorkbook) => {
         const bytes = new Uint8Array(deferredBuffer);
         const nextImageAssets = loadWorkbookImageAssets(
@@ -2726,6 +2728,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         setIsLoading(false);
       });
   }, [
+    autoCalculateFormulaLimit,
     clearChartAssets,
     clearImageAssets,
     disposeWorkerClient,
