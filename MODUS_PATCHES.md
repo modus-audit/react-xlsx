@@ -4,7 +4,12 @@ Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the 
 
 Preserved behavior:
 
-- Serializable external add-in values reach the engine in normal, worker, and deferred loads. Formula text remains intact; unresolved calls retain cached values.
+- Serializable external add-in values reach the engine in normal, worker, and deferred loads, and every later calculation uses the latest `externalFnValues`: recalculation after each edit, undo and redo. Changing them recalculates once, in place, without reloading. Formula text remains intact; unresolved calls retain cached values.
+- `readOnly` switches editing on or off in place after load, without reloading the workbook.
+- `onBeforeEdit(edit)` sees every workbook edit before it happens and can refuse it: cell content (typing, clearing, pasting, filling), style, merge, unmerge, resize, undo/redo, sheet and name changes, and drawings. Each `XlsxEdit` carries the cells it writes (a paste's extent from the active cell, a fill's target), a lazily computed net formula-count change, and for one formula entry its normalized text and any problem the engine would mishandle silently (unbalanced syntax, a missing sheet). Without a hook, formula entries with a problem are refused.
+- Excel entry: text typed into a cell that starts with `=` is a formula, and the cell editor opens a formula cell on its `=formula`.
+- The viewer remembers its last copy or cut page-wide (forgotten on any copy outside a grid), so a paste event or async-clipboard paste whose text matches it keeps formulas and formatting. `cutSelection()` copies then clears, and pasting a cut moves formulas unchanged; `paste({ valuesOnly })` is Excel's Paste Values; Ctrl/Cmd+Shift+V pastes values (reading the clipboard when the browser fires no paste event, reporting a refusal through `onClipboardError`); Ctrl/Cmd+X cuts.
+- `autoFit(axis, indices?)` fits columns or rows to their text in one undo step (by default every selected one), and double-clicking a header border fits that column or row, or the whole selection when the border belongs to it.
 - `recalculate` accepts updated external add-in values without reloading the workbook, including
   worker-backed read-only workbooks. The engine (`wasm-dist-0.1.23-modus.2`) calculates serially, so the old 5,000-formula trap is gone; `autoCalculateFormulaLimit` (default 1,000) sets how many formulas a main-thread workbook may have and still recalculate on load and after edits.
 - `controller.calculation` reports execution coverage on initial, deferred, and explicit recalculation.
@@ -34,9 +39,9 @@ Retired customizations:
 
 The app configures `initWasm` with a bundler-resolved asset URL and explicitly chooses worker mode. Upstream otherwise routes all read-only workbooks into the worker, bypassing rich conditional formatting.
 
-Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
+Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/excel-viewer-e2e`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.20`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.21`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 

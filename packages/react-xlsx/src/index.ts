@@ -1,6 +1,7 @@
 export { useXlsxViewerController, XlsxFileSizeLimitExceededError } from "./controller";
 export { initWasm, setWasmSource, type XlsxWasmSource } from "./wasm";
 export { externalCallKey, type ExternalFnValues } from "./external-fn";
+export { formulaProblem, formulaText, type XlsxEdit, type XlsxEditKind, type XlsxFormulaProblem } from "./edit-guard";
 export type { XlsxCalculationReport, XlsxCalculationIssue, XlsxCellCalculationDiagnostic } from "./calculation-diagnostics";
 export {
   DefaultXlsxToolbar,
@@ -91,3 +92,5 @@ export type {
   UseXlsxViewerThumbnailsOptions,
   XlsxViewerTables
 } from "./types";
+export { isMerged } from "./auto-fit";
+export { mergesTouching } from "./merge-regions";

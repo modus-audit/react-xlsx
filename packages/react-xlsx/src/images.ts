@@ -48,7 +48,7 @@ const DEFAULT_COLUMN_CHARACTER_WIDTH_PX = 7;
 const columnCharacterWidthCache = new Map<string, number>();
 type DukeWorksheet = ReturnType<Workbook["getSheet"]>;
 
-function resolveDeviceGridlineThicknessPx() {
+export function resolveDeviceGridlineThicknessPx() {
   if (typeof window === "undefined") {
     return 1;
   }
