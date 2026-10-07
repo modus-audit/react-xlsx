@@ -53,6 +53,7 @@ import { externalCalcOptions, type ExternalFnValues } from "./external-fn";
 import { AUTO_CALCULATE_FORMULA_THRESHOLD, countWorkbookFormulas, safeCalculate } from "./safe-calculate";
 import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
 import { type ClipboardMatrixCell, clipboardStyleTable, copiedCell, plainCellStyle, styleToRestore, writePastedCell } from "./clipboard-cells";
+import { copyFormula, fillSourceIndex } from "./formula-copy";
 import { XlsxWorkerClient } from "./worker-client";
 import { mergesTouching, mergeTarget } from "./merge-regions";
 import { normalizeWorkbookArrayBuffer } from "./zip-entry-names";
@@ -4651,13 +4652,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
           continue;
         }
 
-        const sourceRow = sourceRange.start.row + ((row - nextRange.start.row) % sourceHeight);
-        const sourceCol = sourceRange.start.col + ((col - nextRange.start.col) % sourceWidth);
+        const sourceRow = fillSourceIndex(row, sourceRange.start.row, sourceHeight);
+        const sourceCol = fillSourceIndex(col, sourceRange.start.col, sourceWidth);
         const sourceFormula = worksheet.getFormulaAt(sourceRow, sourceCol);
         const sourceStyle = cloneCellStyle(worksheet.getCellStyleAt(sourceRow, sourceCol));
 
         if (sourceFormula) {
-          worksheet.setFormula(cellAddressToA1(targetCell), sourceFormula);
+          worksheet.setFormula(cellAddressToA1(targetCell), copyFormula(sourceFormula, row - sourceRow, col - sourceCol));
         } else {
           const sourceValue = normalizeCellValue(worksheet.getCellAt(sourceRow, sourceCol).toJs());
           worksheet.setCell(cellAddressToA1(targetCell), sourceValue);
