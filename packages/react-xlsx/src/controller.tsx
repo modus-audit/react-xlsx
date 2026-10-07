@@ -1937,7 +1937,6 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const hasCalculatedValuesRef = React.useRef(false);
   const beginCalculation = React.useCallback(() => {
     const attempt = ++calculationAttemptRef.current;
-    hasCalculatedValuesRef.current = true;
     setCalculation((current) => ({ ...calculationReport("calculating", null, current.parsedFormulaCount, current.sourceFormulaCount), revision: attempt }));
     return attempt;
   }, []);
@@ -2311,6 +2310,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
     let isCurrent = true;
     workbookGenerationRef.current += 1;
+    hasCalculatedValuesRef.current = false;
     const loadAttempt = beginCalculation();
     applyCalculation(calculationReport("calculating"), loadAttempt);
     const abortController = new AbortController();
@@ -2818,6 +2818,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     }
 
     const result = safeCalculate(targetWorkbook);
+    hasCalculatedValuesRef.current ||= result.calculated;
     applyCalculation(result.calculation, attempt);
     if (!result.calculated) {
       setShouldAutoCalculate(false);
@@ -3351,18 +3352,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         workerCellSnapshotCacheRef.current.set(cacheKey, snapshot);
         setWorkerCellSnapshotRevision((current) => current + 1);
       })
-      .catch(() => {
-        if (!isCurrent) {
-          return;
-        }
-
-        workerCellSnapshotCacheRef.current.set(cacheKey, {
-          displayValue: "",
-          formula: "",
-          diagnostic: { source: "unknown", error: null }
-        });
-        setWorkerCellSnapshotRevision((current) => current + 1);
-      });
+      // Leave failures uncached so selecting the cell again can retry.
+      .catch(() => undefined);
 
     return () => {
       isCurrent = false;
@@ -3899,6 +3890,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       reparse: readOnly && sourceBuffer ? () => (workbook.constructor as typeof Workbook).fromBytes(new Uint8Array(sourceBuffer)) : undefined
     });
     applyCalculation(result.calculation, attempt);
+    hasCalculatedValuesRef.current ||= result.calculated;
     if (result.workbook !== workbook) {
       hasCalculatedValuesRef.current = false;
       setWorkbook(result.workbook);
@@ -4742,6 +4734,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     }
 
     workbook.addSheet(candidate);
+    maybeRecalculateWorkbook(workbook);
     sheetOriginsRef.current = [...sheetOriginsRef.current, null];
     setFormControlsByWorkbookSheetIndex((current) => [...current, []]);
     setImagesByWorkbookSheetIndex((current) => [...current, []]);
@@ -4775,7 +4768,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       setActiveTabIndexState(nextTabIndex);
     }
     setRevision((current) => current + 1);
-  }, [readOnly, recordHistoryBeforeMutation, setChartAssets, workbook]);
+  }, [maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
 
   const removeActiveSheet = React.useCallback(() => {
     if (readOnly || !workbook || !activeSheet) {
@@ -4784,6 +4777,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
     recordHistoryBeforeMutation();
     workbook.removeSheet(activeSheet.workbookSheetIndex);
+    maybeRecalculateWorkbook(workbook);
     sheetOriginsRef.current = sheetOriginsRef.current.filter((_, index) => index !== activeSheet.workbookSheetIndex);
     setFormControlsByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
     setImagesByWorkbookSheetIndex((current) => current.filter((_, index) => index !== activeSheet.workbookSheetIndex));
@@ -4811,7 +4805,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     }
     setActiveSheetIndexState((current) => Math.max(0, Math.min(current, nextSheets.length - 1)));
     setRevision((current) => current + 1);
-  }, [activeSheet, readOnly, recordHistoryBeforeMutation, setChartAssets, workbook]);
+  }, [activeSheet, maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, setChartAssets, showHiddenSheets, workbook]);
 
   const defineNamedRange = React.useCallback((name: string, range?: XlsxCellRange | null) => {
     if (readOnly || !workbook) {
@@ -4830,8 +4824,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
     recordHistoryBeforeMutation();
     workbook.defineName(trimmed, rangeToA1(targetRange));
+    maybeRecalculateWorkbook(workbook);
     setRevision((current) => current + 1);
-  }, [readOnly, recordHistoryBeforeMutation, selection, workbook]);
+  }, [maybeRecalculateWorkbook, readOnly, recordHistoryBeforeMutation, selection, workbook]);
 
   const pasteText = React.useCallback((text: string) => {
     const worksheet = getActiveWorksheet();

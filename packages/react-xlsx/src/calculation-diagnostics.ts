@@ -1,5 +1,5 @@
 import type { Workbook } from "@dukelib/sheets-wasm";
-import { strFromU8, unzipSync } from "fflate";
+export { countSourceWorkbookFormulas } from "./source-formula-inventory.ts";
 
 export interface XlsxCalculationIssue {
   sheet: string;
@@ -39,58 +39,6 @@ export function calculationReport(
     evaluatedFormulaCount: null, errorCount: null, engineErrorCount: null,
     durationMs: null, revision: 0, issues: []
   };
-}
-
-/** Read the input inventory separately so missing imported formulas cannot appear complete. */
-export function countSourceWorkbookFormulas(bytes: Uint8Array): number | null {
-  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) return null;
-  try {
-    const archive = unzipSync(bytes, { filter: (entry) => /^xl\/worksheets\/[^/]+\.xml$/i.test(entry.name) });
-    let count = 0;
-    for (const data of Object.values(archive)) {
-      const xml = strFromU8(data);
-      count += countWorksheetCellFormulas(xml);
-    }
-    return count;
-  } catch {
-    return null;
-  }
-}
-
-// A DOM-free scan for workers: extension range references (xm:f) are not formula cells.
-function countWorksheetCellFormulas(xml: string): number {
-  const spreadsheetNamespaces = new Set([
-    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
-    "http://purl.oclc.org/ooxml/spreadsheetml/main"
-  ]);
-  type Element = { name: string; namespace: string; namespaces: Record<string, string> };
-  const stack: Element[] = [];
-  const formulaPath = ["worksheet", "sheetData", "row", "c"];
-  let count = 0;
-  const tags = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<[^>"']*(?:"[^"]*"[^>"']*|'[^']*'[^>"']*)*>/g;
-  for (const match of xml.matchAll(tags)) {
-    const tag = match[0];
-    if (tag.startsWith("<!") || tag.startsWith("<?")) continue;
-    if (tag.startsWith("</")) { stack.pop(); continue; }
-    const qualifiedName = /^<([^\s/>]+)/.exec(tag)?.[1];
-    if (!qualifiedName) continue;
-    let namespaces = stack[stack.length - 1]?.namespaces ?? Object.create(null) as Record<string, string>;
-    if (/\sxmlns(?::|\s*=)/.test(tag)) {
-      namespaces = Object.create(namespaces) as Record<string, string>;
-      for (const declaration of tag.matchAll(/\sxmlns(?::([\w.-]+))?\s*=\s*(["'])(.*?)\2/g)) {
-        namespaces[declaration[1] ?? ""] = declaration[3] ?? "";
-      }
-    }
-    const separator = qualifiedName.indexOf(":");
-    const name = separator < 0 ? qualifiedName : qualifiedName.slice(separator + 1);
-    const prefix = separator < 0 ? "" : qualifiedName.slice(0, separator);
-    const namespace = namespaces[prefix] ?? "";
-    if (name === "f" && spreadsheetNamespaces.has(namespace) && stack.length === 4
-      && stack.every((element, index) => element.name === formulaPath[index]
-        && spreadsheetNamespaces.has(element.namespace))) count += 1;
-    if (!/\/\s*>$/.test(tag)) stack.push({ name, namespace, namespaces });
-  }
-  return count;
 }
 
 function nonnegativeInteger(value: unknown): number | null {

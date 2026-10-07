@@ -201,7 +201,11 @@ test("cell inventory excludes sparkline, validation, and conditional-format exte
 
 test("source inventory handles namespaced shared formulas and ignores XML text", () => {
   const xml = `<s:worksheet xmlns:s = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"><s:sheetData><s:row r="1"><s:c r="A1"><s:f t="shared" si="0">1+2</s:f></s:c><s:c r="B1"><s:f t="shared" si="0"/></s:c><s:c r="C1"><s:is><s:t><![CDATA[<s:f>fake</s:f>]]></s:t></s:is></s:c><!-- <s:c><s:f>fake</s:f></s:c> --></s:row></s:sheetData></s:worksheet>`;
-  assert.equal(countSourceWorkbookFormulas(zipSync({ "xl/worksheets/sheet1.xml": strToU8(xml) })), 2);
+  const source = new Workbook();
+  const archive = unzipSync(source.saveXlsxBytes());
+  archive["xl/worksheets/sheet1.xml"] = strToU8(xml);
+  assert.equal(countSourceWorkbookFormulas(zipSync(archive)), 2);
+  source.free();
 });
 
 test("a later skipped attempt cannot label an earlier engine value as file-saved", () => {
@@ -263,4 +267,15 @@ test("keeps every calculator error and supports unfamiliar error codes", () => {
   assert.equal(formulaErrorTooltip(report.issues[0].error), "Divides by zero or an empty cell.");
   assert.equal(formulaErrorTooltip("#FUTURE!"), "This formula could not be calculated.");
   workbook.free();
+});
+
+test("source inventory ignores orphan worksheets and fails closed on missing linked parts", () => {
+  const source = new Workbook();
+  source.getSheet(0).setFormula("A1", "1+2");
+  const archive = unzipSync(source.saveXlsxBytes());
+  archive["xl/worksheets/orphan.xml"] = archive["xl/worksheets/sheet1.xml"]!;
+  assert.equal(countSourceWorkbookFormulas(zipSync(archive)), 1);
+  delete archive["xl/worksheets/sheet1.xml"];
+  assert.equal(countSourceWorkbookFormulas(zipSync(archive)), null);
+  source.free();
 });
