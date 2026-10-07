@@ -27,6 +27,7 @@ type WorkerMessage =
       type: "parseCharts";
       payload: {
         buffer: ArrayBuffer;
+        autoCalculateFormulaLimit?: number;
         showHiddenSheets?: boolean;
         skipXmlParsing?: boolean;
         wasmSource?: WorkerWasmSource;
@@ -198,7 +199,7 @@ export class XlsxWorkerClient {
     });
   }
 
-  parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHiddenSheets = false) {
+  parseCharts(buffer: ArrayBuffer, skipXmlParsing = false, showHiddenSheets = false, autoCalculateFormulaLimit?: number) {
     const workerBuffer = cloneArrayBufferForTransfer(buffer);
     return this.request<{
       chartsByWorkbookSheetIndex: XlsxChart[][];
@@ -207,6 +208,7 @@ export class XlsxWorkerClient {
     }>({
       id: 0,
       payload: {
+        autoCalculateFormulaLimit,
         buffer: workerBuffer,
         showHiddenSheets,
         skipXmlParsing,

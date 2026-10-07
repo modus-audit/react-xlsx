@@ -1,12 +1,12 @@
 # Modus React XLSX viewer
 
-Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.1` WASM engine.
+Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.2` WASM engine.
 
 Preserved behavior:
 
 - Serializable external add-in values reach the engine in normal, worker, and deferred loads. Formula text remains intact; unresolved calls retain cached values.
 - `recalculate` accepts updated external add-in values without reloading the workbook, including
-  worker-backed read-only workbooks. Calculation skips the engine's known 5,000-formula trap.
+  worker-backed read-only workbooks. The engine (`wasm-dist-0.1.23-modus.2`) calculates serially, so the old 5,000-formula trap is gone; `autoCalculateFormulaLimit` (default 1,000) sets how many formulas a main-thread workbook may have and still recalculate on load and after edits.
 - `controller.calculation` reports execution coverage on initial, deferred, and explicit recalculation.
   It compares the source OOXML formula inventory with the imported inventory, retains the engine
   statistics, and inspects typed formula results because engine `errors` misses some cell errors.
@@ -36,7 +36,7 @@ The app configures `initWasm` with a bundler-resolved asset URL and explicitly c
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/e2e/tests/xlsx`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.19`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.20`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 

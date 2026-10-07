@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { before, test } from "node:test";
 import initSheetsWasm, { Workbook } from "@dukelib/sheets-wasm";
 import { externalCalcOptions, externalCallKey } from "./external-fn.ts";
-import { CALCULATE_FORMULA_HARD_LIMIT, safeCalculate } from "./safe-calculate.ts";
+import { safeCalculate } from "./safe-calculate.ts";
 import { calculationReport, cellCalculationDiagnostic, countSourceWorkbookFormulas } from "./calculation-diagnostics.ts";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
@@ -46,14 +46,18 @@ function workbookWithFormulaCount(formulaCount: number) {
   return Workbook.fromBytes(bytes);
 }
 
-test("recalculates immediately below the engine formula limit", () => {
-  const workbook = workbookWithFormulaCount(CALCULATE_FORMULA_HARD_LIMIT - 1);
-  const result = safeCalculate(workbook);
+test("recalculates past the 5,000 formulas where the threaded engine used to trap", () => {
+  // The browser engine used to switch to a rayon thread pool at 5,000 formulas, which panics
+  // without threads and poisoned the workbook. It now always evaluates serially.
+  for (const formulaCount of [4_999, 5_000, 20_000]) {
+    const workbook = workbookWithFormulaCount(formulaCount);
+    const result = safeCalculate(workbook);
 
-  assert.equal(result.calculated, true);
-  assert.equal(result.skipReason, null);
-  assert.equal(workbook.getSheet(0).formulaCount, CALCULATE_FORMULA_HARD_LIMIT - 1);
-  workbook.free();
+    assert.equal(result.calculated, true);
+    assert.equal(result.skipReason, null);
+    assert.equal(workbook.getSheet(0).getFormattedValue(`B${formulaCount}`), "3");
+    workbook.free();
+  }
 });
 
 test("reports typed formula errors even when the engine errors statistic is zero", () => {
@@ -167,18 +171,6 @@ test("traps return a failed report and the fresh cache instance", () => {
   assert.equal(result.calculation.reason, "calculate-trapped");
   assert.equal(result.calculation.errorCount, null);
 });
-
-test("skips the engine formula limit without poisoning the workbook", () => {
-  const workbook = workbookWithFormulaCount(CALCULATE_FORMULA_HARD_LIMIT);
-  const result = safeCalculate(workbook);
-
-  assert.equal(result.calculated, false);
-  assert.equal(result.skipReason, "formula-limit");
-  assert.doesNotThrow(() => workbook.getSheet(0));
-  assert.equal(workbook.getSheet(0).formulaCount, CALCULATE_FORMULA_HARD_LIMIT);
-  workbook.free();
-});
-
 
 test("cell inventory excludes sparkline, validation, and conditional-format extension formulas", () => {
   const source = new Workbook();

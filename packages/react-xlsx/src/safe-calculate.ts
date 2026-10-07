@@ -5,9 +5,6 @@ import { calculationReport, inspectCalculation, type XlsxCalculationReport } fro
 /** Automatic load-time calculation stays conservative to keep large workbooks responsive. */
 export const AUTO_CALCULATE_FORMULA_THRESHOLD = 1_000;
 
-/** The current engine traps at this formula count. Never enter `calculate()` at or above it. */
-export const CALCULATE_FORMULA_HARD_LIMIT = 5_000;
-
 const SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
 
 type FormulaCell = { formula?: string | null };
@@ -61,7 +58,7 @@ function hasUnresolvedSheetReferences(workbook: Workbook): boolean {
   return false;
 }
 
-export type SafeCalculateSkipReason = "formula-limit" | "unresolved-sheet-refs" | "calculate-trapped";
+export type SafeCalculateSkipReason = "unresolved-sheet-refs" | "calculate-trapped";
 
 export type SafeCalculateResult = {
   workbook: Workbook;
@@ -94,11 +91,6 @@ export function safeCalculate(workbook: Workbook, options: SafeCalculateOptions 
     workbook: nextWorkbook, calculated: false, skipReason: reason,
     calculation: calculationReport(reason === "calculate-trapped" ? "failed" : "skipped", reason, formulaCount, sourceFormulaCount)
   });
-  // This guard must run before `calculate()`: catching the WASM trap is too late because the
-  // workbook instance is poisoned and later reads fail as well.
-  if (formulaCount >= CALCULATE_FORMULA_HARD_LIMIT) {
-    return skipped("formula-limit");
-  }
   if (hasUnresolvedSheetReferences(workbook)) {
     return skipped("unresolved-sheet-refs");
   }
