@@ -29733,6 +29733,16 @@ function XlsxGrid({
     }
     startEditing(cell2);
   }, [readOnly, resolvePointerCellFromClient, startEditing]);
+  const selectAllRef = React4.useRef(null);
+  React4.useEffect(() => {
+    const state = selectAllRef.current;
+    if (!state) return;
+    if (state.committed === null && state.sheetIndex === activeSheetIndex) {
+      state.committed = selections;
+    } else if (state.committed !== selections || state.sheetIndex !== activeSheetIndex) {
+      selectAllRef.current = null;
+    }
+  }, [activeSheetIndex, selections]);
   const handleCornerPointerDown = React4.useCallback((event) => {
     if (event.button !== 0 || firstVisibleRow === void 0 || lastVisibleRow === void 0 || firstVisibleCol === void 0 || lastVisibleCol === void 0) {
       return;
@@ -29746,14 +29756,30 @@ function XlsxGrid({
     const onScreen = (axis, prefixSums, end) => axis[findIndexForOffsetPrefix(prefixSums, end)] ?? -1;
     const onScreenRow = scroller ? onScreen(visibleRowsRef.current, rowPrefixSumsRef.current, scroller.scrollTop + scroller.clientHeight - displayHeaderHeight) : -1;
     const onScreenCol = scroller ? onScreen(visibleColsRef.current, colPrefixSumsRef.current, scroller.scrollLeft + scroller.clientWidth - displayRowHeaderWidth) : -1;
-    commitSelectionRange({
+    const all = {
       start: { row: 0, col: 0 },
       end: {
         row: Math.max(openedRows - 1, onScreenRow, activeSheet?.maxUsedRow ?? -1, drawingExtents.maxRow, largest(hiddenRowSet)),
         col: Math.max(openedCols - 1, onScreenCol, activeSheet?.maxUsedCol ?? -1, drawingExtents.maxCol, largest(hiddenColSet))
       }
-    });
-  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, commitSelectionRange, displayHeaderHeight, displayRowHeaderWidth, drawingExtents.maxCol, drawingExtents.maxRow, firstVisibleCol, firstVisibleRow, focusGrid, hiddenColSet, hiddenRowSet, lastVisibleCol, lastVisibleRow]);
+    };
+    if (selectionCommitFrameRef.current !== null) {
+      window.cancelAnimationFrame(selectionCommitFrameRef.current);
+      selectionCommitFrameRef.current = null;
+    }
+    pendingSelectionCommitRef.current = null;
+    gridKeyboardActiveRef.current = true;
+    const state = selectAllRef.current;
+    if (state && state.committed === selections && state.sheetIndex === activeSheetIndex) {
+      selectAllRef.current = null;
+      const [first = { start: all.start, end: all.start }, ...rest] = state.before;
+      selectRange(first);
+      for (const region of rest) selectRange(region, { append: true });
+      return;
+    }
+    selectAllRef.current = { before: selections.length > 0 ? selections : [], sheetIndex: activeSheetIndex, committed: null };
+    selectRange(all);
+  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, activeSheetIndex, selectRange, selections, displayHeaderHeight, displayRowHeaderWidth, drawingExtents.maxCol, drawingExtents.maxRow, firstVisibleCol, firstVisibleRow, focusGrid, hiddenColSet, hiddenRowSet, lastVisibleCol, lastVisibleRow]);
   const handleCanvasColumnHeaderPointerDown = React4.useCallback((event) => {
     if (event.button !== 0 || firstVisibleRow === void 0 || lastVisibleRow === void 0) {
       return;
