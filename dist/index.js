@@ -28886,7 +28886,14 @@ function XlsxGrid({
   function finishPendingSelectionDrag() {
     const pendingState = pendingSelectionDragRef.current;
     clearPendingSelectionDrag();
-    if (!pendingState || pendingState.committedOnPointerDown) {
+    if (!pendingState) {
+      return;
+    }
+    if (pendingState.committedOnPointerDown) {
+      if (selectionRef.current && rangesEqual2(selectionRef.current, pendingState.previewRange)) {
+        selectionPreviewRangeRef.current = null;
+        displayedSelectionRef.current = selectionRef.current;
+      }
       return;
     }
     if (pendingState.append) {
@@ -29729,6 +29736,7 @@ function XlsxGrid({
       selectionCommitFrameRef.current = null;
     }
     pendingSelectionCommitRef.current = null;
+    selectionPreviewRangeRef.current = null;
     gridKeyboardActiveRef.current = true;
     const state = selectAllRef.current;
     if (state && state.committed === selections && state.sheetIndex === activeSheetIndex) {
