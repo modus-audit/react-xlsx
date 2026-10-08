@@ -115,17 +115,44 @@ test("an imported invalid formula cannot report complete when calculation exclud
   source.free();
 });
 
+test("error literals do not prevent stale values from recalculating", () => {
+  const source = new Workbook();
+  source.addSheet("Main");
+  const sheet = source.getSheet(0);
+  sheet.setCell("A1", 10);
+  sheet.setCell("A2", 20);
+  sheet.setFormula("B2", "SUM(A1:A2)");
+  sheet.setFormula("B3", "#REF!+1");
+  const archive = unzipSync(source.saveXlsxBytes());
+  const xml = strFromU8(archive["xl/worksheets/sheet1.xml"]!);
+  archive["xl/worksheets/sheet1.xml"] = strToU8(xml.replace(
+    /(<c[^>]*r="B2"[^>]*>[\s\S]*?<f>SUM\(A1:A2\)<\/f>)(?:<v>[^<]*<\/v>)?/, "$1<v>25</v>"
+  ));
+  const loaded = Workbook.fromBytes(zipSync(archive));
+  assert.equal(loaded.getSheet(0).getCalculatedValueAt(1, 1).toJs(), 25);
+  const result = safeCalculate(loaded, { sourceFormulaCount: 2 });
+  assert.equal(result.calculated, true);
+  assert.equal(result.skipReason, null);
+  assert.equal(loaded.getSheet(0).getCalculatedValueAt(1, 1).toJs(), 30);
+  assert.equal(result.calculation.reason, "formula-errors");
+  assert.deepEqual(result.calculation.issues, [{ sheet: loaded.sheetNames[0], cell: "B3", error: "#REF!" }]);
+  loaded.free();
+  source.free();
+});
+
 test("missing sheets skip calculation while preserving the cached workbook", () => {
-  const workbook = new Workbook();
-  workbook.addSheet("Main");
-  workbook.getSheet(0).setFormula("B2", "'Missing Sheet'!A1");
-  const result = safeCalculate(workbook, { sourceFormulaCount: 1 });
-  assert.equal(result.calculation.status, "skipped");
-  assert.equal(result.calculation.reason, "unresolved-sheet-refs");
-  assert.equal(result.calculation.errorCount, null);
-  assert.equal(result.calculation.evaluatedFormulaCount, null);
-  assert.doesNotThrow(() => workbook.getSheet(0));
-  workbook.free();
+  for (const formula of ["'Missing Sheet'!A1", "REF!A1", "'REF'!A1", "#REF!+Missing!A1"]) {
+    const workbook = new Workbook();
+    workbook.addSheet("Main");
+    workbook.getSheet(0).setFormula("B2", formula);
+    const result = safeCalculate(workbook, { sourceFormulaCount: 1 });
+    assert.equal(result.calculation.status, "skipped", formula);
+    assert.equal(result.calculation.reason, "unresolved-sheet-refs", formula);
+    assert.equal(result.calculation.errorCount, null);
+    assert.equal(result.calculation.evaluatedFormulaCount, null);
+    assert.doesNotThrow(() => workbook.getSheet(0));
+    workbook.free();
+  }
 });
 
 test("source inventory mismatches and missing inventories prevent a complete report", () => {
