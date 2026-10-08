@@ -82,3 +82,7 @@ coverage and values retained from an earlier calculation have conservative `unkn
 ## Formula copy and fill (.13)
 
 Copy carries the original cell address so relative A1 references relocate on paste; absolute and mixed references retain their locked axes. One lexical helper also serves fill in every direction, preserving quoted strings, sheet qualifiers, names and structured references. The calculator and WASM engine remain unchanged.
+
+## Reference error literal recalculation (.20.1)
+
+Patch release of modus.20 for Pease Bell main. Error literals such as `#REF!` no longer look like missing-sheet references and prevent unrelated formulas from recalculating. Genuine missing sheets still skip calculation. This build preserves the modus.20 API; the later editing API remains a separate rollout.
