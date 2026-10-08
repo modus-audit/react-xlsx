@@ -11563,7 +11563,17 @@ function XlsxGrid({
   function finishPendingSelectionDrag() {
     const pendingState = pendingSelectionDragRef.current;
     clearPendingSelectionDrag();
-    if (!pendingState || pendingState.committedOnPointerDown) {
+    if (!pendingState) {
+      return;
+    }
+    if (pendingState.committedOnPointerDown) {
+      // A held press's selection can land before the button comes up, while the effect that
+      // retires its preview skips pending presses. Left in place, the preview outlined the cell
+      // over every later selection. If it hasn't landed yet, that effect retires it when it does.
+      if (selectionRef.current && rangesEqual(selectionRef.current, pendingState.previewRange)) {
+        selectionPreviewRangeRef.current = null;
+        displayedSelectionRef.current = selectionRef.current;
+      }
       return;
     }
     if (pendingState.append) {
@@ -12532,13 +12542,14 @@ function XlsxGrid({
       }
     };
     // A press is a deliberate action: apply it now rather than as a deferred transition, which
-    // a busy page can keep postponing, and drop a selection still queued from an earlier click so
-    // it can't land on top. A second press toggles back to the selection before it.
+    // a busy page can keep postponing, and drop a selection still queued from an earlier click,
+    // with its outline, so neither lands on top. A second press toggles back to the selection before it.
     if (selectionCommitFrameRef.current !== null) {
       window.cancelAnimationFrame(selectionCommitFrameRef.current);
       selectionCommitFrameRef.current = null;
     }
     pendingSelectionCommitRef.current = null;
+    selectionPreviewRangeRef.current = null;
     gridKeyboardActiveRef.current = true;
     const state = selectAllRef.current;
     if (state && state.committed === selections && state.sheetIndex === activeSheetIndex) {
