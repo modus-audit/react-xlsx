@@ -12478,7 +12478,9 @@ function XlsxGrid({
     startEditing(cell);
   }, [readOnly, resolvePointerCellFromClient, startEditing]);
 
-  /** A press on the corner above the row numbers selects every cell, as in Excel. */
+  /** The selection a corner press replaced, restored by the next press. */
+  const beforeSelectAllRef = React.useRef<XlsxCellRange | null>(null);
+  /** A press on the corner above the row numbers selects every cell; another press undoes it. */
   const handleCornerPointerDown = React.useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (
       event.button !== 0 ||
@@ -12507,14 +12509,32 @@ function XlsxGrid({
     const onScreenCol = scroller
       ? onScreen(visibleColsRef.current, colPrefixSumsRef.current, scroller.scrollLeft + scroller.clientWidth - displayRowHeaderWidth)
       : -1;
-    commitSelectionRange({
+    const all: XlsxCellRange = {
       start: { row: 0, col: 0 },
       end: {
         row: Math.max(openedRows - 1, onScreenRow, activeSheet?.maxUsedRow ?? -1, drawingExtents.maxRow, largest(hiddenRowSet)),
         col: Math.max(openedCols - 1, onScreenCol, activeSheet?.maxUsedCol ?? -1, drawingExtents.maxCol, largest(hiddenColSet))
       }
-    });
-  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, commitSelectionRange, displayHeaderHeight, displayRowHeaderWidth, drawingExtents.maxCol, drawingExtents.maxRow, firstVisibleCol, firstVisibleRow, focusGrid, hiddenColSet, hiddenRowSet, lastVisibleCol, lastVisibleRow]);
+    };
+    const current = selectionRef.current;
+    const allSelected =
+      current !== null &&
+      current.start.row === 0 &&
+      current.start.col === 0 &&
+      current.end.row >= all.end.row &&
+      current.end.col >= all.end.col;
+    // A press is a deliberate action: apply it now rather than as a deferred transition, which
+    // a busy page can keep postponing. A second press toggles back to the selection before it.
+    gridKeyboardActiveRef.current = true;
+    if (allSelected) {
+      const before = beforeSelectAllRef.current;
+      beforeSelectAllRef.current = null;
+      selectRange(before ?? { start: all.start, end: all.start });
+      return;
+    }
+    beforeSelectAllRef.current = current;
+    selectRange(all);
+  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, selectRange, displayHeaderHeight, displayRowHeaderWidth, drawingExtents.maxCol, drawingExtents.maxRow, firstVisibleCol, firstVisibleRow, focusGrid, hiddenColSet, hiddenRowSet, lastVisibleCol, lastVisibleRow]);
 
   const handleCanvasColumnHeaderPointerDown = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0 || firstVisibleRow === undefined || lastVisibleRow === undefined) {
