@@ -29,6 +29,14 @@ test("a formula naming a sheet the workbook lacks is a problem; other workbooks 
   assert.equal(formulaProblem('="Nope!"&Lead!A1', sheets), undefined);
 });
 
+test("error literals are valid entries while actual missing REF sheets are refused", () => {
+  assert.equal(formulaProblem("=#REF!+1", ["Main"]), undefined);
+  assert.equal(formulaProblem("=IFERROR(#REF!,0)", ["Main"]), undefined);
+  for (const formula of ["=REF!A1", "='REF'!A1", "=#REF!+REF!A1"]) {
+    assert.deepEqual(formulaProblem(formula, ["Main"]), { kind: "missingSheet", sheetName: "REF" }, formula);
+  }
+});
+
 test("formula delta counts each cell once and replacements as no growth", () => {
   const existing = new Set(["0:0"]);
   const hasFormula = (row: number, col: number) => existing.has(`${row}:${col}`);
