@@ -4052,7 +4052,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       }
     };
     const visibleColIndex = new Map(sheet.visibleCols.map((col, index) => [col, index]));
-    const columnWidthPx = (col: number) => sheet.colWidths[visibleColIndex.get(col) ?? -1] ?? sheet.defaultColWidthPx;
+    // Hidden columns take no room, so a merge across one wraps in its visible width only.
+    const hiddenCols = new Set(sheet.hiddenCols ?? []);
+    const columnWidthPx = (col: number) =>
+      hiddenCols.has(col) ? 0 : (sheet.colWidths[visibleColIndex.get(col) ?? -1] ?? sheet.defaultColWidthPx);
     const rowHeightPx = (row: number) => {
       // The sheet lists heights for its used rows only; a row resized below them has its own height.
       const points = worksheet.getRowHeight(row);
@@ -4062,7 +4065,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       axis,
       indices: indices ?? selected(),
       sheet: worksheet,
-      hidden: new Set((axis === "column" ? sheet.hiddenCols : sheet.hiddenRows) ?? []),
+      hidden: axis === "column" ? hiddenCols : new Set(sheet.hiddenRows ?? []),
       columnWidthPx,
       rowHeightPx,
       defaultRowHeightPx: sheet.defaultRowHeightPx,
