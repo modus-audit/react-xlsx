@@ -1,9 +1,9 @@
 diff --git a/MODUS_PATCHES.md b/MODUS_PATCHES.md
 new file mode 100644
-index 0000000..ddaa2f4
+index 0000000..be9d874
 --- /dev/null
 +++ b/MODUS_PATCHES.md
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,88 @@
 +# Modus React XLSX viewer
 +
 +Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.2` WASM engine.
@@ -88,6 +88,10 @@ index 0000000..ddaa2f4
 +## Formula copy and fill (.13)
 +
 +Copy carries the original cell address so relative A1 references relocate on paste; absolute and mixed references retain their locked axes. One lexical helper also serves fill in every direction, preserving quoted strings, sheet qualifiers, names and structured references. The calculator and WASM engine remain unchanged.
++
++## Reference error literal recalculation (.20.1)
++
++Patch release of modus.20 for Pease Bell main. Error literals such as `#REF!` no longer look like missing-sheet references and prevent unrelated formulas from recalculating. Genuine missing sheets still skip calculation. This build preserves the modus.20 API; the later editing API remains a separate rollout.
 diff --git a/apps/playground/src/App.tsx b/apps/playground/src/App.tsx
 index 924aba4..25f14a5 100644
 --- a/apps/playground/src/App.tsx
@@ -205,14 +209,14 @@ index 0000000..49eac7a
 +  };
 +}
 diff --git a/packages/react-xlsx/package.json b/packages/react-xlsx/package.json
-index 6455584..31b9d19 100644
+index 6455584..bae0abb 100644
 --- a/packages/react-xlsx/package.json
 +++ b/packages/react-xlsx/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@extend-ai/react-xlsx",
 -  "version": "0.16.4",
-+  "version": "0.16.4-modus.20",
++  "version": "0.16.4-modus.20.1",
    "description": "React components and hooks for viewing XLSX workbooks",
    "license": "MIT",
    "keywords": [
@@ -3939,10 +3943,10 @@ index 0000000..2b49b81
 +}
 diff --git a/packages/react-xlsx/src/safe-calculate.test.ts b/packages/react-xlsx/src/safe-calculate.test.ts
 new file mode 100644
-index 0000000..f467b59
+index 0000000..603aaf3
 --- /dev/null
 +++ b/packages/react-xlsx/src/safe-calculate.test.ts
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,300 @@
 +import { formulaErrorTooltip } from "./formula-error.ts";
 +import assert from "node:assert/strict";
 +import { readFileSync } from "node:fs";
@@ -4060,17 +4064,44 @@ index 0000000..f467b59
 +  source.free();
 +});
 +
++test("error literals do not prevent stale values from recalculating", () => {
++  const source = new Workbook();
++  source.addSheet("Main");
++  const sheet = source.getSheet(0);
++  sheet.setCell("A1", 10);
++  sheet.setCell("A2", 20);
++  sheet.setFormula("B2", "SUM(A1:A2)");
++  sheet.setFormula("B3", "#REF!+1");
++  const archive = unzipSync(source.saveXlsxBytes());
++  const xml = strFromU8(archive["xl/worksheets/sheet1.xml"]!);
++  archive["xl/worksheets/sheet1.xml"] = strToU8(xml.replace(
++    /(<c[^>]*r="B2"[^>]*>[\s\S]*?<f>SUM\(A1:A2\)<\/f>)(?:<v>[^<]*<\/v>)?/, "$1<v>25</v>"
++  ));
++  const loaded = Workbook.fromBytes(zipSync(archive));
++  assert.equal(loaded.getSheet(0).getCalculatedValueAt(1, 1).toJs(), 25);
++  const result = safeCalculate(loaded, { sourceFormulaCount: 2 });
++  assert.equal(result.calculated, true);
++  assert.equal(result.skipReason, null);
++  assert.equal(loaded.getSheet(0).getCalculatedValueAt(1, 1).toJs(), 30);
++  assert.equal(result.calculation.reason, "formula-errors");
++  assert.deepEqual(result.calculation.issues, [{ sheet: loaded.sheetNames[0], cell: "B3", error: "#REF!" }]);
++  loaded.free();
++  source.free();
++});
++
 +test("missing sheets skip calculation while preserving the cached workbook", () => {
-+  const workbook = new Workbook();
-+  workbook.addSheet("Main");
-+  workbook.getSheet(0).setFormula("B2", "'Missing Sheet'!A1");
-+  const result = safeCalculate(workbook, { sourceFormulaCount: 1 });
-+  assert.equal(result.calculation.status, "skipped");
-+  assert.equal(result.calculation.reason, "unresolved-sheet-refs");
-+  assert.equal(result.calculation.errorCount, null);
-+  assert.equal(result.calculation.evaluatedFormulaCount, null);
-+  assert.doesNotThrow(() => workbook.getSheet(0));
-+  workbook.free();
++  for (const formula of ["'Missing Sheet'!A1", "REF!A1", "'REF'!A1", "#REF!+Missing!A1"]) {
++    const workbook = new Workbook();
++    workbook.addSheet("Main");
++    workbook.getSheet(0).setFormula("B2", formula);
++    const result = safeCalculate(workbook, { sourceFormulaCount: 1 });
++    assert.equal(result.calculation.status, "skipped", formula);
++    assert.equal(result.calculation.reason, "unresolved-sheet-refs", formula);
++    assert.equal(result.calculation.errorCount, null);
++    assert.equal(result.calculation.evaluatedFormulaCount, null);
++    assert.doesNotThrow(() => workbook.getSheet(0));
++    workbook.free();
++  }
 +});
 +
 +test("source inventory mismatches and missing inventories prevent a complete report", () => {
@@ -4217,18 +4248,21 @@ index 0000000..f467b59
 +  source.free();
 +});
 diff --git a/packages/react-xlsx/src/safe-calculate.ts b/packages/react-xlsx/src/safe-calculate.ts
-index 76df88d..f603395 100644
+index 76df88d..d197313 100644
 --- a/packages/react-xlsx/src/safe-calculate.ts
 +++ b/packages/react-xlsx/src/safe-calculate.ts
-@@ -1,4 +1,9 @@
+@@ -1,6 +1,11 @@
  import type { Workbook } from "@dukelib/sheets-wasm";
 +import type { ExternalCalcOptions } from "./external-fn.ts";
 +import { calculationReport, inspectCalculation, type XlsxCalculationReport } from "./calculation-diagnostics.ts";
-+
+ 
+-const SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
 +/** Automatic load-time calculation stays conservative to keep large workbooks responsive. */
 +export const AUTO_CALCULATE_FORMULA_THRESHOLD = 1_000;
++
++const SHEET_REF_REGEX = /'((?:[^']|'')+)'!|(?<![#\w.\u0080-\uFFFF])([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
  
- const SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
+ type FormulaCell = { formula?: string | null };
  
 @@ -59,41 +64,50 @@ export type SafeCalculateResult = {
    workbook: Workbook;

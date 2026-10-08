@@ -4867,7 +4867,7 @@ function externalCalcOptions(values) {
 
 // src/safe-calculate.ts
 var AUTO_CALCULATE_FORMULA_THRESHOLD = 1e3;
-var SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
+var SHEET_REF_REGEX = /'((?:[^']|'')+)'!|(?<![#\w.\u0080-\uFFFF])([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
 function collectReferencedSheetNames(workbook2) {
   const referenced = /* @__PURE__ */ new Set();
   for (let sheetIdx = 0; sheetIdx < workbook2.sheetCount; sheetIdx += 1) {
