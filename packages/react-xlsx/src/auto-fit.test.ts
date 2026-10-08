@@ -45,6 +45,13 @@ test("a row wraps a merge across its columns at the merge's width, and skips tal
   const across = sheet(cells, ["0:1", "0:2"], { "0:0": { rowSpan: 1, colSpan: 3 } });
   // 149 chars in a 3 x 50px merge (142px of text) wrap to 2 lines; one 42px column would take 4.
   assert.equal(fittedRowHeight(across, 0, () => 50, measure), Math.ceil(2 * 16 * 1.2 + 2));
+  // A hidden middle column (zero width) leaves 100px, so the same text takes 2 lines at 92px.
+  const widths = (col: number) => (col === 1 ? 0 : 50);
+  assert.equal(fittedRowHeight(across, 0, widths, measure), Math.ceil(2 * 16 * 1.2 + 2));
+  const narrow = sheet({ "0:0": { text: Array.from({ length: 40 }, () => "word").join(" "), wrap: true } }, ["0:1", "0:2"], {
+    "0:0": { rowSpan: 1, colSpan: 3 }
+  });
+  assert.equal(fittedRowHeight(narrow, 0, widths, measure), Math.ceil(3 * 16 * 1.2 + 2));
   const tall = sheet(cells, [], { "0:0": { rowSpan: 2, colSpan: 1 } });
   assert.equal(fittedRowHeight(tall, 0, () => 50, measure), null);
 });

@@ -12495,16 +12495,26 @@ function XlsxGrid({
     // The sheet as it opens plus its content, hidden rows and columns included, so Unhide reaches
     // ones hidden at the edges. Not the drawn extent: the grid draws past a selection's end, so
     // selecting what it had drawn grew the selection on every press.
+    // Cells scrolled into view count too: scrolling moves the viewport, selecting doesn't.
     const openedRows = resolveInitialDisplayExtent(activeSheet?.maxUsedRow ?? -1, MIN_OPEN_GRID_ROWS, OPEN_GRID_ROW_PADDING, false, INITIAL_WORKER_GRID_ROWS);
     const openedCols = resolveInitialDisplayExtent(activeSheet?.maxUsedCol ?? -1, MIN_OPEN_GRID_COLS, OPEN_GRID_COL_PADDING, false, INITIAL_WORKER_GRID_COLS);
+    const scroller = scrollRef.current;
+    const onScreen = (axis: number[], prefixSums: number[], end: number) =>
+      axis[findIndexForOffsetPrefix(prefixSums, end)] ?? -1;
+    const onScreenRow = scroller
+      ? onScreen(visibleRowsRef.current, rowPrefixSumsRef.current, scroller.scrollTop + scroller.clientHeight - displayHeaderHeight)
+      : -1;
+    const onScreenCol = scroller
+      ? onScreen(visibleColsRef.current, colPrefixSumsRef.current, scroller.scrollLeft + scroller.clientWidth - displayRowHeaderWidth)
+      : -1;
     commitSelectionRange({
       start: { row: 0, col: 0 },
       end: {
-        row: Math.max(openedRows - 1, activeSheet?.maxUsedRow ?? -1, drawingExtents.maxRow, largest(hiddenRowSet)),
-        col: Math.max(openedCols - 1, activeSheet?.maxUsedCol ?? -1, drawingExtents.maxCol, largest(hiddenColSet))
+        row: Math.max(openedRows - 1, onScreenRow, activeSheet?.maxUsedRow ?? -1, drawingExtents.maxRow, largest(hiddenRowSet)),
+        col: Math.max(openedCols - 1, onScreenCol, activeSheet?.maxUsedCol ?? -1, drawingExtents.maxCol, largest(hiddenColSet))
       }
     });
-  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, commitSelectionRange, drawingExtents.maxCol, drawingExtents.maxRow, firstVisibleCol, firstVisibleRow, focusGrid, hiddenColSet, hiddenRowSet, lastVisibleCol, lastVisibleRow]);
+  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, commitSelectionRange, displayHeaderHeight, displayRowHeaderWidth, drawingExtents.maxCol, drawingExtents.maxRow, firstVisibleCol, firstVisibleRow, focusGrid, hiddenColSet, hiddenRowSet, lastVisibleCol, lastVisibleRow]);
 
   const handleCanvasColumnHeaderPointerDown = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0 || firstVisibleRow === undefined || lastVisibleRow === undefined) {
