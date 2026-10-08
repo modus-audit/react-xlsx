@@ -12478,8 +12478,23 @@ function XlsxGrid({
     startEditing(cell);
   }, [readOnly, resolvePointerCellFromClient, startEditing]);
 
-  /** The selection a corner press replaced, restored by the next press. */
-  const beforeSelectAllRef = React.useRef<XlsxCellRange | null>(null);
+  /** What a corner press replaced (every region, in order), restored by the next press while
+   *  the corner's selection is still the one on screen. */
+  const selectAllRef = React.useRef<{
+    before: XlsxCellRange[];
+    sheetIndex: number;
+    /** The `selections` array the corner's press produced; any other selection forgets it. */
+    committed: XlsxCellRange[] | null;
+  } | null>(null);
+  React.useEffect(() => {
+    const state = selectAllRef.current;
+    if (!state) return;
+    if (state.committed === null && state.sheetIndex === activeSheetIndex) {
+      state.committed = selections;
+    } else if (state.committed !== selections || state.sheetIndex !== activeSheetIndex) {
+      selectAllRef.current = null;
+    }
+  }, [activeSheetIndex, selections]);
   /** A press on the corner above the row numbers selects every cell; another press undoes it. */
   const handleCornerPointerDown = React.useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (
@@ -12516,25 +12531,26 @@ function XlsxGrid({
         col: Math.max(openedCols - 1, onScreenCol, activeSheet?.maxUsedCol ?? -1, drawingExtents.maxCol, largest(hiddenColSet))
       }
     };
-    const current = selectionRef.current;
-    const allSelected =
-      current !== null &&
-      current.start.row === 0 &&
-      current.start.col === 0 &&
-      current.end.row >= all.end.row &&
-      current.end.col >= all.end.col;
     // A press is a deliberate action: apply it now rather than as a deferred transition, which
-    // a busy page can keep postponing. A second press toggles back to the selection before it.
+    // a busy page can keep postponing, and drop a selection still queued from an earlier click so
+    // it can't land on top. A second press toggles back to the selection before it.
+    if (selectionCommitFrameRef.current !== null) {
+      window.cancelAnimationFrame(selectionCommitFrameRef.current);
+      selectionCommitFrameRef.current = null;
+    }
+    pendingSelectionCommitRef.current = null;
     gridKeyboardActiveRef.current = true;
-    if (allSelected) {
-      const before = beforeSelectAllRef.current;
-      beforeSelectAllRef.current = null;
-      selectRange(before ?? { start: all.start, end: all.start });
+    const state = selectAllRef.current;
+    if (state && state.committed === selections && state.sheetIndex === activeSheetIndex) {
+      selectAllRef.current = null;
+      const [first = { start: all.start, end: all.start }, ...rest] = state.before;
+      selectRange(first);
+      for (const region of rest) selectRange(region, { append: true });
       return;
     }
-    beforeSelectAllRef.current = current;
+    selectAllRef.current = { before: selections.length > 0 ? selections : [], sheetIndex: activeSheetIndex, committed: null };
     selectRange(all);
-  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, selectRange, displayHeaderHeight, displayRowHeaderWidth, drawingExtents.maxCol, drawingExtents.maxRow, firstVisibleCol, firstVisibleRow, focusGrid, hiddenColSet, hiddenRowSet, lastVisibleCol, lastVisibleRow]);
+  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, activeSheetIndex, selectRange, selections, displayHeaderHeight, displayRowHeaderWidth, drawingExtents.maxCol, drawingExtents.maxRow, firstVisibleCol, firstVisibleRow, focusGrid, hiddenColSet, hiddenRowSet, lastVisibleCol, lastVisibleRow]);
 
   const handleCanvasColumnHeaderPointerDown = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0 || firstVisibleRow === undefined || lastVisibleRow === undefined) {
