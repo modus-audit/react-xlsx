@@ -11019,7 +11019,8 @@ function useXlsxViewerController(options) {
       }
     };
     const visibleColIndex = new Map(sheet.visibleCols.map((col, index) => [col, index]));
-    const columnWidthPx = (col) => sheet.colWidths[visibleColIndex.get(col) ?? -1] ?? sheet.defaultColWidthPx;
+    const hiddenCols = new Set(sheet.hiddenCols ?? []);
+    const columnWidthPx = (col) => hiddenCols.has(col) ? 0 : sheet.colWidths[visibleColIndex.get(col) ?? -1] ?? sheet.defaultColWidthPx;
     const rowHeightPx = (row) => {
       const points = worksheet.getRowHeight(row);
       return points === void 0 ? sheet.defaultRowHeightPx : points * 96 / 72;
@@ -11028,7 +11029,7 @@ function useXlsxViewerController(options) {
       axis,
       indices: indices ?? selected(),
       sheet: worksheet,
-      hidden: new Set((axis === "column" ? sheet.hiddenCols : sheet.hiddenRows) ?? []),
+      hidden: axis === "column" ? hiddenCols : new Set(sheet.hiddenRows ?? []),
       columnWidthPx,
       rowHeightPx,
       defaultRowHeightPx: sheet.defaultRowHeightPx,
@@ -20952,6 +20953,11 @@ function rectIntersectsViewport(rect, viewport, overscan = 240) {
   const rectBottom = rect.top + rect.height;
   return rectRight >= viewportLeft && rect.left <= viewportRight && rectBottom >= viewportTop && rect.top <= viewportBottom;
 }
+function largest(indices) {
+  let max = -1;
+  for (const index of indices) if (index > max) max = index;
+  return max;
+}
 function resolveFrozenDrawingPane(rect, frozenRows, frozenCols, actualRowHeights, actualColWidths, freezePanes, stickyTopByRow, stickyLeftByCol, options) {
   const headerHeight = options?.headerHeight ?? HEADER_HEIGHT;
   const rowHeaderWidth = options?.rowHeaderWidth ?? ROW_HEADER_WIDTH;
@@ -29734,14 +29740,20 @@ function XlsxGrid({
     event.preventDefault();
     focusGrid();
     axisSelectionRef.current = null;
+    const openedRows = resolveInitialDisplayExtent(activeSheet?.maxUsedRow ?? -1, MIN_OPEN_GRID_ROWS, OPEN_GRID_ROW_PADDING, false, INITIAL_WORKER_GRID_ROWS);
+    const openedCols = resolveInitialDisplayExtent(activeSheet?.maxUsedCol ?? -1, MIN_OPEN_GRID_COLS, OPEN_GRID_COL_PADDING, false, INITIAL_WORKER_GRID_COLS);
+    const scroller = scrollRef.current;
+    const onScreen = (axis, prefixSums, end) => axis[findIndexForOffsetPrefix(prefixSums, end)] ?? -1;
+    const onScreenRow = scroller ? onScreen(visibleRowsRef.current, rowPrefixSumsRef.current, scroller.scrollTop + scroller.clientHeight - displayHeaderHeight) : -1;
+    const onScreenCol = scroller ? onScreen(visibleColsRef.current, colPrefixSumsRef.current, scroller.scrollLeft + scroller.clientWidth - displayRowHeaderWidth) : -1;
     commitSelectionRange({
       start: { row: 0, col: 0 },
       end: {
-        row: Math.max(lastVisibleRow, activeSheet?.maxUsedRow ?? -1),
-        col: Math.max(lastVisibleCol, activeSheet?.maxUsedCol ?? -1)
+        row: Math.max(openedRows - 1, onScreenRow, activeSheet?.maxUsedRow ?? -1, drawingExtents.maxRow, largest(hiddenRowSet)),
+        col: Math.max(openedCols - 1, onScreenCol, activeSheet?.maxUsedCol ?? -1, drawingExtents.maxCol, largest(hiddenColSet))
       }
     });
-  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, commitSelectionRange, firstVisibleCol, firstVisibleRow, focusGrid, lastVisibleCol, lastVisibleRow]);
+  }, [activeSheet?.maxUsedCol, activeSheet?.maxUsedRow, commitSelectionRange, displayHeaderHeight, displayRowHeaderWidth, drawingExtents.maxCol, drawingExtents.maxRow, firstVisibleCol, firstVisibleRow, focusGrid, hiddenColSet, hiddenRowSet, lastVisibleCol, lastVisibleRow]);
   const handleCanvasColumnHeaderPointerDown = React4.useCallback((event) => {
     if (event.button !== 0 || firstVisibleRow === void 0 || lastVisibleRow === void 0) {
       return;
