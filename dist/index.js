@@ -25653,7 +25653,7 @@ function XlsxGrid({
   const paintedHeaderCanvasSignatureRef = React4.useRef(null);
   const pendingDrawingViewportRef = React4.useRef(null);
   const drawingViewportFrameRef = React4.useRef(null);
-  const initialScrollKeyRef = React4.useRef(null);
+  const initialScrollRef = React4.useRef(null);
   const chartPreviewRectRef = React4.useRef(null);
   const skipNextChartClickRef = React4.useRef(null);
   const paneDrawingNodesCacheRef = React4.useRef(null);
@@ -26810,16 +26810,17 @@ function XlsxGrid({
     normalizedSelection?.end.row
   ]);
   React4.useEffect(() => {
-    const initialScrollKey = [
+    const sheet = [
       displayFileName,
       activeSheetIndex,
       activeSheet?.workbookSheetIndex ?? -1,
       activeSheet?.name ?? "",
-      activeSheet?.minUsedRow ?? -1,
-      activeSheet?.minUsedCol ?? -1,
       isWorkerBacked ? "worker" : "main"
     ].join("|");
-    if (initialScrollKeyRef.current === initialScrollKey) {
+    const bounds = `${activeSheet?.minUsedRow ?? -1}|${activeSheet?.minUsedCol ?? -1}`;
+    const last = initialScrollRef.current;
+    initialScrollRef.current = { sheet, bounds };
+    if (last?.sheet === sheet && (last.bounds === bounds || !readOnly)) {
       return;
     }
     const initialUsedRow = resolveFirstUsedVisibleIndex(visibleRows, activeSheet?.minUsedRow ?? -1);
@@ -26840,7 +26841,6 @@ function XlsxGrid({
     if (scrollRef.current) {
       syncDrawingViewport(scrollRef.current, { immediate: true });
     }
-    initialScrollKeyRef.current = initialScrollKey;
   }, [
     activeSheet?.minUsedCol,
     activeSheet?.minUsedRow,
@@ -26853,6 +26853,7 @@ function XlsxGrid({
     displayFileName,
     frozenCols.length,
     isWorkerBacked,
+    readOnly,
     shouldVirtualizeCols,
     shouldVirtualizeRows,
     shouldUseDomVirtualizer,
