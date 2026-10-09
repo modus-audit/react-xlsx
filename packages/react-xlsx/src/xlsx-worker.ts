@@ -502,6 +502,9 @@ function buildSheetList(
   showHiddenSheets = false
 ) {
   const sheetsByWorkbookSheetIndex: XlsxSheetData[] = [];
+  const themePalette = structureAssets?.themePalette ?? {
+    colorsByIndex: Object.fromEntries(nextWorkbook.themePalette.map((color, index) => [index, `#${color.toLowerCase()}`]))
+  };
 
   for (let index = 0; index < nextWorkbook.sheetCount; index += 1) {
     const worksheet = nextWorkbook.getSheet(index);
@@ -579,7 +582,7 @@ function buildSheetList(
         sparklines: sheetState?.sparklines ?? [],
         styleById: structureAssets?.styleById ?? {},
         tableStyleByName: structureAssets?.tableStyleByName ?? {},
-        themePalette: structureAssets?.themePalette ?? { colorsByIndex: {} },
+        themePalette,
         visibleCols: [],
         visibleRows: [],
         workbookSheetIndex: index,
@@ -647,7 +650,7 @@ function buildSheetList(
       sparklines: sheetState?.sparklines ?? [],
       styleById: structureAssets?.styleById ?? {},
       tableStyleByName: structureAssets?.tableStyleByName ?? {},
-      themePalette: structureAssets?.themePalette ?? { colorsByIndex: {} },
+      themePalette,
       visibleCols,
       visibleRows,
       workbookSheetIndex: index,
