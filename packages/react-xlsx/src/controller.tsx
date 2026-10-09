@@ -1811,7 +1811,9 @@ function createBasicWorkbookAssets(workbook: Workbook): WorkbookImageAssets {
     styleById: {},
     tableMetadataByWorkbookSheetIndex: Array.from({ length: workbook.sheetCount }, () => []),
     tableStyleByName: {},
-    themePalette: { colorsByIndex: {} }
+    themePalette: {
+      colorsByIndex: Object.fromEntries(workbook.themePalette.map((color, index) => [index, `#${color.toLowerCase()}`]))
+    }
   };
 }
 
