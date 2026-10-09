@@ -9035,13 +9035,16 @@ function XlsxGrid({
   ]);
 
   React.useEffect(() => {
+    // Opening a sheet scrolls to its first used cell. When editing, the used range follows the
+    // person's edits, so it must not re-key the scroll: typing above or left of the content would
+    // jump the view to the new first cell.
     const initialScrollKey = [
       displayFileName,
       activeSheetIndex,
       activeSheet?.workbookSheetIndex ?? -1,
       activeSheet?.name ?? "",
-      activeSheet?.minUsedRow ?? -1,
-      activeSheet?.minUsedCol ?? -1,
+      readOnly ? activeSheet?.minUsedRow ?? -1 : "editing",
+      readOnly ? activeSheet?.minUsedCol ?? -1 : "editing",
       isWorkerBacked ? "worker" : "main"
     ].join("|");
     if (initialScrollKeyRef.current === initialScrollKey) {
@@ -9084,6 +9087,7 @@ function XlsxGrid({
     displayFileName,
     frozenCols.length,
     isWorkerBacked,
+    readOnly,
     shouldVirtualizeCols,
     shouldVirtualizeRows,
     shouldUseDomVirtualizer,
