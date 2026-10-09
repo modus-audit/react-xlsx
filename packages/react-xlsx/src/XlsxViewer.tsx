@@ -7656,7 +7656,7 @@ function XlsxGrid({
   const paintedHeaderCanvasSignatureRef = React.useRef<PaintedHeaderCanvasSignature | null>(null);
   const pendingDrawingViewportRef = React.useRef<DrawingViewport | null>(null);
   const drawingViewportFrameRef = React.useRef<number | null>(null);
-  const initialScrollKeyRef = React.useRef<string | null>(null);
+  const initialScrollRef = React.useRef<{ sheet: string; bounds: string } | null>(null);
   const chartPreviewRectRef = React.useRef<{ id: string; rect: XlsxImageRect } | null>(null);
   const skipNextChartClickRef = React.useRef<string | null>(null);
   const paneDrawingNodesCacheRef = React.useRef<{
@@ -9035,16 +9035,21 @@ function XlsxGrid({
   ]);
 
   React.useEffect(() => {
-    const initialScrollKey = [
+    // Opening a sheet scrolls to its first used cell. While read-only, a later used range (a
+    // deferred load) scrolls again. While editing, the range follows the person's edits, so it is
+    // only recorded: typing above or left of the content must not jump the view, and neither may
+    // switching between editing and read-only.
+    const sheet = [
       displayFileName,
       activeSheetIndex,
       activeSheet?.workbookSheetIndex ?? -1,
       activeSheet?.name ?? "",
-      activeSheet?.minUsedRow ?? -1,
-      activeSheet?.minUsedCol ?? -1,
       isWorkerBacked ? "worker" : "main"
     ].join("|");
-    if (initialScrollKeyRef.current === initialScrollKey) {
+    const bounds = `${activeSheet?.minUsedRow ?? -1}|${activeSheet?.minUsedCol ?? -1}`;
+    const last = initialScrollRef.current;
+    initialScrollRef.current = { sheet, bounds };
+    if (last?.sheet === sheet && (last.bounds === bounds || !readOnly)) {
       return;
     }
 
@@ -9071,7 +9076,6 @@ function XlsxGrid({
     if (scrollRef.current) {
       syncDrawingViewport(scrollRef.current, { immediate: true });
     }
-    initialScrollKeyRef.current = initialScrollKey;
   }, [
     activeSheet?.minUsedCol,
     activeSheet?.minUsedRow,
@@ -9084,6 +9088,7 @@ function XlsxGrid({
     displayFileName,
     frozenCols.length,
     isWorkerBacked,
+    readOnly,
     shouldVirtualizeCols,
     shouldVirtualizeRows,
     shouldUseDomVirtualizer,
