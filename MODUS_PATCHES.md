@@ -4,6 +4,8 @@ Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the 
 
 Preserved behavior:
 
+- Error literals such as `#REF!` do not count as missing-sheet references during calculation or formula entry. Other formulas recalculate beside them while genuine missing-sheet references retain their guard.
+
 - Theme colors resolve both OOXML's `theme` and the engine's `themeIndex`, including index zero and tint, so text, fills, and borders use the workbook palette instead of falling back to the viewer's defaults. Main-thread and worker sheets retain the engine's palette when XML structure parsing is skipped, including legacy XLS loads.
 - Serializable external add-in values reach the engine in normal, worker, and deferred loads, and every later calculation uses the latest `externalFnValues`: recalculation after each edit, undo and redo. Changing them recalculates once, in place, without reloading. Formula text remains intact; unresolved calls retain cached values.
 - `readOnly` switches editing on or off in place after load, without reloading the workbook.
@@ -43,7 +45,7 @@ The app configures `initWasm` with a bundler-resolved asset URL and explicitly c
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/excel-viewer-e2e`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.28`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.29`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 

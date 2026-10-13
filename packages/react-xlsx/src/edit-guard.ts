@@ -67,7 +67,7 @@ function syntaxProblem(formula: string): boolean {
   return quote !== null || depth !== 0 || /[+\-*/^&=<>,(]\s*$/.test(formula.slice(1));
 }
 
-const SHEET_REFERENCE = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-￿][\w.\u0080-￿]*)!/g;
+const SHEET_REFERENCE = /'((?:[^']|'')+)'!|(?<![#\w.\u0080-\uFFFF])([A-Za-z_\u0080-￿][\w.\u0080-￿]*)!/g;
 
 /** A sheet the formula names that the workbook lacks. References into other workbooks
  *  (`[1]Sheet!A1`, `'[Book.xlsx]Sheet'!A1`) are not checked. */
