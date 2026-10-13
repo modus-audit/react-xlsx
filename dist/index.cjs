@@ -6896,7 +6896,7 @@ function externalCalcOptions(values) {
 
 // src/safe-calculate.ts
 var AUTO_CALCULATE_FORMULA_THRESHOLD = 1e3;
-var SHEET_REF_REGEX = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
+var SHEET_REF_REGEX = /'((?:[^']|'')+)'!|(?<![#\w.\u0080-\uFFFF])([A-Za-z_\u0080-\uFFFF][\w.\u0080-\uFFFF]*)!/g;
 function collectReferencedSheetNames(workbook) {
   const referenced = /* @__PURE__ */ new Set();
   for (let sheetIdx = 0; sheetIdx < workbook.sheetCount; sheetIdx += 1) {
@@ -7609,7 +7609,7 @@ function syntaxProblem(formula) {
   }
   return quote !== null || depth !== 0 || /[+\-*/^&=<>,(]\s*$/.test(formula.slice(1));
 }
-var SHEET_REFERENCE = /'((?:[^']|'')+)'!|([A-Za-z_\u0080-￿][\w.\u0080-￿]*)!/g;
+var SHEET_REFERENCE = /'((?:[^']|'')+)'!|(?<![#\w.\u0080-\uFFFF])([A-Za-z_\u0080-￿][\w.\u0080-￿]*)!/g;
 function missingSheet(formula, known) {
   const names = new Set(known);
   const text = formula.replace(/"[^"]*"/g, "");
