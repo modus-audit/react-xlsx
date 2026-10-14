@@ -37,6 +37,8 @@ export type {
   XlsxCellNumberFormatInput,
   XlsxCellProtectionInput,
   XlsxCellRange,
+  XlsxRangeStyleEdit,
+  XlsxBorderPreset,
   XlsxCellStyleContext,
   XlsxCellStyleColorInput,
   XlsxCellStyleInput,
@@ -94,3 +96,5 @@ export type {
 } from "./types";
 export { isMerged } from "./auto-fit";
 export { mergesTouching } from "./merge-regions";
+
+export type { XlsxReviewFilter, XlsxReviewFilterInput } from "./review-filter";

@@ -7776,7 +7776,7 @@ function XlsxGrid({
       INITIAL_WORKER_GRID_COLS
     )
   );
-  const hiddenRowSet = React.useMemo(() => new Set(activeSheet?.hiddenRows ?? []), [activeSheet?.hiddenRows]);
+  const hiddenRowSet = React.useMemo(() => new Set([...(activeSheet?.hiddenRows ?? []), ...(activeSheet?.excludedRows ?? [])]), [activeSheet?.hiddenRows, activeSheet?.excludedRows]);
   const hiddenColSet = React.useMemo(() => new Set(activeSheet?.hiddenCols ?? []), [activeSheet?.hiddenCols]);
   const displayDefaultRowHeight = DEFAULT_ROW_HEIGHT * zoomFactor;
   const displayDefaultColWidth = DEFAULT_COL_WIDTH * zoomFactor;
@@ -11835,7 +11835,7 @@ function XlsxGrid({
       setFillPreviewRange(null);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      fillSelection(nextRange);
+      fillSelection(nextRange, {mode: event.ctrlKey || event.metaKey ? "copy" : "auto"});
       fillDragCleanupRef.current?.();
       fillDragCleanupRef.current = null;
     };
@@ -16426,6 +16426,10 @@ function XlsxGrid({
       const clipboard = event.clipboardData;
       const clipboardData = getClipboardData();
       if (!clipboardData) {
+        if (controller.reviewFilter) {
+          event.preventDefault();
+          onClipboardError?.("Copy one visible row or a range without filtered gaps, or clear the review filter.");
+        }
         return;
       }
 
@@ -17389,6 +17393,8 @@ export function useXlsxViewerEditing(): XlsxViewerEditing {
     setCellStyle,
     setCellValue,
     setRangeStyle,
+    setRangeStyles,
+    setBorders,
     setSelectedFormula,
     setSelectedCellFormula,
     setSelectedCellStyle,
@@ -17434,6 +17440,8 @@ export function useXlsxViewerEditing(): XlsxViewerEditing {
       setCellStyle,
       setCellValue,
       setRangeStyle,
+      setRangeStyles,
+      setBorders,
       setSelectedFormula,
       setSelectedCellFormula,
       setSelectedCellStyle,
@@ -17477,6 +17485,8 @@ export function useXlsxViewerEditing(): XlsxViewerEditing {
       setCellStyle,
       setCellValue,
       setRangeStyle,
+      setRangeStyles,
+      setBorders,
       setSelectedFormula,
       setSelectedCellFormula,
       setSelectedCellStyle,

@@ -1,3 +1,7 @@
+import { projectReviewRows, reviewColumnValues, reviewFilterProblem, scanReviewFilter, type XlsxReviewFilter, type XlsxReviewFilterInput } from "./review-filter";
+import { borderPlan } from "./border-plan";
+import { applyStyleBatch, FormattingRefusal, requireEditableStyle } from "./style-batch";
+import { fillAxis, numericSequence, type FillMode } from "./numeric-fill";
 import { calculationReport, cellCalculationDiagnostic, countSourceWorkbookFormulas, type XlsxCalculationReport, type XlsxCellCalculationDiagnostic } from "./calculation-diagnostics";
 import { findDataBoundary, worksheetHasContent, type DataNavigationRequest } from "./data-navigation";
 import * as React from "react";
@@ -82,6 +86,8 @@ import type {
   XlsxCellAddress,
   XlsxAxisSize,
   XlsxCellRange,
+  XlsxRangeStyleEdit,
+  XlsxBorderPreset,
   XlsxCellStyleColorInput,
   XlsxCellStyleInput,
   XlsxClipboardData,
@@ -1394,9 +1400,10 @@ function applyCellMutationState(
     worksheet.setCell(cellAddressToA1(cell), normalizeCellValue(state.value));
   }
 
-  // A cell that had no style of its own is reset to plain, or undoing its first format keeps it.
-  if ((state.style && typeof state.style === "object") || worksheet.getCellStyleAt(cell.row, cell.col)) {
+  if (state.style && typeof state.style === "object") {
     worksheet.setCellStyleAt(cell.row, cell.col, styleToRestore(state.style, plain));
+  } else {
+    worksheet.clearCellStyleAt(cell.row, cell.col);
   }
 }
 
@@ -1940,6 +1947,12 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const [activeCell, setActiveCell] = React.useState<XlsxCellAddress | null>(null);
   const [selection, setSelection] = React.useState<XlsxCellRange | null>(null);
   const [selections, setSelections] = React.useState<XlsxCellRange[]>([]);
+  const [reviewFilterState, setReviewFilterState] = React.useState<{ sheet: XlsxSheetData; revision: number; filter: XlsxReviewFilter } | null>(null);
+  const reviewFilterGeneration = React.useRef(0);
+  const clearReviewFilter = React.useCallback(() => {
+    reviewFilterGeneration.current++;
+    setReviewFilterState(null);
+  }, []);
   const selectionsRef = React.useRef(selections);
   selectionsRef.current = selections;
   React.useEffect(() => {
@@ -2538,9 +2551,17 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [forcedReadOnly, isLoading, isWorkerBacked, requestedReadOnly]);
 
   const activeTab = tabs[activeTabIndex] ?? null;
-  const activeSheet = activeTab?.kind === "sheet"
+  const sourceActiveSheet = activeTab?.kind === "sheet"
     ? sheets[activeTab.sheetIndex ?? -1] ?? null
     : null;
+  const reviewFilter = readOnly && reviewFilterState?.sheet === sourceActiveSheet && reviewFilterState.revision === revision
+    ? reviewFilterState.filter : null;
+  const activeSheet = React.useMemo(() => sourceActiveSheet && reviewFilter
+    ? projectReviewRows(sourceActiveSheet, reviewFilter.excludedRows) : sourceActiveSheet,
+    [sourceActiveSheet, reviewFilter]);
+  const projectedSheets = React.useMemo(() => sheets.map(sheet => sheet === sourceActiveSheet && activeSheet ? activeSheet : sheet),
+    [sheets, sourceActiveSheet, activeSheet]);
+  React.useEffect(() => clearReviewFilter(), [sourceActiveSheet, revision, readOnly, clearReviewFilter]);
   /** Read after an await, to tell whether the user moved to another sheet meanwhile. */
   const activeSheetRef = React.useRef(activeSheet);
   activeSheetRef.current = activeSheet;
@@ -2878,7 +2899,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const allowEdit = React.useCallback((edit: Omit<XlsxEdit, "sheetIndex">) => {
     const full: XlsxEdit = { ...edit, sheetIndex: activeSheet?.workbookSheetIndex ?? 0 };
     const hook = onBeforeEditRef.current;
-    return hook ? hook(full) : !full.formulaProblem;
+    const allowed = hook ? hook(full) : !full.formulaProblem;
+    return allowed && !full.rejectionReason;
   }, [activeSheet]);
 
   const getFormControlWorksheet = React.useCallback((sheetIndex = activeSheetIndex) => {
@@ -2919,6 +2941,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
   const navigateDataBoundary = React.useCallback(async (request: DataNavigationRequest) => {
     if (!activeSheet) return request.cell;
+    request = { ...request, excludedRows: activeSheet.excludedRows };
     if (isWorkerBacked) return getWorkerClient().findDataBoundary(activeSheet.workbookSheetIndex, request);
     const worksheet = getActiveWorksheet();
     if (!worksheet) return request.cell;
@@ -2934,6 +2957,41 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
     return getWorkerClient().getRowsBatch(workbookSheetIndex, startRow, rowCount);
   }, [getWorkerClient, isWorkerBacked]);
+
+  const applyReviewFilter = React.useCallback(async (input: XlsxReviewFilterInput): Promise<string | null> => {
+    if (!readOnly || !sourceActiveSheet) return "Review filters are available while viewing a worksheet.";
+    const problem = reviewFilterProblem(input, sourceActiveSheet);
+    if (problem) return problem;
+    const generation = ++reviewFilterGeneration.current;
+    const current = () => generation === reviewFilterGeneration.current;
+    try {
+      const result = await scanReviewFilter(input, new Set(sourceActiveSheet.hiddenRows ?? []), async (start, count) => {
+        if (isWorkerBacked) {
+          const rows = await getRowsBatchAsync(sourceActiveSheet.workbookSheetIndex, start, count);
+          if (!rows) throw new Error("The worksheet values could not be read.");
+          return new Map([...reviewColumnValues(rows, input.column)].map(([row, value]) => [row, decodeHtmlEntities(value)]));
+        }
+        if (!workbook) throw new Error("The worksheet values could not be read.");
+        const worksheet = workbook.getSheet(sourceActiveSheet.workbookSheetIndex);
+        try {
+          const values = new Map<number, string>();
+          for (let row = start; row < start + count; row++) {
+            values.set(row, decodeHtmlEntities(worksheet.getFormattedValueAt(row, input.column) ?? ""));
+          }
+          return values;
+        } finally { worksheet.free(); }
+      }, current);
+      if (!result || !current()) return "The filter was canceled because the worksheet changed.";
+      setReviewFilterState({ sheet: sourceActiveSheet, revision, filter: result });
+      setActiveCell(null);
+      setSelection(null);
+      setSelections([]);
+      selectionAnchorRef.current = null;
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : "The worksheet values could not be read.";
+    }
+  }, [getRowsBatchAsync, isWorkerBacked, readOnly, revision, sourceActiveSheet, workbook]);
 
   const visibleSheetIndexByWorkbookSheetIndex = React.useMemo(
     () => new Map(sheets.map((sheet, index) => [sheet.workbookSheetIndex, index])),
@@ -3254,6 +3312,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     }
 
     const normalized = normalizeRange(targetRange);
+    if (reviewFilter?.excludedRows.some(row => row >= normalized.start.row && row <= normalized.end.row)) return null;
     const rows: string[] = [];
     const htmlRows: string[] = [];
     const styleTable = clipboardStyleTable();
@@ -3378,7 +3437,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       structured: JSON.stringify(payload),
       text: rows.join("\n")
     };
-  }, [activeCell, getActiveWorksheet, getCellDisplayValue, selection]);
+  }, [activeCell, getActiveWorksheet, getCellDisplayValue, reviewFilter, selection]);
 
   React.useEffect(() => {
     if (!isWorkerBacked || !deferredMetadataSheet || !deferredMetadataCell) {
@@ -4425,6 +4484,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [allowEdit, getChartById, readOnly, updateChart, workbook]);
 
   const selectCell = React.useCallback((cell: XlsxCellAddress, options?: { extend?: boolean; append?: boolean }) => {
+    if (reviewFilter?.excludedRows.includes(cell.row)) clearReviewFilter();
     setSelectedChartId(null);
     setSelectedChartElement(null);
     setSelectedImageId(null);
@@ -4443,7 +4503,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       if (!options?.append) return [single];
       return [...prev.filter((range) => !rangesEqual(range, single)), single];
     });
-  }, []);
+  }, [clearReviewFilter, reviewFilter]);
 
   const revealCellImplRef = React.useRef<((cell: XlsxCellAddress) => void) | null>(null);
 
@@ -4456,6 +4516,11 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
   const revealCell = React.useCallback(
     (cell: XlsxCellAddress) => {
+      if (reviewFilter?.excludedRows.includes(cell.row)) {
+        clearReviewFilter();
+        setTimeout(() => revealCellImplRef.current?.(cell), 0);
+        return;
+      }
       const impl = revealCellImplRef.current;
       if (impl) {
         impl(cell);
@@ -4463,12 +4528,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         selectCell(cell);
       }
     },
-    [selectCell],
+    [clearReviewFilter, reviewFilter, selectCell],
   );
 
   const selectRange = React.useCallback(
     (range: XlsxCellRange, options?: { append?: boolean; toggle?: boolean }) => {
       const normalized = normalizeRange(range);
+      if (reviewFilter?.excludedRows.includes(normalized.start.row) || reviewFilter?.excludedRows.includes(normalized.end.row)) clearReviewFilter();
       setSelectedChartId(null);
       setSelectedChartElement(null);
       setSelectedImageId(null);
@@ -4500,7 +4566,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         return [...prev.filter((range) => !rangesEqual(range, normalized)), normalized];
       });
     },
-    [],
+    [clearReviewFilter, reviewFilter],
   );
 
   const clearSelection = React.useCallback(() => {
@@ -4704,54 +4770,43 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     setCellStyle(activeCell, style);
   }, [activeCell, setCellStyle]);
 
-  const setRangeStyle = React.useCallback((range: XlsxCellRange, style: XlsxCellStyleInput) => {
+  const setRangeStyles = React.useCallback((edits: XlsxRangeStyleEdit[]) => {
     const worksheet = getActiveWorksheet();
-    if (readOnly || !worksheet || !workbook) {
-      return;
+    if (readOnly || !worksheet || !workbook || edits.length === 0) return null;
+    let mutations: Array<{ cell: XlsxCellAddress; before: CellMutationState; after: CellMutationState }> | null;
+    try { mutations = applyStyleBatch(edits, {
+      allow: range => allowEdit({kind:"style", range}),
+      capture: cell => {
+        const state = captureCellMutationState(cell);
+        if (!state) throw new Error("Could not capture cell formatting.");
+        requireEditableStyle(state.style, resolveInheritedCellStyle(activeSheet, cell.row, cell.col));
+        return state;
+      },
+      apply: edit => worksheet.setRangeStyle(rangeToA1(edit.range),edit.style),
+      restore: (cell,state) => applyCellMutationState(worksheet,cell,state,plainStyle())
+    }); } catch (error) {
+      if (!(error instanceof FormattingRefusal)) throw error;
+      allowEdit({ kind: "style", rejectionReason: error.message });
+      return error.message;
     }
-
-    const normalized = normalizeRange(range);
-    if (!allowEdit({ kind: "style", range: normalized })) {
-      return;
-    }
-    const beforeStates: Array<{ before: CellMutationState; cell: XlsxCellAddress }> = [];
-    for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
-      for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
-        const cell = { row, col };
-        const before = captureCellMutationState(cell);
-        if (!before) {
-          continue;
-        }
-        beforeStates.push({
-          before,
-          cell
-        });
-      }
-    }
-
-    if (beforeStates.length === 0) {
-      return;
-    }
-
-    worksheet.setRangeStyle(rangeToA1(normalized), style);
-    const mutations: RangeCellMutation[] = [];
-    for (const mutation of beforeStates) {
-      const after = captureCellMutationState(mutation.cell);
-      if (!after) {
-        continue;
-      }
-      mutations.push({
-        after,
-        before: mutation.before,
-        cell: mutation.cell
-      });
-    }
-
+    if (!mutations || mutations.length === 0) return null;
     refreshWorkbookState(workbook);
     recordRangeEditHistory(mutations, selection, activeCell);
-  }, [activeCell, allowEdit, captureCellMutationState, getActiveWorksheet, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
+    return null;
+  }, [activeCell, activeSheet, allowEdit, captureCellMutationState, getActiveWorksheet, plainStyle, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
 
-  const fillSelection = React.useCallback((targetRange: XlsxCellRange) => {
+  const setRangeStyle = React.useCallback((range: XlsxCellRange, style: XlsxCellStyleInput) => {
+    setRangeStyles([{range,style}]);
+  },[setRangeStyles]);
+
+  const setBorders = React.useCallback((ranges: XlsxCellRange[], preset: XlsxBorderPreset): string | null => {
+    const worksheet = getActiveWorksheet();
+    if (readOnly || !worksheet || !workbook) return null;
+    try { return setRangeStyles(borderPlan(ranges,worksheet.mergedRegions,preset)); }
+    catch (error) { return error instanceof Error ? error.message : "Could not apply borders. Try again."; }
+  },[getActiveWorksheet,readOnly,setRangeStyles,workbook]);
+
+  const fillSelection = React.useCallback((targetRange: XlsxCellRange, options: {mode?: FillMode} = {}) => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !workbook || !selection) {
       return;
@@ -4774,6 +4829,35 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
+    // Source and destination remain physical cells. Series inference never uses formula caches.
+    const axis = fillAxis(sourceRange,nextRange);
+    const sequences = new Map<number,{first:number; step:number}>();
+    const merged = mergesTouching(worksheet.mergedRegions,nextRange).length > 0;
+    if (axis && options.mode !== "copy" && !merged) {
+      const laneStart = axis === "row" ? sourceRange.start.col : sourceRange.start.row;
+      const laneEnd = axis === "row" ? sourceRange.end.col : sourceRange.end.row;
+      const start = axis === "row" ? sourceRange.start.row : sourceRange.start.col;
+      const end = axis === "row" ? sourceRange.end.row : sourceRange.end.col;
+      for (let lane=laneStart; lane<=laneEnd; lane++) {
+        const seeds = [];
+        for (let index=start; index<=end; index++) {
+          const row = axis === "row" ? index : lane;
+          const col = axis === "row" ? lane : index;
+          const rawStyle = worksheet.getCellStyleAt(row,col) as {numberFormat?:{isDateFormat?:boolean}} | null;
+          seeds.push({value:worksheet.getCellAt(row,col).toJs(),formula:worksheet.getFormulaAt(row,col),date:rawStyle?.numberFormat?.isDateFormat});
+        }
+        const sequence = numericSequence(seeds);
+        if (sequence) sequences.set(lane,sequence);
+      }
+    }
+    if (options.mode === "series" && sequences.size === 0) return;
+    // Reject nonfinite extrapolations before any cell changes.
+    for (const sequence of sequences.values()) {
+      const start = axis === "row" ? sourceRange.start.row : sourceRange.start.col;
+      for (const target of axis === "row" ? [nextRange.start.row,nextRange.end.row] : [nextRange.start.col,nextRange.end.col]) {
+        if (!Number.isFinite(sequence.first+(target-start)*sequence.step)) return;
+      }
+    }
     const plain = plainStyle();
     const mutations: RangeCellMutation[] = [];
     for (let row = nextRange.start.row; row <= nextRange.end.row; row += 1) {
@@ -4796,7 +4880,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         if (sourceFormula) {
           worksheet.setFormula(cellAddressToA1(targetCell), copyFormula(sourceFormula, row - sourceRow, col - sourceCol));
         } else {
-          const sourceValue = normalizeCellValue(worksheet.getCellAt(sourceRow, sourceCol).toJs());
+          const sequence = sequences.get(axis === "row" ? sourceCol : sourceRow);
+          const offset = axis === "row" ? row-sourceRange.start.row : col-sourceRange.start.col;
+          const sourceValue = sequence ? sequence.first+offset*sequence.step : normalizeCellValue(worksheet.getCellAt(sourceRow, sourceCol).toJs());
           worksheet.setCell(cellAddressToA1(targetCell), sourceValue);
         }
 
@@ -5300,6 +5386,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
   return React.useMemo(
     () => ({
+      reviewFilter,
+      applyReviewFilter,
+      clearReviewFilter,
       activeCell,
       activeCellAddress,
       activeSheet,
@@ -5385,6 +5474,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       setCellStyle,
       setCellValue,
       setRangeStyle,
+      setRangeStyles,
+      setBorders,
       setSelectedFormula,
       setZoomScale,
       setChartRect,
@@ -5416,7 +5507,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       setSelectedCellFormula,
       setSelectedCellStyle,
       setSelectedCellValue,
-      sheets,
+      sheets: projectedSheets,
       shapes,
       src,
       sortState,
@@ -5433,6 +5524,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       zoomScale
     }),
     [
+      reviewFilter,
+      applyReviewFilter,
+      clearReviewFilter,
+      projectedSheets,
       activeCell,
       activeCellAddress,
       activeSheet,
@@ -5514,6 +5609,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       setCellStyle,
       setCellValue,
       setRangeStyle,
+      setRangeStyles,
+      setBorders,
       setSelectedFormula,
       setZoomScale,
       setChartRect,

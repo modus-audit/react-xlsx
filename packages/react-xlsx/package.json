@@ -1,6 +1,6 @@
 {
   "name": "@extend-ai/react-xlsx",
-  "version": "0.16.4-modus.29",
+  "version": "0.16.4-modus.30",
   "description": "React components and hooks for viewing XLSX workbooks",
   "license": "MIT",
   "keywords": [
@@ -49,7 +49,7 @@
     "react-dom": ">=18"
   },
   "dependencies": {
-    "@dukelib/sheets-wasm": "https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.2.tar.gz",
+    "@dukelib/sheets-wasm": "https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.3.tar.gz",
     "@tanstack/react-virtual": "^3.13.12",
     "d3-geo": "^3.1.1",
     "d3-hierarchy": "^3.1.2",
@@ -63,7 +63,7 @@
   },
   "scripts": {
     "build": "tsup --config tsup.config.ts && node ../../scripts/copy-duke-wasm.mjs",
-    "test": "node --experimental-strip-types --test src/data-navigation.test.ts src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/safe-calculate.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts src/colors.test.ts src/clipboard-cells.test.ts src/formula-copy.test.ts src/resize-hit-slop.test.ts src/merge-regions.test.ts src/visible-axis.test.ts src/edit-guard.test.ts src/clipboard-memory.test.ts src/auto-fit.test.ts src/load-mode.test.ts src/external-values.test.ts build/atlas-json.test.ts",
+    "test": "node --experimental-strip-types --test src/review-filter.test.ts src/editing-additions.test.ts src/data-navigation.test.ts src/builtin-table-styles.test.ts src/cell-text-clip.test.ts src/safe-calculate.test.ts src/zip-entry-names.test.ts src/viewer-palette.test.ts src/colors.test.ts src/clipboard-cells.test.ts src/formula-copy.test.ts src/resize-hit-slop.test.ts src/merge-regions.test.ts src/visible-axis.test.ts src/edit-guard.test.ts src/clipboard-memory.test.ts src/auto-fit.test.ts src/load-mode.test.ts src/external-values.test.ts build/atlas-json.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist"
   },

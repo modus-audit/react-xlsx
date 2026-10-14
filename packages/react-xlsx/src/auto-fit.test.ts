@@ -66,3 +66,14 @@ test("autofit skips hidden and already-fitting indices, resets empty rows and ke
     { index: 2, sizePx: 21 }
   ]);
 });
+
+
+test("explicit row AutoFit breaks long tokens using measured width and respects CRLF and word boundaries", () => {
+  const widths = (text: string) => Array.from(text).reduce((sum, character) => sum + (character === "W" ? 3 : 1), 0);
+  const fitSheet = sheet({ "0:0": { text: `${"W".repeat(100)}\r\nsmall words`, wrap: true } });
+  // 42px of text fits 14 W characters: eight token lines, then one normal paragraph line.
+  assert.equal(fittedRowHeight(fitSheet, 0, () => 50, widths), Math.ceil(9 * 16 * 1.2 + 2));
+  const words = sheet({ "0:0": { text: "small words longwordwithoutspaces", wrap: true } });
+  // 12px of text fits both short words, followed by two pieces of the oversized token.
+  assert.equal(fittedRowHeight(words, 0, () => 20, measure), Math.ceil(3 * 16 * 1.2 + 2));
+});

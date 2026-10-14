@@ -32,6 +32,8 @@ export type XlsxEditKind =
 /** An edit the viewer is about to make. `onBeforeEdit` returning false refuses it, before any change. */
 export interface XlsxEdit {
   kind: XlsxEditKind;
+  /** A built-in refusal the host can explain; this edit is never applied. */
+  rejectionReason?: string;
   /** The workbook sheet the edit changes. */
   sheetIndex: number;
   /** The cells the edit writes (for a paste, from the active cell to the copied extent). */

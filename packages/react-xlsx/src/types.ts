@@ -123,6 +123,8 @@ export interface XlsxSheetData {
   colStyleIds: Record<number, number>;
   hiddenCols?: number[];
   hiddenRows?: number[];
+  /** Local review projection; never persisted as hidden rows. */
+  excludedRows?: number[];
   conditionalFormatRules: XlsxConditionalFormatRule[];
   dataValidations: XlsxDataValidation[];
   name: string;
@@ -251,6 +253,10 @@ export interface XlsxCellFillStyleInput {
   /** Gradient color stops. */
   stops?: XlsxCellGradientStopInput[];
 }
+
+/** Initial workpaper border actions. Existing diagonals are preserved. */
+export type XlsxBorderPreset = "bottom" | "doubleBottom" | "outside" | "all" | "clear";
+export interface XlsxRangeStyleEdit { range: XlsxCellRange; style: XlsxCellStyleInput }
 
 /** A single border edge style. */
 export interface XlsxCellBorderEdgeInput {
@@ -1068,6 +1074,9 @@ export interface UseXlsxViewerControllerOptions {
 }
 
 export interface XlsxViewerController {
+  reviewFilter: import("./review-filter").XlsxReviewFilter | null;
+  applyReviewFilter: (filter: import("./review-filter").XlsxReviewFilterInput) => Promise<string | null>;
+  clearReviewFilter: () => void;
   /** Calculation execution coverage; complete does not establish Excel equivalence. */
   calculation: import("./calculation-diagnostics").XlsxCalculationReport;
   getCellCalculationDiagnostic: (cell?: XlsxCellAddress | null) => import("./calculation-diagnostics").XlsxCellCalculationDiagnostic | null;
@@ -1102,7 +1111,7 @@ export interface XlsxViewerController {
   exportXlsx: () => void;
   error: Error | null;
   file?: ArrayBuffer;
-  fillSelection: (targetRange: XlsxCellRange) => void;
+  fillSelection: (targetRange: XlsxCellRange, options?: { mode?: "auto" | "copy" | "series" }) => void;
   clearSelectedChart: () => void;
   clearSelectedChartElement: () => void;
   clearSelectedImage: () => void;
@@ -1227,6 +1236,10 @@ export interface XlsxViewerController {
    * @param style Partial Excel style patch to apply to the target range.
    */
   setRangeStyle: (range: XlsxCellRange, style: XlsxCellStyleInput) => void;
+  /** One preflight and undo item for the complete formatting action. */
+  setRangeStyles: (edits: XlsxRangeStyleEdit[]) => string | null;
+  /** Returns a selection error to display, or null (host policy displays its own refusals). */
+  setBorders: (ranges: XlsxCellRange[], preset: XlsxBorderPreset) => string | null;
   setZoomScale: (zoomScale: number) => void;
   selectCell: (cell: XlsxCellAddress, options?: { extend?: boolean; append?: boolean }) => void;
   /** Resolve a data-block boundary without changing selection; worker sheets stay off-thread. */
@@ -1322,7 +1335,7 @@ export interface XlsxViewerEditing {
   clearSelectedCells: () => boolean;
   copySelectionToClipboard: () => Promise<boolean>;
   defineNamedRange: (name: string, range?: XlsxCellRange | null) => void;
-  fillSelection: (targetRange: XlsxCellRange) => void;
+  fillSelection: (targetRange: XlsxCellRange, options?: { mode?: "auto" | "copy" | "series" }) => void;
   formControls: XlsxFormControl[];
   getClipboardData: () => XlsxClipboardData | null;
   getCellDisplayValue: (cell?: XlsxCellAddress | null) => string;
@@ -1376,6 +1389,10 @@ export interface XlsxViewerEditing {
    * @param style Partial Excel style patch to apply to the target range.
    */
   setRangeStyle: (range: XlsxCellRange, style: XlsxCellStyleInput) => void;
+  /** One preflight and undo item for the complete formatting action. */
+  setRangeStyles: (edits: XlsxRangeStyleEdit[]) => string | null;
+  /** Returns a selection error to display, or null (host policy displays its own refusals). */
+  setBorders: (ranges: XlsxCellRange[], preset: XlsxBorderPreset) => string | null;
   setSelectedFormula: (formula: string) => boolean;
   setSelectedCellFormula: (formula: string) => void;
   /**

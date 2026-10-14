@@ -7,6 +7,7 @@ export interface DataNavigationRequest {
   direction: DataDirection;
   maxRow: number;
   maxCol: number;
+  excludedRows?: number[];
 }
 
 export function findDataBoundary(
@@ -16,7 +17,7 @@ export function findDataBoundary(
 ): XlsxCellAddress {
   const vertical = request.direction === "ArrowUp" || request.direction === "ArrowDown";
   const step = request.direction === "ArrowUp" || request.direction === "ArrowLeft" ? -1 : 1;
-  const hidden = new Set((vertical ? sheet.hiddenRows : sheet.hiddenCols) ?? []);
+  const hidden = new Set(vertical ? [...(sheet.hiddenRows ?? []), ...(request.excludedRows ?? [])] : sheet.hiddenCols ?? []);
   const max = vertical ? request.maxRow : request.maxCol;
   const usedMax = vertical ? sheet.maxUsedRow : sheet.maxUsedCol;
   const start = vertical ? request.cell.row : request.cell.col;

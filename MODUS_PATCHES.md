@@ -4,6 +4,9 @@ Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the 
 
 Preserved behavior:
 
+- `setRangeStyles` preflights all ranges, captures overlapping cells once, rolls back on mutation failure, and records one undo step. `setBorders(ranges, preset)` supports bottom/double-bottom/outside/all/clear using black lines, merged-cell perimeters, and synchronized shared edges (including adjacent cells, which also pass the host edit policy). Partial merged-cell selections return an error string. Synchronous formatting is bounded at 250,000 cells per batch.
+- Fill-handle drags extend arithmetic sequences of two or more finite numeric constants in either axis and direction; individual lanes with formulas, text, dates, blanks, or contradictory seeds retain copy behavior. Relative formula relocation and copied styles are unchanged. Ctrl/Cmd-drag or `fillSelection(range, {mode: "copy"})` explicitly repeats source cells. Series inference is skipped for merged ranges.
+
 - Error literals such as `#REF!` do not count as missing-sheet references during calculation or formula entry. Other formulas recalculate beside them while genuine missing-sheet references retain their guard.
 
 - Theme colors resolve both OOXML's `theme` and the engine's `themeIndex`, including index zero and tint, so text, fills, and borders use the workbook palette instead of falling back to the viewer's defaults. Main-thread and worker sheets retain the engine's palette when XML structure parsing is skipped, including legacy XLS loads.
@@ -91,3 +94,9 @@ coverage and values retained from an earlier calculation have conservative `unkn
 ## Formula copy and fill (.13)
 
 Copy carries the original cell address so relative A1 references relocate on paste; absolute and mixed references retain their locked axes. One lexical helper also serves fill in every direction, preserving quoted strings, sheet qualifiers, names and structured references. The calculator and WASM engine remain unchanged.
+
+## Reliable editing additions (.30)
+
+The engine pin is 0.1.23-modus.3. Grouped range styles and black border presets use one preflight/history transaction. Numeric fill extends finite arithmetic seeds, preserving formula/text/date copy behavior and a copy modifier. Undo clears absent explicit styles precisely; inherited-only partial formatting is refused before mutation. Explicit AutoFit wraps long tokens consistently.
+
+Read-only review filters use local excluded-row projection, preserve saved hidden rows/raw coordinates/workbook totals/bytes, reset on edit/source/sheet/revision changes, and cover DOM/canvas and workers. Copies spanning filtered gaps are refused with an explanation. No native Excel AutoFilter/SUBTOTAL semantics or saved filtering are implied.
