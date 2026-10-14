@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { before, test } from "node:test";
 import initSheetsWasm, { Workbook } from "@dukelib/sheets-wasm";
+import { normalizeCellValue } from "./clipboard-cells.ts";
 import { borderPlan } from "./border-plan.ts";
 import { applyStyleBatch } from "./style-batch.ts";
 import { numericSequence, fillAxis } from "./numeric-fill.ts";
@@ -87,5 +88,42 @@ test("clearing a style restores exact null through the WASM boundary and retains
   value.free();
   assert.equal(ws.getFormulaAt(1, 0), "=1+1");
   assert.throws(() => ws.clearCellStyleAt(0, 65536), /outside/);
+  ws.free(); wb.free();
+});
+
+
+test("format and fill undo preserve absent blanks and literal empty strings as distinct WASM values", () => {
+  const wb = new Workbook(); if (!wb.sheetCount) wb.addSheet("Sheet1"); const ws = wb.getSheet(0);
+  ws.setCell("B1", "");
+  ws.setFormula("D1", "=COUNTA(A1)");
+  const a1 = (cell:{row:number;col:number}) => `${String.fromCharCode(65+cell.col)}${cell.row+1}`;
+  const capture = (cell:{row:number;col:number}) => {
+    const value = ws.getCellAt(cell.row, cell.col);
+    try { return {value:value.toJs(),style:ws.getCellStyleAt(cell.row,cell.col)}; }
+    finally { value.free(); }
+  };
+  const beforeBlank = capture({row:0,col:0});
+  const beforeLiteral = capture({row:0,col:1});
+  assert.equal(beforeBlank.value, null);
+  assert.equal(beforeLiteral.value, "");
+  const undo = (cell:{row:number;col:number}, state:typeof beforeBlank) => {
+    ws.setCell(a1(cell), normalizeCellValue(state.value));
+    if (state.style) ws.setCellStyleAt(cell.row,cell.col,state.style);
+    else ws.clearCellStyleAt(cell.row,cell.col);
+  };
+  ws.setRangeStyle("A1:B1",{font:{bold:true}});
+  undo({row:0,col:0},beforeBlank); undo({row:0,col:1},beforeLiteral);
+  wb.calculate();
+  let total = ws.getCalculatedValueAt(0,3);
+  assert.equal(total.toJs(),0); total.free();
+  assert.equal(capture({row:0,col:0}).value,null);
+  assert.equal(capture({row:0,col:1}).value,"");
+  ws.setCell("A1",3); ws.setCell("B1",4);
+  undo({row:0,col:0},beforeBlank); undo({row:0,col:1},beforeLiteral);
+  wb.calculate();
+  total = ws.getCalculatedValueAt(0,3);
+  assert.equal(total.toJs(),0); total.free();
+  assert.equal(capture({row:0,col:0}).value,null);
+  assert.equal(capture({row:0,col:1}).value,"");
   ws.free(); wb.free();
 });

@@ -57,7 +57,7 @@ import {
 import { externalCalcOptions, type ExternalFnValues } from "./external-fn";
 import { AUTO_CALCULATE_FORMULA_THRESHOLD, countWorkbookFormulas, safeCalculate } from "./safe-calculate";
 import { canUseConfiguredWasmSourceInWorker, getSheetsWasmModule } from "./wasm";
-import { type ClipboardMatrixCell, clipboardStyleTable, copiedCell, plainCellStyle, styleToRestore, writePastedCell } from "./clipboard-cells";
+import { type ClipboardMatrixCell, clipboardStyleTable, copiedCell, normalizeCellValue, plainCellStyle, styleToRestore, writePastedCell } from "./clipboard-cells";
 import { copyFormula, fillSourceIndex } from "./formula-copy";
 import { XlsxWorkerClient } from "./worker-client";
 import { mergesTouching, mergeTarget } from "./merge-regions";
@@ -1338,10 +1338,6 @@ function pushHistoryEntry(stack: HistoryEntry[], entry: HistoryEntry) {
   if (stack.length > HISTORY_LIMIT) {
     stack.shift();
   }
-}
-
-function normalizeCellValue(value: unknown) {
-  return value ?? "";
 }
 
 function cloneCellStyle(style: unknown): unknown {

@@ -100,3 +100,7 @@ Copy carries the original cell address so relative A1 references relocate on pas
 The engine pin is 0.1.23-modus.3. Grouped range styles and black border presets use one preflight/history transaction. Numeric fill extends finite arithmetic seeds, preserving formula/text/date copy behavior and a copy modifier. Undo clears absent explicit styles precisely; inherited-only partial formatting is refused before mutation. Explicit AutoFit wraps long tokens consistently.
 
 Read-only review filters use local excluded-row projection, preserve saved hidden rows/raw coordinates/workbook totals/bytes, reset on edit/source/sheet/revision changes, and cover DOM/canvas and workers. Copies spanning filtered gaps are refused with an explanation. No native Excel AutoFilter/SUBTOTAL semantics or saved filtering are implied.
+
+### Empty-cell history (.31)
+
+History/fill retain the distinction between a truly absent cell (null) and an explicit empty string. Exact style undo prunes only empty, formula-free records. Runtime coverage verifies raw types and restored absent blanks; it does not certify full COUNTA empty-string semantics.
