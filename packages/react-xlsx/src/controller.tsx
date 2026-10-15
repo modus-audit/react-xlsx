@@ -1906,6 +1906,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     fileName,
     maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES,
     onBeforeEdit,
+    preserveViewOnFileChange = false,
     readOnly: requestedReadOnly = false,
     readOnlyAboveBytes = 0,
     showHiddenSheets = false,
@@ -1928,6 +1929,30 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const [isLoading, setIsLoading] = React.useState(Boolean(file ?? src));
   const [error, setError] = React.useState<Error | null>(null);
   const [workbook, setWorkbook] = React.useState<Workbook | null>(null);
+  const liveWorkbookRef = React.useRef(workbook);
+  liveWorkbookRef.current = workbook;
+  const committedFileRef = React.useRef<ArrayBuffer | null>(null);
+  const retiredWorkbooksRef = React.useRef<Workbook[]>([]);
+  const [retainingWorkbook, setRetainingWorkbook] = React.useState(false);
+  const canPreserveFileView = React.useMemo(() => Boolean(
+    preserveViewOnFileChange && file &&
+    !(deferLoadingAboveBytes > 0 && file.byteLength > deferLoadingAboveBytes) &&
+    !(useWorker && typeof Worker !== "undefined" && canUseConfiguredWasmSourceInWorker() &&
+      (requestedReadOnlyRef.current || (readOnlyAboveBytes > 0 && file.byteLength > readOnlyAboveBytes)))
+  ), [deferLoadingAboveBytes, file, preserveViewOnFileChange, readOnlyAboveBytes, useWorker]);
+  const isReplacingWorkbook = retainingWorkbook || Boolean(
+    canPreserveFileView && committedFileRef.current && file !== committedFileRef.current
+  );
+  const replacementPendingRef = React.useRef(isReplacingWorkbook);
+  replacementPendingRef.current = isReplacingWorkbook;
+  React.useEffect(() => {
+    for (const retired of retiredWorkbooksRef.current.splice(0)) retired.free();
+    if (workbook && file === committedFileRef.current) setRetainingWorkbook(false);
+  }, [file, workbook]);
+  React.useEffect(() => () => {
+    // Only retired models are safe to release here; the current model may still drain a save.
+    for (const retired of retiredWorkbooksRef.current.splice(0)) retired.free();
+  }, []);
   const [sheets, setSheets] = React.useState<XlsxSheetData[]>([]);
   const [chartsByWorkbookSheetIndex, setChartsByWorkbookSheetIndex] = React.useState<XlsxChart[][]>([]);
   const [chartsheets, setChartsheets] = React.useState<XlsxChartsheet[]>([]);
@@ -1986,6 +2011,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const [forcedReadOnly, setForcedReadOnly] = React.useState(false);
   /** Bumped to load the same file again, e.g. onto the main thread when editing turns on. */
   const [loadGeneration, setLoadGeneration] = React.useState(0);
+  const retryWorkbookReplacement = React.useCallback(() => {
+    if (replacementPendingRef.current) setLoadGeneration(generation => generation + 1);
+  }, []);
   const deferredBufferRef = React.useRef<ArrayBuffer | null>(null);
   const [deferredLoadFileSize, setDeferredLoadFileSize] = React.useState<number | null>(null);
   const imageAssetsRef = React.useRef<WorkbookImageAssets | null>(null);
@@ -2004,7 +2032,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   const shouldDeferLoading = deferLoadingAboveBytes > 0;
   // The worker can't edit, so a worker-backed workbook stays read-only until it reloads on the
   // main thread (see the effect after the load).
-  const readOnly = requestedReadOnly || forcedReadOnly || isWorkerBacked;
+  const readOnly = requestedReadOnly || forcedReadOnly || isWorkerBacked || isReplacingWorkbook;
   const canResizeReadOnly = requestedReadOnly && allowResizeInReadOnly && !forcedReadOnly;
   const workerSupported = useWorker && typeof Worker !== "undefined" && canUseConfiguredWasmSourceInWorker();
   const shouldForceReadOnlyForBuffer = React.useCallback((bufferByteLength: number) => (
@@ -2253,15 +2281,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     externalValues.loaded(externalFnValuesRef.current);
     const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValuesRef.current, autoCalculateFormulaLimitRef.current);
     const bytes = new Uint8Array(buffer);
-    const nextImageAssets = loadWorkbookImageAssets(
-      bytes,
-      nextParsedWorkbook.workbook,
-      shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing)
-    );
-    return {
-      imageAssets: nextImageAssets,
-      parsedWorkbook: nextParsedWorkbook
-    };
+    try {
+      const nextImageAssets = loadWorkbookImageAssets(bytes, nextParsedWorkbook.workbook, shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing));
+      return { imageAssets: nextImageAssets, parsedWorkbook: nextParsedWorkbook };
+    } catch (error) {
+      nextParsedWorkbook.workbook.free();
+      throw error;
+    }
   }, [skipXmlParsing]);
 
   const refreshWorkbookState = React.useCallback((targetWorkbook: Workbook) => {
@@ -2307,6 +2333,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     if (!file && !src) {
       workbookGenerationRef.current += 1;
       calculationAttemptRef.current += 1;
+      committedFileRef.current = null;
+      setRetainingWorkbook(false);
       workbookBufferRef.current = null;
       sourceFormulaCountRef.current = null;
       hasCalculatedValuesRef.current = false;
@@ -2343,6 +2371,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
+    const preserveView = Boolean(
+      canPreserveFileView && committedFileRef.current && liveWorkbookRef.current && !workerClientRef.current
+    );
+    setRetainingWorkbook(preserveView);
     let isCurrent = true;
     workbookGenerationRef.current += 1;
     hasCalculatedValuesRef.current = false;
@@ -2351,30 +2383,36 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     const abortController = new AbortController();
     setIsLoading(true);
     setError(null);
-    clearImageAssets();
-    clearChartAssets();
-    setWorkerTablesByWorkbookSheetIndex([]);
-    setIsWorkerBacked(false);
-    deferredBufferRef.current = null;
-    setDeferredLoadFileSize(null);
-    setActiveSheetIndexState(0);
-    setActiveTabIndexState(0);
-    setActiveCell(null);
-    setSelection(null);
-    setSelectedChartId(null);
-    setSelectedChartElement(null);
-    setSelectedImageId(null);
-    selectionAnchorRef.current = null;
+    chartLoadRequestTokenRef.current += 1;
+    chartDisplayFallbackCleanupRef.current?.();
+    chartDisplayFallbackCleanupRef.current = null;
+    // Package history belongs to the host; native commands cannot cross coordinate frames.
     undoStackRef.current = [];
     redoStackRef.current = [];
     setHistoryRevision(0);
-    setShouldAutoCalculate(false);
-    workerCellSnapshotCacheRef.current.clear();
-    setWorkerCellSnapshotRevision(0);
-    setSortState(null);
-    setZoomScaleOverridesByTabId({});
-    setRevision(0);
-    disposeWorkerClient();
+    if (!preserveView) {
+      clearImageAssets();
+      clearChartAssets();
+      setWorkerTablesByWorkbookSheetIndex([]);
+      setIsWorkerBacked(false);
+      deferredBufferRef.current = null;
+      setDeferredLoadFileSize(null);
+      setActiveSheetIndexState(0);
+      setActiveTabIndexState(0);
+      setActiveCell(null);
+      setSelection(null);
+      setSelectedChartId(null);
+      setSelectedChartElement(null);
+      setSelectedImageId(null);
+      selectionAnchorRef.current = null;
+      setShouldAutoCalculate(false);
+      workerCellSnapshotCacheRef.current.clear();
+      setWorkerCellSnapshotRevision(0);
+      setSortState(null);
+      setZoomScaleOverridesByTabId({});
+      setRevision(0);
+      disposeWorkerClient();
+    }
 
     void resolveWorkbookBuffer({ file, src }, abortController.signal)
       .then(async (buffer) => {
@@ -2466,23 +2504,36 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         const { imageAssets: nextImageAssets, parsedWorkbook: nextParsedWorkbook } = await loadWorkbookOnMainThread(buffer);
         if (!isCurrent || abortController.signal.aborted) {
           revokeWorkbookImageAssets(nextImageAssets);
+          nextParsedWorkbook.workbook.free();
           return;
         }
 
+        let nextSheets: XlsxSheetData[];
+        try {
+          nextSheets = buildSheetList(
+            nextParsedWorkbook.workbook,
+            nextImageAssets.sheetStatesByWorkbookSheetIndex,
+            nextImageAssets.themePalette,
+            nextImageAssets.styleById,
+            nextImageAssets.namedCellStyleByName,
+            nextImageAssets.tableStyleByName,
+            showHiddenSheets
+          );
+        } catch (error) {
+          revokeWorkbookImageAssets(nextImageAssets);
+          nextParsedWorkbook.workbook.free();
+          throw error;
+        }
+        const previousWorkbook = liveWorkbookRef.current;
+        committedFileRef.current = file ?? buffer;
+        if (preserveView && previousWorkbook && previousWorkbook !== nextParsedWorkbook.workbook) {
+          retiredWorkbooksRef.current.push(previousWorkbook);
+        }
         setImageAssets(nextImageAssets);
         setWorkbook(nextParsedWorkbook.workbook);
         sourceFormulaCountRef.current = nextParsedWorkbook.calculation.sourceFormulaCount;
         hasCalculatedValuesRef.current = nextParsedWorkbook.calculation.status === "complete" || nextParsedWorkbook.calculation.status === "partial";
         applyCalculation(nextParsedWorkbook.calculation, loadAttempt);
-        const nextSheets = buildSheetList(
-          nextParsedWorkbook.workbook,
-          nextImageAssets.sheetStatesByWorkbookSheetIndex,
-          nextImageAssets.themePalette,
-          nextImageAssets.styleById,
-          nextImageAssets.namedCellStyleByName,
-          nextImageAssets.tableStyleByName,
-          showHiddenSheets
-        );
         setSheets(nextSheets);
         startChartDisplayHydration(buffer, nextParsedWorkbook.workbook, nextSheets);
         setShouldAutoCalculate(nextParsedWorkbook.shouldAutoCalculate);
@@ -2496,11 +2547,13 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
           return;
         }
 
-        setWorkbook(null);
-        setSheets([]);
-        clearChartAssets();
-        setWorkerTablesByWorkbookSheetIndex([]);
-        clearImageAssets();
+        if (!preserveView) {
+          setWorkbook(null);
+          setSheets([]);
+          clearChartAssets();
+          setWorkerTablesByWorkbookSheetIndex([]);
+          clearImageAssets();
+        }
         setShouldAutoCalculate(false);
         setIsWorkerBacked(false);
         setSortState(null);
@@ -2524,6 +2577,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     deferLoadingAboveBytes,
     disposeWorkerClient,
     file,
+    canPreserveFileView,
     getWorkerClient,
     hasIncompleteWorkerChartSnapshot,
     loadWorkbookOnMainThread,
@@ -2883,7 +2937,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [applyCalculation, beginCalculation, shouldAutoCalculate]);
 
   const getActiveWorksheet = React.useCallback(() => {
-    if (!workbook || !activeSheet) {
+    if (!workbook || !activeSheet || liveWorkbookRef.current !== workbook) {
       return null;
     }
 
@@ -2893,15 +2947,16 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   /** Asks the host's `onBeforeEdit` about an edit to the active sheet; without one, refuses only
    *  a formula the engine would mishandle. */
   const allowEdit = React.useCallback((edit: Omit<XlsxEdit, "sheetIndex">) => {
+    if (replacementPendingRef.current || liveWorkbookRef.current !== workbook) return false;
     const full: XlsxEdit = { ...edit, sheetIndex: activeSheet?.workbookSheetIndex ?? 0 };
     const hook = onBeforeEditRef.current;
     const allowed = hook ? hook(full) : !full.formulaProblem;
     return allowed && !full.rejectionReason;
-  }, [activeSheet]);
+  }, [activeSheet, workbook]);
 
   const getFormControlWorksheet = React.useCallback((sheetIndex = activeSheetIndex) => {
     const targetSheet = sheets[sheetIndex];
-    if (!workbook || !targetSheet) {
+    if (!workbook || !targetSheet || liveWorkbookRef.current !== workbook) {
       return null;
     }
     try {
@@ -2955,6 +3010,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [getWorkerClient, isWorkerBacked]);
 
   const applyReviewFilter = React.useCallback(async (input: XlsxReviewFilterInput): Promise<string | null> => {
+    if (replacementPendingRef.current || liveWorkbookRef.current !== workbook) return "Wait for the workbook to finish updating.";
     if (!readOnly || !sourceActiveSheet) return "Review filters are available while viewing a worksheet.";
     const problem = reviewFilterProblem(input, sourceActiveSheet);
     if (problem) return problem;
@@ -3580,7 +3636,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     entry: CellEditHistoryEntry,
     direction: "undo" | "redo"
   ) => {
-    if (!workbook) {
+    if (!workbook || replacementPendingRef.current || liveWorkbookRef.current !== workbook) {
       return;
     }
 
@@ -3608,7 +3664,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     entry: RangeEditHistoryEntry,
     direction: "undo" | "redo"
   ) => {
-    if (!workbook) {
+    if (!workbook || replacementPendingRef.current || liveWorkbookRef.current !== workbook) {
       return;
     }
 
@@ -3963,7 +4019,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [activeSheet?.name, displayFileName, workbook]);
 
   const recalculate = React.useCallback((values?: ExternalFnValues) => {
-    if (isLoading || (!isWorkerBacked && !workbook)) return;
+    if (isLoading || replacementPendingRef.current || liveWorkbookRef.current !== workbook || (!isWorkerBacked && !workbook)) return;
     const externalFnValues = externalValues.recalculated(values);
     const attempt = beginCalculation();
     const generation = workbookGenerationRef.current;
@@ -5440,6 +5496,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       images,
       isLoadDeferred,
       isLoading,
+      isReplacingWorkbook,
+      retryWorkbookReplacement,
       isChartsLoading,
       isWorkerBacked,
       mergeSelection,
@@ -5577,6 +5635,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       images,
       isLoadDeferred,
       isLoading,
+      isReplacingWorkbook,
+      retryWorkbookReplacement,
       isChartsLoading,
       isWorkerBacked,
       mergeSelection,

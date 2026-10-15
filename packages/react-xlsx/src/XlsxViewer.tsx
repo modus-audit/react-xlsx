@@ -9049,7 +9049,7 @@ function XlsxGrid({
     const bounds = `${activeSheet?.minUsedRow ?? -1}|${activeSheet?.minUsedCol ?? -1}`;
     const last = initialScrollRef.current;
     initialScrollRef.current = { sheet, bounds };
-    if (last?.sheet === sheet && (last.bounds === bounds || !readOnly)) {
+    if (last?.sheet === sheet && (last.bounds === bounds || !readOnly || controller.isReplacingWorkbook)) {
       return;
     }
 
@@ -9085,6 +9085,7 @@ function XlsxGrid({
     actualColPrefixSums,
     actualRowPrefixSums,
     colVirtualizer,
+    controller.isReplacingWorkbook,
     displayFileName,
     frozenCols.length,
     isWorkerBacked,
@@ -14325,7 +14326,7 @@ function XlsxGrid({
     selectChartElement(selection);
   }, [selectChartElement]);
 
-  if (isLoading) {
+  if (isLoading && !controller.isReplacingWorkbook) {
     return <>{renderLoading(loadingComponent, loadingState, palette)}</>;
   }
 
@@ -14333,7 +14334,7 @@ function XlsxGrid({
     return <>{renderDeferredLoad({ ...controller, canLoadDeferred, continueDeferredLoad, deferredLoadFileSize, isLoadDeferred }, palette)}</>;
   }
 
-  if (error) {
+  if (error && !controller.isReplacingWorkbook) {
     if (error instanceof XlsxFileSizeLimitExceededError) {
       return (
         <>
