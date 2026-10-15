@@ -1079,6 +1079,10 @@ interface UseXlsxViewerControllerOptions {
      * Without it, formula entries with a `formulaProblem` are refused.
      */
     onBeforeEdit?: (edit: XlsxEdit) => boolean;
+    /** Replace local bytes for the same logical document without resetting its visible view.
+     * Keep the old main-thread grid read-only until the candidate is committed. New documents
+     * must use a new controller identity. Failed replacements retain the old view read-only. */
+    preserveViewOnFileChange?: boolean;
     /**
      * Defers loading until `continueDeferredLoad()` is called when the file is larger than this byte threshold.
      * Set to `0` to parse immediately.
@@ -1222,6 +1226,10 @@ interface XlsxViewerController {
     }>;
     isLoadDeferred: boolean;
     isLoading: boolean;
+    /** An old grid remains visible and noneditable during a same-document package replacement. */
+    isReplacingWorkbook: boolean;
+    /** Retry a failed same-document replacement while retaining the noneditable previous grid. */
+    retryWorkbookReplacement: () => void;
     isChartsLoading: boolean;
     isWorkerBacked?: boolean;
     images: XlsxImage[];
