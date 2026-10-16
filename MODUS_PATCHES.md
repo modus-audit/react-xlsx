@@ -108,3 +108,7 @@ History/fill retain the distinction between a truly absent cell (null) and an ex
 ### Same-document reloads (.32)
 
 The opt-in `preserveViewOnFileChange` keeps the main-thread grid mounted while a replacement package parses. Sheet, zoom, selection and scroll remain in place. The retained grid is read-only while `isReplacingWorkbook` is true; consumers must also suspend saves/history initialization against that model. Failed replacements retain the blocked grid and expose `retryWorkbookReplacement`. Candidates are committed together, superseded candidates are discarded, and retired models are disposed after the replacement renders. Different documents require a different controller identity; worker-backed and initial loads keep their existing behavior.
+
+### Percentage input (.33)
+
+Cell entry, formula-bar entry and text paste coerce finite numeric percentages to numeric fractions. An apostrophe preserves explicit text. Existing percentage formats retain their precision; a new percentage entry receives a format matching its typed decimal precision. The change participates in the same native history transaction as the value, so undo restores the prior value and style together. The app's mutation ledger must treat content/paste targets as potential formatting changes.

@@ -1,3 +1,4 @@
+import { coerceUserEnteredValue, enteredPercentageFormat } from "./user-entered-value";
 import { projectReviewRows, reviewColumnValues, reviewFilterProblem, scanReviewFilter, type XlsxReviewFilter, type XlsxReviewFilterInput } from "./review-filter";
 import { borderPlan } from "./border-plan";
 import { applyStyleBatch, FormattingRefusal, requireEditableStyle } from "./style-batch";
@@ -1358,30 +1359,6 @@ function cloneCellStyle(style: unknown): unknown {
   } catch {
     return style;
   }
-}
-
-function coerceUserEnteredValue(value: string): unknown {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  if (trimmed.startsWith("'")) {
-    return trimmed.slice(1);
-  }
-
-  if (/^(true|false)$/i.test(trimmed)) {
-    return trimmed.toLowerCase() === "true";
-  }
-
-  if (/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(trimmed)) {
-    const parsed = Number(trimmed);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return value;
 }
 
 function applyCellMutationState(
@@ -4752,6 +4729,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
 
     const nextValue = coerceUserEnteredValue(value);
     worksheet.setCell(cellAddressToA1(cell), nextValue);
+    const percentFormat = enteredPercentageFormat(value, before.style);
+    if (percentFormat) {
+      worksheet.setCellStyleAt(cell.row, cell.col, { numberFormat: { formatType: "custom", formatString: percentFormat } });
+    }
     const after = captureCellMutationState(cell);
     if (!after) {
       return;
@@ -5162,6 +5143,10 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
         } else {
           const nextValue = coerceUserEnteredValue(rawValue);
           worksheet.setCell(cellAddressToA1(nextCell), nextValue);
+          const percentFormat = enteredPercentageFormat(rawValue, before.style);
+          if (percentFormat) {
+            worksheet.setCellStyleAt(nextCell.row, nextCell.col, { numberFormat: { formatType: "custom", formatString: percentFormat } });
+          }
           const after = captureCellMutationState(nextCell);
           if (!after) {
             continue;
