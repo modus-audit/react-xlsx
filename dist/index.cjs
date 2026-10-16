@@ -53,6 +53,28 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
+// src/user-entered-value.ts
+function coerceUserEnteredValue(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("'")) return trimmed.slice(1);
+  if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === "true";
+  const numeric = /^[+-]?(?:\d+\.?\d*|\.\d+)(%)?$/.exec(trimmed);
+  if (numeric) {
+    const parsed = Number(numeric[1] ? trimmed.slice(0, -1) : trimmed);
+    if (Number.isFinite(parsed)) return numeric[1] ? parsed / 100 : parsed;
+  }
+  return value;
+}
+function enteredPercentageFormat(value, style) {
+  const numberFormat = typeof style === "object" && style !== null && "numberFormat" in style ? style.numberFormat : null;
+  const formatString = typeof numberFormat === "object" && numberFormat !== null && "formatString" in numberFormat && typeof numberFormat.formatString === "string" ? numberFormat.formatString : void 0;
+  const match = /^[+-]?(?:\d+(?:\.(\d*))?|\.(\d+))%$/.exec(value.trim());
+  if (!match || formatString?.includes("%")) return null;
+  const digits = Math.min((match[1] ?? match[2] ?? "").length, 15);
+  return `0${digits ? `.${"0".repeat(digits)}` : ""}%`;
+}
+
 // src/review-filter.ts
 function reviewFilterProblem(input, sheet) {
   const { start, end } = input.range;
@@ -8983,25 +9005,6 @@ function cloneCellStyle(style) {
     return style;
   }
 }
-function coerceUserEnteredValue(value) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "";
-  }
-  if (trimmed.startsWith("'")) {
-    return trimmed.slice(1);
-  }
-  if (/^(true|false)$/i.test(trimmed)) {
-    return trimmed.toLowerCase() === "true";
-  }
-  if (/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(trimmed)) {
-    const parsed = Number(trimmed);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return value;
-}
 function applyCellMutationState(worksheet, cell2, state, plain) {
   if (state.formula) {
     worksheet.setFormula(cellAddressToA1(cell2), state.formula);
@@ -11823,6 +11826,10 @@ function useXlsxViewerController(options) {
     }
     const nextValue = coerceUserEnteredValue(value);
     worksheet.setCell(cellAddressToA1(cell2), nextValue);
+    const percentFormat = enteredPercentageFormat(value, before.style);
+    if (percentFormat) {
+      worksheet.setCellStyleAt(cell2.row, cell2.col, { numberFormat: { formatType: "custom", formatString: percentFormat } });
+    }
     const after = captureCellMutationState(cell2);
     if (!after) {
       return;
@@ -12188,6 +12195,10 @@ function useXlsxViewerController(options) {
         } else {
           const nextValue = coerceUserEnteredValue(rawValue);
           worksheet.setCell(cellAddressToA1(nextCell), nextValue);
+          const percentFormat = enteredPercentageFormat(rawValue, before.style);
+          if (percentFormat) {
+            worksheet.setCellStyleAt(nextCell.row, nextCell.col, { numberFormat: { formatType: "custom", formatString: percentFormat } });
+          }
           const after = captureCellMutationState(nextCell);
           if (!after) {
             continue;
