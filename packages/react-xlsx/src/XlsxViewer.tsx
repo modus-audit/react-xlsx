@@ -7467,6 +7467,11 @@ function XlsxGrid({
   const topBodyCanvasRef = React.useRef<HTMLCanvasElement>(null);
   const leftBodyCanvasRef = React.useRef<HTMLCanvasElement>(null);
   const cornerBodyCanvasRef = React.useRef<HTMLCanvasElement>(null);
+  const resetCanvasBodyCursors = React.useCallback(() => {
+    for (const ref of [scrollBodyCanvasRef, topBodyCanvasRef, leftBodyCanvasRef, cornerBodyCanvasRef]) {
+      if (ref.current) ref.current.style.cursor = "cell";
+    }
+  }, []);
   const bodyBlitBufferCanvasRef = React.useRef<Record<FrozenDrawingPane, HTMLCanvasElement | null>>({
     corner: null,
     left: null,
@@ -9133,6 +9138,7 @@ function XlsxGrid({
   ]);
 
   const handleScrollerScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    resetCanvasBodyCursors();
     const currentScroller = event.currentTarget;
     cachedScrollerRectRef.current = null;
     gestureScrollerRectRef.current = null;
@@ -9160,7 +9166,7 @@ function XlsxGrid({
         return readOnly && current < maxColDisplayLimit ? Math.min(maxColDisplayLimit, nextLimit) : nextLimit;
       });
     }
-  }, [maxColDisplayLimit, maxRowDisplayLimit, readOnly, syncDrawingViewport]);
+  }, [maxColDisplayLimit, maxRowDisplayLimit, readOnly, resetCanvasBodyCursors, syncDrawingViewport]);
 
   React.useEffect(() => {
     const scroller = scrollRef.current;
@@ -12471,11 +12477,31 @@ function XlsxGrid({
   }, [activeSheet?.name, clearFormulaPopover, controller.calculation, formulaErrors, frozenPaneBottom,
     frozenPaneRight, getCellData, resolveGeometryOverlayRect, resolveMergeAnchorCell, resolvePointerCellFromClient, zoomFactor]);
 
+  const hoverMergedRanges = React.useMemo<XlsxCellRange[]>(() => {
+    if (worksheet || !viewportRowBatch) return [];
+    const ranges: XlsxCellRange[] = [];
+    for (const [key, data] of viewportRowBatch.cells) {
+      const start = parseCellAddressAttribute(key);
+      const rows = data.mergeSpan?.rowSpan ?? 1;
+      const cols = data.mergeSpan?.colSpan ?? 1;
+      if (start && (rows > 1 || cols > 1)) {
+        ranges.push({ start, end: { row: start.row + rows - 1, col: start.col + cols - 1 } });
+      }
+    }
+    return ranges;
+  }, [viewportRowBatch, worksheet]);
+
+  // Cell/style updates and viewport changes invalidate a stationary pointer's cursor.
+  React.useLayoutEffect(resetCanvasBodyCursors, [drawingViewport, getCellData, resetCanvasBodyCursors]);
+
   const handleCanvasBodyPointerMove = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
-    const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
+    const hit = resolvePointerCellFromClient(event.clientX, event.clientY);
+    const anchor = hit ? resolveMergeAnchorCell(hit) : null;
+    const merged = anchor ? hoverMergedRanges.find((range) => isCellInRange(anchor, range)) : undefined;
+    const cell = merged?.start ?? anchor;
     const data = cell ? getCellData(cell.row, cell.col) : null;
     event.currentTarget.style.cursor = String(data?.style.cursor ?? (data?.hyperlink ? "pointer" : "cell"));
-  }, [getCellData, resolvePointerCellFromClient]);
+  }, [getCellData, hoverMergedRanges, resolveMergeAnchorCell, resolvePointerCellFromClient]);
 
   const handleCanvasBodyClick = React.useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
