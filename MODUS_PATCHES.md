@@ -91,3 +91,7 @@ coverage and values retained from an earlier calculation have conservative `unkn
 ## Formula copy and fill (.13)
 
 Copy carries the original cell address so relative A1 references relocate on paste; absolute and mixed references retain their locked axes. One lexical helper also serves fill in every direction, preserving quoted strings, sheet qualifiers, names and structured references. The calculator and WASM engine remain unchanged.
+
+## Citation cursors
+
+Canvas and DOM cells honor `getCellStyle().cursor`. Canvas hover uses the existing pointer-to-cell resolver and cached cell data, retaining scroll, zoom, frozen-pane, hidden-axis and merged-cell geometry. The consuming app decides which cells have clickable citations.

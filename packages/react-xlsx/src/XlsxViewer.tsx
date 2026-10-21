@@ -6926,7 +6926,7 @@ function GridRow({
         const cellStyle: React.CSSProperties = {
           ...cellData.style,
           boxSizing: "border-box",
-          cursor: isEditing ? "text" : cellData.hyperlink ? "pointer" : "cell"
+          cursor: isEditing ? "text" : cellData.style.cursor ?? (cellData.hyperlink ? "pointer" : "cell")
         };
 
         if (!cellData.rowSpan) {
@@ -12471,6 +12471,12 @@ function XlsxGrid({
   }, [activeSheet?.name, clearFormulaPopover, controller.calculation, formulaErrors, frozenPaneBottom,
     frozenPaneRight, getCellData, resolveGeometryOverlayRect, resolveMergeAnchorCell, resolvePointerCellFromClient, zoomFactor]);
 
+  const handleCanvasBodyPointerMove = React.useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
+    const data = cell ? getCellData(cell.row, cell.col) : null;
+    event.currentTarget.style.cursor = String(data?.style.cursor ?? (data?.hyperlink ? "pointer" : "cell"));
+  }, [getCellData, resolvePointerCellFromClient]);
+
   const handleCanvasBodyClick = React.useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     const cell = resolvePointerCellFromClient(event.clientX, event.clientY);
     if (!cell) {
@@ -16561,6 +16567,7 @@ function XlsxGrid({
                   <canvas
                     ref={scrollBodyCanvasRef}
                     onClick={handleCanvasBodyClick}
+                    onPointerMove={handleCanvasBodyPointerMove}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
                     data-xlsx-body-canvas="true"
@@ -16569,6 +16576,7 @@ function XlsxGrid({
                   <canvas
                     ref={topBodyCanvasRef}
                     onClick={handleCanvasBodyClick}
+                    onPointerMove={handleCanvasBodyPointerMove}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
                     data-xlsx-body-canvas="true"
@@ -16577,6 +16585,7 @@ function XlsxGrid({
                   <canvas
                     ref={leftBodyCanvasRef}
                     onClick={handleCanvasBodyClick}
+                    onPointerMove={handleCanvasBodyPointerMove}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
                     data-xlsx-body-canvas="true"
@@ -16585,6 +16594,7 @@ function XlsxGrid({
                   <canvas
                     ref={cornerBodyCanvasRef}
                     onClick={handleCanvasBodyClick}
+                    onPointerMove={handleCanvasBodyPointerMove}
                     onDoubleClick={handleCanvasBodyDoubleClick}
                     onPointerDown={handleCanvasBodyPointerDown}
                     data-xlsx-body-canvas="true"
