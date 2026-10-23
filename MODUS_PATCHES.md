@@ -48,7 +48,7 @@ The app configures `initWasm` with a bundler-resolved asset URL and explicitly c
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/excel-viewer-e2e`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.32`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.36`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 
@@ -112,3 +112,10 @@ The opt-in `preserveViewOnFileChange` keeps the main-thread grid mounted while a
 ### Percentage input (.33)
 
 Cell entry, formula-bar entry and text paste coerce finite numeric percentages to numeric fractions. An apostrophe preserves explicit text. Existing percentage formats retain their precision; a new percentage entry receives a format matching its typed decimal precision. The change participates in the same native history transaction as the value, so undo restores the prior value and style together. The app's mutation ledger must treat content/paste targets as potential formatting changes.
+## Citation cursors
+
+Canvas and DOM cells honor `getCellStyle().cursor`. Canvas hover uses the existing pointer-to-cell resolver and cached cell data, retaining scroll, zoom, frozen-pane, hidden-axis and merged-cell geometry. Merged-cell hover uses the anchor style in worksheet and worker-backed views. Viewport, data and style changes clear body-pane cursors until the next pointer movement, so a stationary pointer cannot retain a stale citation cursor. The consuming app decides which cells have clickable citations.
+
+## Main synchronization (.36)
+
+Combines the citation hover-cursor fixes from main (.35) with the editing, same-document replacement and numeric percentage fixes (.30–.33). Retains engine .3 and all existing editing transactions.
