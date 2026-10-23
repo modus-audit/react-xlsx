@@ -27,12 +27,26 @@ interface XlsxCellCalculationDiagnostic {
     error: string | null;
 }
 
+interface XlsxReviewFilterInput {
+    /** First row is a retained header; keep totals outside this range. */
+    range: XlsxCellRange;
+    column: number;
+    mode: "contains" | "equals" | "blank" | "nonblank";
+    query: string;
+}
+interface XlsxReviewFilter extends XlsxReviewFilterInput {
+    excludedRows: number[];
+    matchingRows: number;
+    totalRows: number;
+}
+
 type DataDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 interface DataNavigationRequest {
     cell: XlsxCellAddress;
     direction: DataDirection;
     maxRow: number;
     maxCol: number;
+    excludedRows?: number[];
 }
 
 /** Serializable external-call values cross the worker boundary; missing entries preserve cached workbook values. */
@@ -72,6 +86,8 @@ type XlsxEditKind =
 /** An edit the viewer is about to make. `onBeforeEdit` returning false refuses it, before any change. */
 interface XlsxEdit {
     kind: XlsxEditKind;
+    /** A built-in refusal the host can explain; this edit is never applied. */
+    rejectionReason?: string;
     /** The workbook sheet the edit changes. */
     sheetIndex: number;
     /** The cells the edit writes (for a paste, from the active cell to the copied extent). */
@@ -194,6 +210,8 @@ interface XlsxSheetData {
     colStyleIds: Record<number, number>;
     hiddenCols?: number[];
     hiddenRows?: number[];
+    /** Local review projection; never persisted as hidden rows. */
+    excludedRows?: number[];
     conditionalFormatRules: XlsxConditionalFormatRule[];
     dataValidations: XlsxDataValidation[];
     name: string;
@@ -317,6 +335,12 @@ interface XlsxCellFillStyleInput {
     angle?: number;
     /** Gradient color stops. */
     stops?: XlsxCellGradientStopInput[];
+}
+/** Initial workpaper border actions. Existing diagonals are preserved. */
+type XlsxBorderPreset = "bottom" | "doubleBottom" | "outside" | "all" | "clear";
+interface XlsxRangeStyleEdit {
+    range: XlsxCellRange;
+    style: XlsxCellStyleInput;
 }
 /** A single border edge style. */
 interface XlsxCellBorderEdgeInput {
@@ -1055,6 +1079,10 @@ interface UseXlsxViewerControllerOptions {
      * Without it, formula entries with a `formulaProblem` are refused.
      */
     onBeforeEdit?: (edit: XlsxEdit) => boolean;
+    /** Replace local bytes for the same logical document without resetting its visible view.
+     * Keep the old main-thread grid read-only until the candidate is committed. New documents
+     * must use a new controller identity. Failed replacements retain the old view read-only. */
+    preserveViewOnFileChange?: boolean;
     /**
      * Defers loading until `continueDeferredLoad()` is called when the file is larger than this byte threshold.
      * Set to `0` to parse immediately.
@@ -1134,6 +1162,9 @@ interface UseXlsxViewerControllerOptions {
     useWorker?: boolean;
 }
 interface XlsxViewerController {
+    reviewFilter: XlsxReviewFilter | null;
+    applyReviewFilter: (filter: XlsxReviewFilterInput) => Promise<string | null>;
+    clearReviewFilter: () => void;
     /** Calculation execution coverage; complete does not establish Excel equivalence. */
     calculation: XlsxCalculationReport;
     getCellCalculationDiagnostic: (cell?: XlsxCellAddress | null) => XlsxCellCalculationDiagnostic | null;
@@ -1168,7 +1199,9 @@ interface XlsxViewerController {
     exportXlsx: () => void;
     error: Error | null;
     file?: ArrayBuffer;
-    fillSelection: (targetRange: XlsxCellRange) => void;
+    fillSelection: (targetRange: XlsxCellRange, options?: {
+        mode?: "auto" | "copy" | "series";
+    }) => void;
     clearSelectedChart: () => void;
     clearSelectedChartElement: () => void;
     clearSelectedImage: () => void;
@@ -1193,6 +1226,10 @@ interface XlsxViewerController {
     }>;
     isLoadDeferred: boolean;
     isLoading: boolean;
+    /** An old grid remains visible and noneditable during a same-document package replacement. */
+    isReplacingWorkbook: boolean;
+    /** Retry a failed same-document replacement while retaining the noneditable previous grid. */
+    retryWorkbookReplacement: () => void;
     isChartsLoading: boolean;
     isWorkerBacked?: boolean;
     images: XlsxImage[];
@@ -1287,6 +1324,10 @@ interface XlsxViewerController {
      * @param style Partial Excel style patch to apply to the target range.
      */
     setRangeStyle: (range: XlsxCellRange, style: XlsxCellStyleInput) => void;
+    /** One preflight and undo item for the complete formatting action. */
+    setRangeStyles: (edits: XlsxRangeStyleEdit[]) => string | null;
+    /** Returns a selection error to display, or null (host policy displays its own refusals). */
+    setBorders: (ranges: XlsxCellRange[], preset: XlsxBorderPreset) => string | null;
     setZoomScale: (zoomScale: number) => void;
     selectCell: (cell: XlsxCellAddress, options?: {
         extend?: boolean;
@@ -1391,7 +1432,9 @@ interface XlsxViewerEditing {
     clearSelectedCells: () => boolean;
     copySelectionToClipboard: () => Promise<boolean>;
     defineNamedRange: (name: string, range?: XlsxCellRange | null) => void;
-    fillSelection: (targetRange: XlsxCellRange) => void;
+    fillSelection: (targetRange: XlsxCellRange, options?: {
+        mode?: "auto" | "copy" | "series";
+    }) => void;
     formControls: XlsxFormControl[];
     getClipboardData: () => XlsxClipboardData | null;
     getCellDisplayValue: (cell?: XlsxCellAddress | null) => string;
@@ -1449,6 +1492,10 @@ interface XlsxViewerEditing {
      * @param style Partial Excel style patch to apply to the target range.
      */
     setRangeStyle: (range: XlsxCellRange, style: XlsxCellStyleInput) => void;
+    /** One preflight and undo item for the complete formatting action. */
+    setRangeStyles: (edits: XlsxRangeStyleEdit[]) => string | null;
+    /** Returns a selection error to display, or null (host policy displays its own refusals). */
+    setBorders: (ranges: XlsxCellRange[], preset: XlsxBorderPreset) => string | null;
     setSelectedFormula: (formula: string) => boolean;
     setSelectedCellFormula: (formula: string) => void;
     /**
@@ -1851,4 +1898,4 @@ declare function isMerged(sheet: Pick<FitSheet, "getMergeSpan" | "isMergedSecond
  *  top-left cell. */
 declare function mergesTouching(mergedRegions: unknown, range: XlsxCellRange): string[];
 
-export { DefaultXlsxToolbar, type ExternalFnValues, type UseXlsxViewerControllerOptions, type UseXlsxViewerThumbnailsOptions, type XlsxAxisSize, type XlsxCalculationIssue, type XlsxCalculationReport, type XlsxCellAddress, type XlsxCellAlignmentInput, type XlsxCellBorderEdgeInput, type XlsxCellBorderStyleInput, type XlsxCellCalculationDiagnostic, type XlsxCellFillStyleInput, type XlsxCellFontStyleInput, type XlsxCellGradientStopInput, type XlsxCellNumberFormatInput, type XlsxCellProtectionInput, type XlsxCellRange, type XlsxCellStyleColorInput, type XlsxCellStyleContext, type XlsxCellStyleInput, type XlsxChart, type XlsxChartAxis, type XlsxChartDataLabels, type XlsxChartElementSelection, type XlsxChartLoadingRenderProps, type XlsxChartReference, type XlsxChartSeries, type XlsxChartsheet, type XlsxDrawingLayout, type XlsxEdit, type XlsxEditKind, XlsxFileSizeLimitExceededError, type XlsxFileTooLargeRenderProps, type XlsxFormControl, type XlsxFormControlActionEvent, type XlsxFormControlCaption, type XlsxFormControlCaptionInput, type XlsxFormControlCaptionRun, type XlsxFormControlChangeEvent, type XlsxFormControlInput, type XlsxFormControlKind, type XlsxFormControlKindInput, type XlsxFormControlPatch, type XlsxFormControlRenderProps, type XlsxFormControlSelectionMode, type XlsxFormControlState, type XlsxFormulaProblem, type XlsxFormulaTarget, type XlsxImage, type XlsxImageAnchor, type XlsxImageRect, type XlsxImageRenderProps, type XlsxImageResizeHandlePosition, type XlsxImageSelectionRenderProps, type XlsxScrollerRenderProps, type XlsxShape, type XlsxShapeFill, type XlsxShapeParagraph, type XlsxShapeStroke, type XlsxShapeTextBox, type XlsxShapeTextRun, type XlsxSheetData, type XlsxSheetThumbnail, type XlsxSheetThumbnailResolution, type XlsxSheetVisibility, type XlsxTable, type XlsxTableColumn, type XlsxTableHeaderMenuRenderProps, type XlsxTableSortDirection, type XlsxTableSortState, type XlsxThemePalette, XlsxViewer, type XlsxViewerCharts, type XlsxViewerController, type XlsxViewerEditing, type XlsxViewerImages, type XlsxViewerProps, XlsxViewerProvider, type XlsxViewerProviderProps, type XlsxViewerSelection, type XlsxViewerTables, type XlsxViewerThumbnails, type XlsxViewerZoom, type XlsxWasmSource, type XlsxWorkbookTab, externalCallKey, formulaProblem, formulaText, initWasm, isMerged, mergesTouching, setWasmSource, useXlsxViewer, useXlsxViewerCharts, useXlsxViewerController, useXlsxViewerEditing, useXlsxViewerImages, useXlsxViewerSelection, useXlsxViewerTables, useXlsxViewerThumbnails, useXlsxViewerZoom };
+export { DefaultXlsxToolbar, type ExternalFnValues, type UseXlsxViewerControllerOptions, type UseXlsxViewerThumbnailsOptions, type XlsxAxisSize, type XlsxBorderPreset, type XlsxCalculationIssue, type XlsxCalculationReport, type XlsxCellAddress, type XlsxCellAlignmentInput, type XlsxCellBorderEdgeInput, type XlsxCellBorderStyleInput, type XlsxCellCalculationDiagnostic, type XlsxCellFillStyleInput, type XlsxCellFontStyleInput, type XlsxCellGradientStopInput, type XlsxCellNumberFormatInput, type XlsxCellProtectionInput, type XlsxCellRange, type XlsxCellStyleColorInput, type XlsxCellStyleContext, type XlsxCellStyleInput, type XlsxChart, type XlsxChartAxis, type XlsxChartDataLabels, type XlsxChartElementSelection, type XlsxChartLoadingRenderProps, type XlsxChartReference, type XlsxChartSeries, type XlsxChartsheet, type XlsxDrawingLayout, type XlsxEdit, type XlsxEditKind, XlsxFileSizeLimitExceededError, type XlsxFileTooLargeRenderProps, type XlsxFormControl, type XlsxFormControlActionEvent, type XlsxFormControlCaption, type XlsxFormControlCaptionInput, type XlsxFormControlCaptionRun, type XlsxFormControlChangeEvent, type XlsxFormControlInput, type XlsxFormControlKind, type XlsxFormControlKindInput, type XlsxFormControlPatch, type XlsxFormControlRenderProps, type XlsxFormControlSelectionMode, type XlsxFormControlState, type XlsxFormulaProblem, type XlsxFormulaTarget, type XlsxImage, type XlsxImageAnchor, type XlsxImageRect, type XlsxImageRenderProps, type XlsxImageResizeHandlePosition, type XlsxImageSelectionRenderProps, type XlsxRangeStyleEdit, type XlsxReviewFilter, type XlsxReviewFilterInput, type XlsxScrollerRenderProps, type XlsxShape, type XlsxShapeFill, type XlsxShapeParagraph, type XlsxShapeStroke, type XlsxShapeTextBox, type XlsxShapeTextRun, type XlsxSheetData, type XlsxSheetThumbnail, type XlsxSheetThumbnailResolution, type XlsxSheetVisibility, type XlsxTable, type XlsxTableColumn, type XlsxTableHeaderMenuRenderProps, type XlsxTableSortDirection, type XlsxTableSortState, type XlsxThemePalette, XlsxViewer, type XlsxViewerCharts, type XlsxViewerController, type XlsxViewerEditing, type XlsxViewerImages, type XlsxViewerProps, XlsxViewerProvider, type XlsxViewerProviderProps, type XlsxViewerSelection, type XlsxViewerTables, type XlsxViewerThumbnails, type XlsxViewerZoom, type XlsxWasmSource, type XlsxWorkbookTab, externalCallKey, formulaProblem, formulaText, initWasm, isMerged, mergesTouching, setWasmSource, useXlsxViewer, useXlsxViewerCharts, useXlsxViewerController, useXlsxViewerEditing, useXlsxViewerImages, useXlsxViewerSelection, useXlsxViewerTables, useXlsxViewerThumbnails, useXlsxViewerZoom };

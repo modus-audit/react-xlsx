@@ -1,3 +1,228 @@
+// src/user-entered-value.ts
+function coerceUserEnteredValue(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("'")) return trimmed.slice(1);
+  if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === "true";
+  const numeric = /^[+-]?(?:\d+\.?\d*|\.\d+)(%)?$/.exec(trimmed);
+  if (numeric) {
+    const parsed = Number(numeric[1] ? trimmed.slice(0, -1) : trimmed);
+    if (Number.isFinite(parsed)) return numeric[1] ? parsed / 100 : parsed;
+  }
+  return value;
+}
+function enteredPercentageFormat(value, style) {
+  const numberFormat = typeof style === "object" && style !== null && "numberFormat" in style ? style.numberFormat : null;
+  const formatString = typeof numberFormat === "object" && numberFormat !== null && "formatString" in numberFormat && typeof numberFormat.formatString === "string" ? numberFormat.formatString : void 0;
+  const match = /^[+-]?(?:\d+(?:\.(\d*))?|\.(\d+))%$/.exec(value.trim());
+  if (!match || formatString?.includes("%")) return null;
+  const digits = Math.min((match[1] ?? match[2] ?? "").length, 15);
+  return `0${digits ? `.${"0".repeat(digits)}` : ""}%`;
+}
+
+// src/review-filter.ts
+function reviewFilterProblem(input, sheet) {
+  const { start, end } = input.range;
+  if (![start.row, start.col, end.row, end.col, input.column].every(Number.isSafeInteger) || start.row < 0 || start.col < 0 || end.row <= start.row || end.col < start.col || end.row > sheet.maxUsedRow || end.col > sheet.maxUsedCol || input.column < start.col || input.column > end.col) {
+    return "Choose a data range with a header and at least one data row, and a column inside it.";
+  }
+  if (end.row - start.row > 5e4) return "Review filters support up to 50,000 data rows at a time.";
+  if (sheet.hasVerticalMerges) return "Review filters are unavailable on sheets with vertically merged records.";
+  return null;
+}
+function reviewColumnValues(rows, column) {
+  const values = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || !("index" in row) || !Number.isSafeInteger(row.index) || !("cells" in row) || !Array.isArray(row.cells)) throw new Error("The worksheet values could not be read.");
+    for (const cell2 of row.cells) {
+      if (!cell2 || typeof cell2 !== "object" || !("col" in cell2) || !("value" in cell2)) {
+        throw new Error("The worksheet values could not be read.");
+      }
+      if (cell2.col === column) {
+        if (typeof cell2.value !== "string") throw new Error("The worksheet values could not be read.");
+        values.set(Number(row.index), cell2.value);
+      }
+    }
+  }
+  return values;
+}
+async function scanReviewFilter(input, hiddenRows, read, isCurrent) {
+  const excludedRows = [];
+  let matchingRows = 0;
+  let totalRows = 0;
+  const query = input.query.toLocaleLowerCase();
+  for (let start = input.range.start.row + 1; start <= input.range.end.row; start += 250) {
+    if (!isCurrent()) return null;
+    const count = Math.min(250, input.range.end.row - start + 1);
+    const values = await read(start, count);
+    if (!isCurrent()) return null;
+    for (let row = start; row < start + count; row++) {
+      const value = (values.get(row) ?? "").toLocaleLowerCase();
+      const matches = input.mode === "blank" ? value === "" : input.mode === "nonblank" ? value !== "" : input.mode === "equals" ? value === query : value.includes(query);
+      if (!matches) excludedRows.push(row);
+      if (!hiddenRows.has(row)) {
+        totalRows++;
+        if (matches) matchingRows++;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return { ...input, excludedRows, matchingRows, totalRows };
+}
+function projectReviewRows(sheet, excludedRows) {
+  const excluded = new Set(excludedRows);
+  const visibleRows = [];
+  const rowHeights = [];
+  sheet.visibleRows.forEach((row, index) => {
+    if (excluded.has(row)) return;
+    visibleRows.push(row);
+    rowHeights.push(sheet.rowHeights[index] ?? sheet.defaultRowHeightPx);
+  });
+  return { ...sheet, excludedRows, visibleRows, rowHeights };
+}
+
+// src/border-plan.ts
+var MAX_CELLS = 25e4;
+var MAX_ROW = 1048575;
+var MAX_COL = 16383;
+function normalizedStyleRange(range) {
+  const { start, end } = range;
+  if (![start.row, start.col, end.row, end.col].every(Number.isInteger) || Math.min(start.row, end.row) < 0 || Math.min(start.col, end.col) < 0 || Math.max(start.row, end.row) > MAX_ROW || Math.max(start.col, end.col) > MAX_COL) {
+    throw new Error("Select cells within the worksheet.");
+  }
+  return {
+    start: { row: Math.min(start.row, end.row), col: Math.min(start.col, end.col) },
+    end: { row: Math.max(start.row, end.row), col: Math.max(start.col, end.col) }
+  };
+}
+function checkedStyleRanges(ranges) {
+  const normalized = ranges.map(normalizedStyleRange);
+  const count = normalized.reduce((total, r) => total + (r.end.row - r.start.row + 1) * (r.end.col - r.start.col + 1), 0);
+  if (count > MAX_CELLS) throw new Error("Select 250,000 cells or fewer to format at once.");
+  return normalized;
+}
+function regions(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((r) => r !== null && typeof r === "object" && ["startRow", "startCol", "endRow", "endCol"].every((k) => Number.isInteger(r[k])));
+}
+function borderPlan(ranges, rawMerges, preset) {
+  const selected = checkedStyleRanges(ranges);
+  const merges = regions(rawMerges);
+  const patches = /* @__PURE__ */ new Map();
+  const line = preset === "clear" ? { style: "none" } : {
+    style: preset === "doubleBottom" ? "double" : "thin",
+    color: { colorType: "rgb", hex: "000000" }
+  };
+  const put = (row, col, edge) => {
+    if (row < 0 || col < 0 || row > MAX_ROW || col > MAX_COL) return;
+    const key = `${row}:${col}`;
+    const patch = patches.get(key) ?? { row, col, border: {} };
+    patch.border[edge] = line;
+    patches.set(key, patch);
+  };
+  const boundary = (row, col, edge) => {
+    put(row, col, edge);
+    if (edge === "top") put(row - 1, col, "bottom");
+    if (edge === "bottom") put(row + 1, col, "top");
+    if (edge === "left") put(row, col - 1, "right");
+    if (edge === "right") put(row, col + 1, "left");
+  };
+  for (const r of selected) {
+    const touched = merges.filter((m) => m.startRow <= r.end.row && m.endRow >= r.start.row && m.startCol <= r.end.col && m.endCol >= r.start.col);
+    if (touched.some((m) => m.startRow < r.start.row || m.endRow > r.end.row || m.startCol < r.start.col || m.endCol > r.end.col)) {
+      throw new Error("Select the entire merged cell before changing its borders.");
+    }
+    const merged = /* @__PURE__ */ new Map();
+    if (preset === "all") for (const m of touched) {
+      for (let row = m.startRow; row <= m.endRow; row++) for (let col = m.startCol; col <= m.endCol; col++) {
+        merged.set(`${row}:${col}`, m);
+      }
+    }
+    if (preset === "bottom" || preset === "doubleBottom") {
+      for (let col = r.start.col; col <= r.end.col; col++) boundary(r.end.row, col, "bottom");
+      continue;
+    }
+    if (preset === "outside") {
+      for (let col = r.start.col; col <= r.end.col; col++) {
+        boundary(r.start.row, col, "top");
+        boundary(r.end.row, col, "bottom");
+      }
+      for (let row = r.start.row; row <= r.end.row; row++) {
+        boundary(row, r.start.col, "left");
+        boundary(row, r.end.col, "right");
+      }
+      continue;
+    }
+    for (let row = r.start.row; row <= r.end.row; row++) for (let col = r.start.col; col <= r.end.col; col++) {
+      const m = merged.get(`${row}:${col}`);
+      if (!m || row === m.startRow) boundary(row, col, "top");
+      if (!m || row === m.endRow) boundary(row, col, "bottom");
+      if (!m || col === m.startCol) boundary(row, col, "left");
+      if (!m || col === m.endCol) boundary(row, col, "right");
+    }
+  }
+  const result = [];
+  let previousKey = "";
+  for (const p of Array.from(patches.values()).sort((a, b) => a.row - b.row || a.col - b.col)) {
+    const border = { top: p.border.top, bottom: p.border.bottom, left: p.border.left, right: p.border.right };
+    const key = JSON.stringify(border);
+    const previous = result[result.length - 1];
+    if (previous && previousKey === key && previous.range.end.row === p.row && previous.range.end.col + 1 === p.col) {
+      previous.range.end.col = p.col;
+    } else {
+      result.push({ range: { start: { row: p.row, col: p.col }, end: { row: p.row, col: p.col } }, style: { border } });
+    }
+    previousKey = key;
+  }
+  return result;
+}
+
+// src/style-batch.ts
+function applyStyleBatch(edits, operations) {
+  const ranges = edits.map((edit) => normalizedStyleRange(edit.range));
+  checkedStyleRanges(ranges);
+  const before = /* @__PURE__ */ new Map();
+  for (const range of ranges) for (let row = range.start.row; row <= range.end.row; row++) {
+    for (let col = range.start.col; col <= range.end.col; col++) {
+      const key = `${row}:${col}`;
+      if (!before.has(key)) before.set(key, { cell: { row, col }, state: operations.capture({ row, col }) });
+    }
+  }
+  if (!ranges.every(operations.allow)) return null;
+  try {
+    edits.forEach((edit, index) => operations.apply({ ...edit, range: ranges[index] }));
+    return Array.from(before.values(), ({ cell: cell2, state }) => ({ cell: cell2, before: state, after: operations.capture(cell2) }));
+  } catch (error) {
+    for (const { cell: cell2, state } of before.values()) operations.restore(cell2, state);
+    throw error;
+  }
+}
+var FormattingRefusal = class extends Error {
+};
+function requireEditableStyle(own, inherited) {
+  if (own == null && inherited != null) {
+    throw new FormattingRefusal("These cells inherit row or column formatting. Edit their formatting in Excel.");
+  }
+}
+
+// src/numeric-fill.ts
+function numericSequence(seeds) {
+  if (seeds.length < 2 || seeds.some((s) => typeof s.value !== "number" || !Number.isFinite(s.value) || s.formula || s.date)) return null;
+  const numbers = seeds.map((s) => s.value);
+  const first = numbers[0];
+  const step = numbers[1] - first;
+  if (!Number.isFinite(step) || numbers.some((value, index) => {
+    const expected = first + index * step;
+    return !Number.isFinite(expected) || Math.abs(value - expected) > 1e-12 * Math.max(1, Math.abs(value), Math.abs(expected));
+  })) return null;
+  return { first, step };
+}
+function fillAxis(source, target) {
+  const rows = target.start.row !== source.start.row || target.end.row !== source.end.row;
+  const cols = target.start.col !== source.start.col || target.end.col !== source.end.col;
+  return rows === cols ? null : rows ? "row" : "col";
+}
+
 // src/source-formula-inventory.ts
 import { strFromU8, unzipSync } from "fflate";
 var spreadsheetNamespaces = /* @__PURE__ */ new Set([
@@ -190,7 +415,7 @@ function cellCalculationDiagnostic(worksheet, row, col, cachedValue, report, has
 function findDataBoundary(request, sheet, hasContent) {
   const vertical = request.direction === "ArrowUp" || request.direction === "ArrowDown";
   const step = request.direction === "ArrowUp" || request.direction === "ArrowLeft" ? -1 : 1;
-  const hidden = new Set((vertical ? sheet.hiddenRows : sheet.hiddenCols) ?? []);
+  const hidden = new Set(vertical ? [...sheet.hiddenRows ?? [], ...request.excludedRows ?? []] : sheet.hiddenCols ?? []);
   const max = vertical ? request.maxRow : request.maxCol;
   const usedMax = vertical ? sheet.maxUsedRow : sheet.maxUsedCol;
   const start = vertical ? request.cell.row : request.cell.col;
@@ -6993,8 +7218,8 @@ function getSheetsWasmModule() {
 }
 
 // src/formula-copy.ts
-var MAX_ROW = 1048576;
-var MAX_COL = 16384;
+var MAX_ROW2 = 1048576;
+var MAX_COL2 = 16384;
 var identifier = /[\p{L}\p{N}_.$\\]/u;
 var sheetRange = /:\s*[\p{L}\p{N}_.$\\]+!/uy;
 var cell = /^(\$?)([A-Za-z]{1,3})(\$?)([1-9]\d*)$/;
@@ -7015,7 +7240,7 @@ function shiftedAxis(token, delta, column) {
   const absolute = token.startsWith("$");
   const value = token.replace(/^\$/, "");
   const original = column ? columnNumber(value) : Number(value);
-  const limit = column ? MAX_COL : MAX_ROW;
+  const limit = column ? MAX_COL2 : MAX_ROW2;
   if (original > limit) return token;
   const next = original + (absolute ? 0 : delta);
   if (next < 1 || next > limit) return "#REF!";
@@ -7024,7 +7249,7 @@ function shiftedAxis(token, delta, column) {
 }
 function shiftedCell(token, rows, cols) {
   const match = cell.exec(token);
-  if (!match || columnNumber(match[2]) > MAX_COL || Number(match[4]) > MAX_ROW) return token;
+  if (!match || columnNumber(match[2]) > MAX_COL2 || Number(match[4]) > MAX_ROW2) return token;
   const col = shiftedAxis(match[1] + match[2], cols, true);
   const row = shiftedAxis(match[3] + match[4], rows, false);
   return col === "#REF!" || row === "#REF!" ? "#REF!" : col + row;
@@ -7091,6 +7316,9 @@ function fillSourceIndex(target, start, size) {
 }
 
 // src/clipboard-cells.ts
+function normalizeCellValue(value) {
+  return value ?? null;
+}
 function plainCellStyle(defaultFont) {
   return {
     font: {
@@ -7745,18 +7973,33 @@ function wraps(style) {
   return record(style, "alignment")?.wrapText === true;
 }
 function wrappedLines(text, font, widthPx, measure) {
+  const paragraphs = text.replace(/\r\n?/g, "\n").split("\n");
+  if (widthPx <= 0) return paragraphs.length;
   let lines = 0;
-  for (const paragraph of text.split("\n")) {
-    let line = "";
-    lines += 1;
-    for (const word of paragraph.split(" ")) {
-      const next = line ? `${line} ${word}` : word;
-      if (line && measure(next, font) > widthPx) {
-        lines += 1;
-        line = word;
-      } else {
-        line = next;
+  for (const paragraph of paragraphs) {
+    if (!paragraph) {
+      lines += 1;
+      continue;
+    }
+    let remaining = paragraph;
+    while (remaining) {
+      lines += 1;
+      if (measure(remaining, font) <= widthPx) break;
+      const characters = Array.from(remaining);
+      let low = 1;
+      let high = characters.length;
+      let fit = 1;
+      while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        if (measure(characters.slice(0, middle).join(""), font) <= widthPx) {
+          fit = middle;
+          low = middle + 1;
+        } else high = middle - 1;
       }
+      const prefix = characters.slice(0, fit).join("");
+      const whitespace = Math.max(prefix.lastIndexOf(" "), prefix.lastIndexOf("	"));
+      const split = whitespace > 0 ? whitespace : prefix.length;
+      remaining = remaining.slice(split).replace(/^\s+/g, "");
     }
   }
   return lines;
@@ -8690,9 +8933,6 @@ function pushHistoryEntry(stack, entry) {
     stack.shift();
   }
 }
-function normalizeCellValue(value) {
-  return value ?? "";
-}
 function cloneCellStyle(style) {
   if (!style || typeof style !== "object") {
     return style;
@@ -8709,33 +8949,16 @@ function cloneCellStyle(style) {
     return style;
   }
 }
-function coerceUserEnteredValue(value) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "";
-  }
-  if (trimmed.startsWith("'")) {
-    return trimmed.slice(1);
-  }
-  if (/^(true|false)$/i.test(trimmed)) {
-    return trimmed.toLowerCase() === "true";
-  }
-  if (/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(trimmed)) {
-    const parsed = Number(trimmed);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return value;
-}
 function applyCellMutationState(worksheet, cell2, state, plain) {
   if (state.formula) {
     worksheet.setFormula(cellAddressToA1(cell2), state.formula);
   } else {
     worksheet.setCell(cellAddressToA1(cell2), normalizeCellValue(state.value));
   }
-  if (state.style && typeof state.style === "object" || worksheet.getCellStyleAt(cell2.row, cell2.col)) {
+  if (state.style && typeof state.style === "object") {
     worksheet.setCellStyleAt(cell2.row, cell2.col, styleToRestore(state.style, plain));
+  } else {
+    worksheet.clearCellStyleAt(cell2.row, cell2.col);
   }
 }
 function escapeHtml(value) {
@@ -9138,6 +9361,7 @@ function useXlsxViewerController(options) {
     fileName,
     maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES,
     onBeforeEdit,
+    preserveViewOnFileChange = false,
     readOnly: requestedReadOnly = false,
     readOnlyAboveBytes = 0,
     showHiddenSheets = false,
@@ -9157,6 +9381,26 @@ function useXlsxViewerController(options) {
   const [isLoading, setIsLoading] = React.useState(Boolean(file ?? src));
   const [error, setError] = React.useState(null);
   const [workbook, setWorkbook] = React.useState(null);
+  const liveWorkbookRef = React.useRef(workbook);
+  liveWorkbookRef.current = workbook;
+  const committedFileRef = React.useRef(null);
+  const retiredWorkbooksRef = React.useRef([]);
+  const [retainingWorkbook, setRetainingWorkbook] = React.useState(false);
+  const canPreserveFileView = React.useMemo(() => Boolean(
+    preserveViewOnFileChange && file && !(deferLoadingAboveBytes > 0 && file.byteLength > deferLoadingAboveBytes) && !(useWorker && typeof Worker !== "undefined" && canUseConfiguredWasmSourceInWorker() && (requestedReadOnlyRef.current || readOnlyAboveBytes > 0 && file.byteLength > readOnlyAboveBytes))
+  ), [deferLoadingAboveBytes, file, preserveViewOnFileChange, readOnlyAboveBytes, useWorker]);
+  const isReplacingWorkbook = retainingWorkbook || Boolean(
+    canPreserveFileView && committedFileRef.current && file !== committedFileRef.current
+  );
+  const replacementPendingRef = React.useRef(isReplacingWorkbook);
+  replacementPendingRef.current = isReplacingWorkbook;
+  React.useEffect(() => {
+    for (const retired of retiredWorkbooksRef.current.splice(0)) retired.free();
+    if (workbook && file === committedFileRef.current) setRetainingWorkbook(false);
+  }, [file, workbook]);
+  React.useEffect(() => () => {
+    for (const retired of retiredWorkbooksRef.current.splice(0)) retired.free();
+  }, []);
   const [sheets, setSheets] = React.useState([]);
   const [chartsByWorkbookSheetIndex, setChartsByWorkbookSheetIndex] = React.useState([]);
   const [chartsheets, setChartsheets] = React.useState([]);
@@ -9172,6 +9416,12 @@ function useXlsxViewerController(options) {
   const [activeCell, setActiveCell] = React.useState(null);
   const [selection, setSelection] = React.useState(null);
   const [selections, setSelections] = React.useState([]);
+  const [reviewFilterState, setReviewFilterState] = React.useState(null);
+  const reviewFilterGeneration = React.useRef(0);
+  const clearReviewFilter = React.useCallback(() => {
+    reviewFilterGeneration.current++;
+    setReviewFilterState(null);
+  }, []);
   const selectionsRef = React.useRef(selections);
   selectionsRef.current = selections;
   React.useEffect(() => {
@@ -9208,6 +9458,9 @@ function useXlsxViewerController(options) {
   const [sortState, setSortState] = React.useState(null);
   const [forcedReadOnly, setForcedReadOnly] = React.useState(false);
   const [loadGeneration, setLoadGeneration] = React.useState(0);
+  const retryWorkbookReplacement = React.useCallback(() => {
+    if (replacementPendingRef.current) setLoadGeneration((generation) => generation + 1);
+  }, []);
   const deferredBufferRef = React.useRef(null);
   const [deferredLoadFileSize, setDeferredLoadFileSize] = React.useState(null);
   const imageAssetsRef = React.useRef(null);
@@ -9223,7 +9476,7 @@ function useXlsxViewerController(options) {
   const workerCellSnapshotCacheRef = React.useRef(/* @__PURE__ */ new Map());
   const displayFileName = React.useMemo(() => resolveDisplayFileName(src, fileName), [fileName, src]);
   const shouldDeferLoading = deferLoadingAboveBytes > 0;
-  const readOnly = requestedReadOnly || forcedReadOnly || isWorkerBacked;
+  const readOnly = requestedReadOnly || forcedReadOnly || isWorkerBacked || isReplacingWorkbook;
   const canResizeReadOnly = requestedReadOnly && allowResizeInReadOnly && !forcedReadOnly;
   const workerSupported = useWorker && typeof Worker !== "undefined" && canUseConfiguredWasmSourceInWorker();
   const shouldForceReadOnlyForBuffer = React.useCallback((bufferByteLength) => !requestedReadOnlyRef.current && readOnlyAboveBytes > 0 && bufferByteLength > readOnlyAboveBytes, [readOnlyAboveBytes]);
@@ -9418,15 +9671,13 @@ function useXlsxViewerController(options) {
     externalValues.loaded(externalFnValuesRef.current);
     const nextParsedWorkbook = await parseWorkbookBuffer(buffer, externalFnValuesRef.current, autoCalculateFormulaLimitRef.current);
     const bytes = new Uint8Array(buffer);
-    const nextImageAssets = loadWorkbookImageAssets(
-      bytes,
-      nextParsedWorkbook.workbook,
-      shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing)
-    );
-    return {
-      imageAssets: nextImageAssets,
-      parsedWorkbook: nextParsedWorkbook
-    };
+    try {
+      const nextImageAssets = loadWorkbookImageAssets(bytes, nextParsedWorkbook.workbook, shouldSkipXmlParsingForWorkbook(bytes, skipXmlParsing));
+      return { imageAssets: nextImageAssets, parsedWorkbook: nextParsedWorkbook };
+    } catch (error2) {
+      nextParsedWorkbook.workbook.free();
+      throw error2;
+    }
   }, [skipXmlParsing]);
   const refreshWorkbookState = React.useCallback((targetWorkbook) => {
     const currentFormControls = imageAssetsRef.current?.formControlsByWorkbookSheetIndex ?? [];
@@ -9469,6 +9720,8 @@ function useXlsxViewerController(options) {
     if (!file && !src) {
       workbookGenerationRef.current += 1;
       calculationAttemptRef.current += 1;
+      committedFileRef.current = null;
+      setRetainingWorkbook(false);
       workbookBufferRef.current = null;
       sourceFormulaCountRef.current = null;
       hasCalculatedValuesRef.current = false;
@@ -9504,6 +9757,10 @@ function useXlsxViewerController(options) {
       setRevision(0);
       return;
     }
+    const preserveView = Boolean(
+      canPreserveFileView && committedFileRef.current && liveWorkbookRef.current && !workerClientRef.current
+    );
+    setRetainingWorkbook(preserveView);
     let isCurrent = true;
     workbookGenerationRef.current += 1;
     hasCalculatedValuesRef.current = false;
@@ -9512,30 +9769,35 @@ function useXlsxViewerController(options) {
     const abortController = new AbortController();
     setIsLoading(true);
     setError(null);
-    clearImageAssets();
-    clearChartAssets();
-    setWorkerTablesByWorkbookSheetIndex([]);
-    setIsWorkerBacked(false);
-    deferredBufferRef.current = null;
-    setDeferredLoadFileSize(null);
-    setActiveSheetIndexState(0);
-    setActiveTabIndexState(0);
-    setActiveCell(null);
-    setSelection(null);
-    setSelectedChartId(null);
-    setSelectedChartElement(null);
-    setSelectedImageId(null);
-    selectionAnchorRef.current = null;
+    chartLoadRequestTokenRef.current += 1;
+    chartDisplayFallbackCleanupRef.current?.();
+    chartDisplayFallbackCleanupRef.current = null;
     undoStackRef.current = [];
     redoStackRef.current = [];
     setHistoryRevision(0);
-    setShouldAutoCalculate(false);
-    workerCellSnapshotCacheRef.current.clear();
-    setWorkerCellSnapshotRevision(0);
-    setSortState(null);
-    setZoomScaleOverridesByTabId({});
-    setRevision(0);
-    disposeWorkerClient();
+    if (!preserveView) {
+      clearImageAssets();
+      clearChartAssets();
+      setWorkerTablesByWorkbookSheetIndex([]);
+      setIsWorkerBacked(false);
+      deferredBufferRef.current = null;
+      setDeferredLoadFileSize(null);
+      setActiveSheetIndexState(0);
+      setActiveTabIndexState(0);
+      setActiveCell(null);
+      setSelection(null);
+      setSelectedChartId(null);
+      setSelectedChartElement(null);
+      setSelectedImageId(null);
+      selectionAnchorRef.current = null;
+      setShouldAutoCalculate(false);
+      workerCellSnapshotCacheRef.current.clear();
+      setWorkerCellSnapshotRevision(0);
+      setSortState(null);
+      setZoomScaleOverridesByTabId({});
+      setRevision(0);
+      disposeWorkerClient();
+    }
     void resolveWorkbookBuffer({ file, src }, abortController.signal).then(async (buffer) => {
       if (!isCurrent || abortController.signal.aborted) {
         return;
@@ -9611,22 +9873,35 @@ function useXlsxViewerController(options) {
       const { imageAssets: nextImageAssets, parsedWorkbook: nextParsedWorkbook } = await loadWorkbookOnMainThread(buffer);
       if (!isCurrent || abortController.signal.aborted) {
         revokeWorkbookImageAssets(nextImageAssets);
+        nextParsedWorkbook.workbook.free();
         return;
+      }
+      let nextSheets;
+      try {
+        nextSheets = buildSheetList(
+          nextParsedWorkbook.workbook,
+          nextImageAssets.sheetStatesByWorkbookSheetIndex,
+          nextImageAssets.themePalette,
+          nextImageAssets.styleById,
+          nextImageAssets.namedCellStyleByName,
+          nextImageAssets.tableStyleByName,
+          showHiddenSheets
+        );
+      } catch (error2) {
+        revokeWorkbookImageAssets(nextImageAssets);
+        nextParsedWorkbook.workbook.free();
+        throw error2;
+      }
+      const previousWorkbook = liveWorkbookRef.current;
+      committedFileRef.current = file ?? buffer;
+      if (preserveView && previousWorkbook && previousWorkbook !== nextParsedWorkbook.workbook) {
+        retiredWorkbooksRef.current.push(previousWorkbook);
       }
       setImageAssets(nextImageAssets);
       setWorkbook(nextParsedWorkbook.workbook);
       sourceFormulaCountRef.current = nextParsedWorkbook.calculation.sourceFormulaCount;
       hasCalculatedValuesRef.current = nextParsedWorkbook.calculation.status === "complete" || nextParsedWorkbook.calculation.status === "partial";
       applyCalculation(nextParsedWorkbook.calculation, loadAttempt);
-      const nextSheets = buildSheetList(
-        nextParsedWorkbook.workbook,
-        nextImageAssets.sheetStatesByWorkbookSheetIndex,
-        nextImageAssets.themePalette,
-        nextImageAssets.styleById,
-        nextImageAssets.namedCellStyleByName,
-        nextImageAssets.tableStyleByName,
-        showHiddenSheets
-      );
       setSheets(nextSheets);
       startChartDisplayHydration(buffer, nextParsedWorkbook.workbook, nextSheets);
       setShouldAutoCalculate(nextParsedWorkbook.shouldAutoCalculate);
@@ -9638,11 +9913,13 @@ function useXlsxViewerController(options) {
       if (!isCurrent || isAbortError(nextError)) {
         return;
       }
-      setWorkbook(null);
-      setSheets([]);
-      clearChartAssets();
-      setWorkerTablesByWorkbookSheetIndex([]);
-      clearImageAssets();
+      if (!preserveView) {
+        setWorkbook(null);
+        setSheets([]);
+        clearChartAssets();
+        setWorkerTablesByWorkbookSheetIndex([]);
+        clearImageAssets();
+      }
       setShouldAutoCalculate(false);
       setIsWorkerBacked(false);
       setSortState(null);
@@ -9665,6 +9942,7 @@ function useXlsxViewerController(options) {
     deferLoadingAboveBytes,
     disposeWorkerClient,
     file,
+    canPreserveFileView,
     getWorkerClient,
     hasIncompleteWorkerChartSnapshot,
     loadWorkbookOnMainThread,
@@ -9685,7 +9963,17 @@ function useXlsxViewerController(options) {
     }
   }, [forcedReadOnly, isLoading, isWorkerBacked, requestedReadOnly]);
   const activeTab = tabs[activeTabIndex] ?? null;
-  const activeSheet = activeTab?.kind === "sheet" ? sheets[activeTab.sheetIndex ?? -1] ?? null : null;
+  const sourceActiveSheet = activeTab?.kind === "sheet" ? sheets[activeTab.sheetIndex ?? -1] ?? null : null;
+  const reviewFilter = readOnly && reviewFilterState?.sheet === sourceActiveSheet && reviewFilterState.revision === revision ? reviewFilterState.filter : null;
+  const activeSheet = React.useMemo(
+    () => sourceActiveSheet && reviewFilter ? projectReviewRows(sourceActiveSheet, reviewFilter.excludedRows) : sourceActiveSheet,
+    [sourceActiveSheet, reviewFilter]
+  );
+  const projectedSheets = React.useMemo(
+    () => sheets.map((sheet) => sheet === sourceActiveSheet && activeSheet ? activeSheet : sheet),
+    [sheets, sourceActiveSheet, activeSheet]
+  );
+  React.useEffect(() => clearReviewFilter(), [sourceActiveSheet, revision, readOnly, clearReviewFilter]);
   const activeSheetRef = React.useRef(activeSheet);
   activeSheetRef.current = activeSheet;
   const deferredMetadataCell = React.useDeferredValue(activeCell);
@@ -9985,19 +10273,21 @@ function useXlsxViewerController(options) {
     }
   }, [applyCalculation, beginCalculation, shouldAutoCalculate]);
   const getActiveWorksheet = React.useCallback(() => {
-    if (!workbook || !activeSheet) {
+    if (!workbook || !activeSheet || liveWorkbookRef.current !== workbook) {
       return null;
     }
     return workbook.getSheet(activeSheet.workbookSheetIndex);
   }, [activeSheet, workbook]);
   const allowEdit = React.useCallback((edit) => {
+    if (replacementPendingRef.current || liveWorkbookRef.current !== workbook) return false;
     const full = { ...edit, sheetIndex: activeSheet?.workbookSheetIndex ?? 0 };
     const hook = onBeforeEditRef.current;
-    return hook ? hook(full) : !full.formulaProblem;
-  }, [activeSheet]);
+    const allowed = hook ? hook(full) : !full.formulaProblem;
+    return allowed && !full.rejectionReason;
+  }, [activeSheet, workbook]);
   const getFormControlWorksheet = React.useCallback((sheetIndex = activeSheetIndex) => {
     const targetSheet = sheets[sheetIndex];
-    if (!workbook || !targetSheet) {
+    if (!workbook || !targetSheet || liveWorkbookRef.current !== workbook) {
       return null;
     }
     try {
@@ -10025,6 +10315,7 @@ function useXlsxViewerController(options) {
   }, [getWorkerClient, isWorkerBacked]);
   const navigateDataBoundary = React.useCallback(async (request) => {
     if (!activeSheet) return request.cell;
+    request = { ...request, excludedRows: activeSheet.excludedRows };
     if (isWorkerBacked) return getWorkerClient().findDataBoundary(activeSheet.workbookSheetIndex, request);
     const worksheet = getActiveWorksheet();
     if (!worksheet) return request.cell;
@@ -10040,6 +10331,43 @@ function useXlsxViewerController(options) {
     }
     return getWorkerClient().getRowsBatch(workbookSheetIndex, startRow, rowCount);
   }, [getWorkerClient, isWorkerBacked]);
+  const applyReviewFilter = React.useCallback(async (input) => {
+    if (replacementPendingRef.current || liveWorkbookRef.current !== workbook) return "Wait for the workbook to finish updating.";
+    if (!readOnly || !sourceActiveSheet) return "Review filters are available while viewing a worksheet.";
+    const problem = reviewFilterProblem(input, sourceActiveSheet);
+    if (problem) return problem;
+    const generation = ++reviewFilterGeneration.current;
+    const current = () => generation === reviewFilterGeneration.current;
+    try {
+      const result = await scanReviewFilter(input, new Set(sourceActiveSheet.hiddenRows ?? []), async (start, count) => {
+        if (isWorkerBacked) {
+          const rows = await getRowsBatchAsync(sourceActiveSheet.workbookSheetIndex, start, count);
+          if (!rows) throw new Error("The worksheet values could not be read.");
+          return new Map([...reviewColumnValues(rows, input.column)].map(([row, value]) => [row, decodeHtmlEntities(value)]));
+        }
+        if (!workbook) throw new Error("The worksheet values could not be read.");
+        const worksheet = workbook.getSheet(sourceActiveSheet.workbookSheetIndex);
+        try {
+          const values = /* @__PURE__ */ new Map();
+          for (let row = start; row < start + count; row++) {
+            values.set(row, decodeHtmlEntities(worksheet.getFormattedValueAt(row, input.column) ?? ""));
+          }
+          return values;
+        } finally {
+          worksheet.free();
+        }
+      }, current);
+      if (!result || !current()) return "The filter was canceled because the worksheet changed.";
+      setReviewFilterState({ sheet: sourceActiveSheet, revision, filter: result });
+      setActiveCell(null);
+      setSelection(null);
+      setSelections([]);
+      selectionAnchorRef.current = null;
+      return null;
+    } catch (error2) {
+      return error2 instanceof Error ? error2.message : "The worksheet values could not be read.";
+    }
+  }, [getRowsBatchAsync, isWorkerBacked, readOnly, revision, sourceActiveSheet, workbook]);
   const visibleSheetIndexByWorkbookSheetIndex = React.useMemo(
     () => new Map(sheets.map((sheet, index) => [sheet.workbookSheetIndex, index])),
     [sheets]
@@ -10309,6 +10637,7 @@ function useXlsxViewerController(options) {
       return null;
     }
     const normalized = normalizeRange(targetRange);
+    if (reviewFilter?.excludedRows.some((row) => row >= normalized.start.row && row <= normalized.end.row)) return null;
     const rows = [];
     const htmlRows = [];
     const styleTable = clipboardStyleTable();
@@ -10417,7 +10746,7 @@ function useXlsxViewerController(options) {
       structured: JSON.stringify(payload),
       text: rows.join("\n")
     };
-  }, [activeCell, getActiveWorksheet, getCellDisplayValue2, selection]);
+  }, [activeCell, getActiveWorksheet, getCellDisplayValue2, reviewFilter, selection]);
   React.useEffect(() => {
     if (!isWorkerBacked || !deferredMetadataSheet || !deferredMetadataCell) {
       return;
@@ -10536,7 +10865,7 @@ function useXlsxViewerController(options) {
     setRevision((current) => current + 1);
   }, [applyCalculation, beginCalculation, setChartAssets, setImageAssets]);
   const applyCellEditHistoryEntry = React.useCallback((entry, direction) => {
-    if (!workbook) {
+    if (!workbook || replacementPendingRef.current || liveWorkbookRef.current !== workbook) {
       return;
     }
     const worksheet = workbook.getSheet(entry.sheetIndex);
@@ -10557,7 +10886,7 @@ function useXlsxViewerController(options) {
     isApplyingHistoryRef.current = false;
   }, [maybeRecalculateWorkbook, refreshWorkbookState, sheets, workbook, plainStyle]);
   const applyRangeEditHistoryEntry = React.useCallback((entry, direction) => {
-    if (!workbook) {
+    if (!workbook || replacementPendingRef.current || liveWorkbookRef.current !== workbook) {
       return;
     }
     const worksheet = workbook.getSheet(entry.sheetIndex);
@@ -10839,7 +11168,7 @@ function useXlsxViewerController(options) {
     downloadText(workbook.saveCsvString(), `${fileStem(displayFileName)}-${activeSheetName}.csv`, CSV_MIME_TYPE);
   }, [activeSheet?.name, displayFileName, workbook]);
   const recalculate = React.useCallback((values) => {
-    if (isLoading || !isWorkerBacked && !workbook) return;
+    if (isLoading || replacementPendingRef.current || liveWorkbookRef.current !== workbook || !isWorkerBacked && !workbook) return;
     const externalFnValues2 = externalValues.recalculated(values);
     const attempt = beginCalculation();
     const generation = workbookGenerationRef.current;
@@ -11249,6 +11578,7 @@ function useXlsxViewerController(options) {
     return true;
   }, [allowEdit, getChartById, readOnly, updateChart, workbook]);
   const selectCell = React.useCallback((cell2, options2) => {
+    if (reviewFilter?.excludedRows.includes(cell2.row)) clearReviewFilter();
     setSelectedChartId(null);
     setSelectedChartElement(null);
     setSelectedImageId(null);
@@ -11266,7 +11596,7 @@ function useXlsxViewerController(options) {
       if (!options2?.append) return [single];
       return [...prev.filter((range) => !rangesEqual(range, single)), single];
     });
-  }, []);
+  }, [clearReviewFilter, reviewFilter]);
   const revealCellImplRef = React.useRef(null);
   const registerRevealCellImpl = React.useCallback(
     (impl) => {
@@ -11276,6 +11606,11 @@ function useXlsxViewerController(options) {
   );
   const revealCell = React.useCallback(
     (cell2) => {
+      if (reviewFilter?.excludedRows.includes(cell2.row)) {
+        clearReviewFilter();
+        setTimeout(() => revealCellImplRef.current?.(cell2), 0);
+        return;
+      }
       const impl = revealCellImplRef.current;
       if (impl) {
         impl(cell2);
@@ -11283,11 +11618,12 @@ function useXlsxViewerController(options) {
         selectCell(cell2);
       }
     },
-    [selectCell]
+    [clearReviewFilter, reviewFilter, selectCell]
   );
   const selectRange = React.useCallback(
     (range, options2) => {
       const normalized = normalizeRange(range);
+      if (reviewFilter?.excludedRows.includes(normalized.start.row) || reviewFilter?.excludedRows.includes(normalized.end.row)) clearReviewFilter();
       setSelectedChartId(null);
       setSelectedChartElement(null);
       setSelectedImageId(null);
@@ -11317,7 +11653,7 @@ function useXlsxViewerController(options) {
         return [...prev.filter((range2) => !rangesEqual(range2, normalized)), normalized];
       });
     },
-    []
+    [clearReviewFilter, reviewFilter]
   );
   const clearSelection = React.useCallback(() => {
     selectionAnchorRef.current = null;
@@ -11434,6 +11770,10 @@ function useXlsxViewerController(options) {
     }
     const nextValue = coerceUserEnteredValue(value);
     worksheet.setCell(cellAddressToA1(cell2), nextValue);
+    const percentFormat = enteredPercentageFormat(value, before.style);
+    if (percentFormat) {
+      worksheet.setCellStyleAt(cell2.row, cell2.col, { numberFormat: { formatType: "custom", formatString: percentFormat } });
+    }
     const after = captureCellMutationState(cell2);
     if (!after) {
       return;
@@ -11490,49 +11830,45 @@ function useXlsxViewerController(options) {
     }
     setCellStyle(activeCell, style);
   }, [activeCell, setCellStyle]);
-  const setRangeStyle = React.useCallback((range, style) => {
+  const setRangeStyles = React.useCallback((edits) => {
     const worksheet = getActiveWorksheet();
-    if (readOnly || !worksheet || !workbook) {
-      return;
-    }
-    const normalized = normalizeRange(range);
-    if (!allowEdit({ kind: "style", range: normalized })) {
-      return;
-    }
-    const beforeStates = [];
-    for (let row = normalized.start.row; row <= normalized.end.row; row += 1) {
-      for (let col = normalized.start.col; col <= normalized.end.col; col += 1) {
-        const cell2 = { row, col };
-        const before = captureCellMutationState(cell2);
-        if (!before) {
-          continue;
-        }
-        beforeStates.push({
-          before,
-          cell: cell2
-        });
-      }
-    }
-    if (beforeStates.length === 0) {
-      return;
-    }
-    worksheet.setRangeStyle(rangeToA1(normalized), style);
-    const mutations = [];
-    for (const mutation of beforeStates) {
-      const after = captureCellMutationState(mutation.cell);
-      if (!after) {
-        continue;
-      }
-      mutations.push({
-        after,
-        before: mutation.before,
-        cell: mutation.cell
+    if (readOnly || !worksheet || !workbook || edits.length === 0) return null;
+    let mutations;
+    try {
+      mutations = applyStyleBatch(edits, {
+        allow: (range) => allowEdit({ kind: "style", range }),
+        capture: (cell2) => {
+          const state = captureCellMutationState(cell2);
+          if (!state) throw new Error("Could not capture cell formatting.");
+          requireEditableStyle(state.style, resolveInheritedCellStyle(activeSheet, cell2.row, cell2.col));
+          return state;
+        },
+        apply: (edit) => worksheet.setRangeStyle(rangeToA1(edit.range), edit.style),
+        restore: (cell2, state) => applyCellMutationState(worksheet, cell2, state, plainStyle())
       });
+    } catch (error2) {
+      if (!(error2 instanceof FormattingRefusal)) throw error2;
+      allowEdit({ kind: "style", rejectionReason: error2.message });
+      return error2.message;
     }
+    if (!mutations || mutations.length === 0) return null;
     refreshWorkbookState(workbook);
     recordRangeEditHistory(mutations, selection, activeCell);
-  }, [activeCell, allowEdit, captureCellMutationState, getActiveWorksheet, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
-  const fillSelection = React.useCallback((targetRange) => {
+    return null;
+  }, [activeCell, activeSheet, allowEdit, captureCellMutationState, getActiveWorksheet, plainStyle, readOnly, recordRangeEditHistory, refreshWorkbookState, selection, workbook]);
+  const setRangeStyle = React.useCallback((range, style) => {
+    setRangeStyles([{ range, style }]);
+  }, [setRangeStyles]);
+  const setBorders = React.useCallback((ranges, preset) => {
+    const worksheet = getActiveWorksheet();
+    if (readOnly || !worksheet || !workbook) return null;
+    try {
+      return setRangeStyles(borderPlan(ranges, worksheet.mergedRegions, preset));
+    } catch (error2) {
+      return error2 instanceof Error ? error2.message : "Could not apply borders. Try again.";
+    }
+  }, [getActiveWorksheet, readOnly, setRangeStyles, workbook]);
+  const fillSelection = React.useCallback((targetRange, options2 = {}) => {
     const worksheet = getActiveWorksheet();
     if (readOnly || !worksheet || !workbook || !selection) {
       return;
@@ -11551,6 +11887,33 @@ function useXlsxViewerController(options) {
       formulaDelta: () => formulaDelta(fillWrites(sourceRange, nextRange, hasFormula), hasFormula)
     })) {
       return;
+    }
+    const axis = fillAxis(sourceRange, nextRange);
+    const sequences = /* @__PURE__ */ new Map();
+    const merged = mergesTouching(worksheet.mergedRegions, nextRange).length > 0;
+    if (axis && options2.mode !== "copy" && !merged) {
+      const laneStart = axis === "row" ? sourceRange.start.col : sourceRange.start.row;
+      const laneEnd = axis === "row" ? sourceRange.end.col : sourceRange.end.row;
+      const start = axis === "row" ? sourceRange.start.row : sourceRange.start.col;
+      const end = axis === "row" ? sourceRange.end.row : sourceRange.end.col;
+      for (let lane = laneStart; lane <= laneEnd; lane++) {
+        const seeds = [];
+        for (let index = start; index <= end; index++) {
+          const row = axis === "row" ? index : lane;
+          const col = axis === "row" ? lane : index;
+          const rawStyle = worksheet.getCellStyleAt(row, col);
+          seeds.push({ value: worksheet.getCellAt(row, col).toJs(), formula: worksheet.getFormulaAt(row, col), date: rawStyle?.numberFormat?.isDateFormat });
+        }
+        const sequence = numericSequence(seeds);
+        if (sequence) sequences.set(lane, sequence);
+      }
+    }
+    if (options2.mode === "series" && sequences.size === 0) return;
+    for (const sequence of sequences.values()) {
+      const start = axis === "row" ? sourceRange.start.row : sourceRange.start.col;
+      for (const target of axis === "row" ? [nextRange.start.row, nextRange.end.row] : [nextRange.start.col, nextRange.end.col]) {
+        if (!Number.isFinite(sequence.first + (target - start) * sequence.step)) return;
+      }
     }
     const plain = plainStyle();
     const mutations = [];
@@ -11571,7 +11934,9 @@ function useXlsxViewerController(options) {
         if (sourceFormula) {
           worksheet.setFormula(cellAddressToA1(targetCell), copyFormula(sourceFormula, row - sourceRow, col - sourceCol));
         } else {
-          const sourceValue = normalizeCellValue(worksheet.getCellAt(sourceRow, sourceCol).toJs());
+          const sequence = sequences.get(axis === "row" ? sourceCol : sourceRow);
+          const offset = axis === "row" ? row - sourceRange.start.row : col - sourceRange.start.col;
+          const sourceValue = sequence ? sequence.first + offset * sequence.step : normalizeCellValue(worksheet.getCellAt(sourceRow, sourceCol).toJs());
           worksheet.setCell(cellAddressToA1(targetCell), sourceValue);
         }
         worksheet.setCellStyleAt(targetCell.row, targetCell.col, styleToRestore(sourceStyle, plain));
@@ -11774,6 +12139,10 @@ function useXlsxViewerController(options) {
         } else {
           const nextValue = coerceUserEnteredValue(rawValue);
           worksheet.setCell(cellAddressToA1(nextCell), nextValue);
+          const percentFormat = enteredPercentageFormat(rawValue, before.style);
+          if (percentFormat) {
+            worksheet.setCellStyleAt(nextCell.row, nextCell.col, { numberFormat: { formatType: "custom", formatString: percentFormat } });
+          }
           const after = captureCellMutationState(nextCell);
           if (!after) {
             continue;
@@ -12014,6 +12383,9 @@ function useXlsxViewerController(options) {
   }, [allowEdit, applyCellEditHistoryEntry, applyRangeEditHistoryEntry, createHistoryEntry, readOnly, restoreHistoryEntry, workbook]);
   return React.useMemo(
     () => ({
+      reviewFilter,
+      applyReviewFilter,
+      clearReviewFilter,
       activeCell,
       activeCellAddress,
       activeSheet,
@@ -12069,6 +12441,8 @@ function useXlsxViewerController(options) {
       images,
       isLoadDeferred,
       isLoading,
+      isReplacingWorkbook,
+      retryWorkbookReplacement,
       isChartsLoading,
       isWorkerBacked,
       mergeSelection,
@@ -12099,6 +12473,8 @@ function useXlsxViewerController(options) {
       setCellStyle,
       setCellValue,
       setRangeStyle,
+      setRangeStyles,
+      setBorders,
       setSelectedFormula,
       setZoomScale,
       setChartRect,
@@ -12130,7 +12506,7 @@ function useXlsxViewerController(options) {
       setSelectedCellFormula,
       setSelectedCellStyle,
       setSelectedCellValue,
-      sheets,
+      sheets: projectedSheets,
       shapes,
       src,
       sortState,
@@ -12147,6 +12523,10 @@ function useXlsxViewerController(options) {
       zoomScale
     }),
     [
+      reviewFilter,
+      applyReviewFilter,
+      clearReviewFilter,
+      projectedSheets,
       activeCell,
       activeCellAddress,
       activeSheet,
@@ -12200,6 +12580,8 @@ function useXlsxViewerController(options) {
       images,
       isLoadDeferred,
       isLoading,
+      isReplacingWorkbook,
+      retryWorkbookReplacement,
       isChartsLoading,
       isWorkerBacked,
       mergeSelection,
@@ -12228,6 +12610,8 @@ function useXlsxViewerController(options) {
       setCellStyle,
       setCellValue,
       setRangeStyle,
+      setRangeStyles,
+      setBorders,
       setSelectedFormula,
       setZoomScale,
       setChartRect,
@@ -25693,7 +26077,7 @@ function XlsxGrid({
     [activeSheetIndex, getActiveWorksheet, revision]
   );
   const mergedRegions = React4.useMemo(() => {
-    const regions = [];
+    const regions2 = [];
     const rawMergedRegions = Array.isArray(worksheet?.mergedRegions) ? worksheet.mergedRegions : [];
     for (const entry of rawMergedRegions) {
       const region = asRecord(entry);
@@ -25704,12 +26088,12 @@ function XlsxGrid({
       if (startRow === null || startCol === null || endRow === null || endCol === null) {
         continue;
       }
-      regions.push({
+      regions2.push({
         end: { col: endCol, row: endRow },
         start: { col: startCol, row: startRow }
       });
     }
-    return regions;
+    return regions2;
   }, [worksheet]);
   const mergedSecondaryAnchorMap = React4.useMemo(() => {
     const map = /* @__PURE__ */ new Map();
@@ -25750,7 +26134,7 @@ function XlsxGrid({
       INITIAL_WORKER_GRID_COLS
     )
   );
-  const hiddenRowSet = React4.useMemo(() => new Set(activeSheet?.hiddenRows ?? []), [activeSheet?.hiddenRows]);
+  const hiddenRowSet = React4.useMemo(() => /* @__PURE__ */ new Set([...activeSheet?.hiddenRows ?? [], ...activeSheet?.excludedRows ?? []]), [activeSheet?.hiddenRows, activeSheet?.excludedRows]);
   const hiddenColSet = React4.useMemo(() => new Set(activeSheet?.hiddenCols ?? []), [activeSheet?.hiddenCols]);
   const displayDefaultRowHeight = DEFAULT_ROW_HEIGHT2 * zoomFactor;
   const displayDefaultColWidth = DEFAULT_COL_WIDTH2 * zoomFactor;
@@ -26825,7 +27209,7 @@ function XlsxGrid({
     const bounds = `${activeSheet?.minUsedRow ?? -1}|${activeSheet?.minUsedCol ?? -1}`;
     const last = initialScrollRef.current;
     initialScrollRef.current = { sheet, bounds };
-    if (last?.sheet === sheet && (last.bounds === bounds || !readOnly)) {
+    if (last?.sheet === sheet && (last.bounds === bounds || !readOnly || controller.isReplacingWorkbook)) {
       return;
     }
     const initialUsedRow = resolveFirstUsedVisibleIndex(visibleRows, activeSheet?.minUsedRow ?? -1);
@@ -26855,6 +27239,7 @@ function XlsxGrid({
     actualColPrefixSums,
     actualRowPrefixSums,
     colVirtualizer,
+    controller.isReplacingWorkbook,
     displayFileName,
     frozenCols.length,
     isWorkerBacked,
@@ -29124,7 +29509,7 @@ function XlsxGrid({
       setFillPreviewRange(null);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      fillSelection(nextRange);
+      fillSelection(nextRange, { mode: event.ctrlKey || event.metaKey ? "copy" : "auto" });
       fillDragCleanupRef.current?.();
       fillDragCleanupRef.current = null;
     };
@@ -31173,13 +31558,13 @@ function XlsxGrid({
   const handleChartElementDoubleClick = React4.useCallback((selection2) => {
     selectChartElement(selection2);
   }, [selectChartElement]);
-  if (isLoading) {
+  if (isLoading && !controller.isReplacingWorkbook) {
     return /* @__PURE__ */ jsx4(Fragment4, { children: renderLoading(loadingComponent, loadingState, palette) });
   }
   if (isLoadDeferred) {
     return /* @__PURE__ */ jsx4(Fragment4, { children: renderDeferredLoad({ ...controller, canLoadDeferred, continueDeferredLoad, deferredLoadFileSize, isLoadDeferred }, palette) });
   }
-  if (error) {
+  if (error && !controller.isReplacingWorkbook) {
     if (error instanceof XlsxFileSizeLimitExceededError) {
       return /* @__PURE__ */ jsx4(Fragment4, { children: renderFileTooLarge(
         fileTooLargeState,
@@ -33034,6 +33419,10 @@ function XlsxGrid({
       const clipboard = event.clipboardData;
       const clipboardData = getClipboardData();
       if (!clipboardData) {
+        if (controller.reviewFilter) {
+          event.preventDefault();
+          onClipboardError?.("Copy one visible row or a range without filtered gaps, or clear the review filter.");
+        }
         return;
       }
       event.preventDefault();
@@ -33966,6 +34355,8 @@ function useXlsxViewerEditing() {
     setCellStyle,
     setCellValue,
     setRangeStyle,
+    setRangeStyles,
+    setBorders,
     setSelectedFormula,
     setSelectedCellFormula,
     setSelectedCellStyle,
@@ -34010,6 +34401,8 @@ function useXlsxViewerEditing() {
       setCellStyle,
       setCellValue,
       setRangeStyle,
+      setRangeStyles,
+      setBorders,
       setSelectedFormula,
       setSelectedCellFormula,
       setSelectedCellStyle,
@@ -34053,6 +34446,8 @@ function useXlsxViewerEditing() {
       setCellStyle,
       setCellValue,
       setRangeStyle,
+      setRangeStyles,
+      setBorders,
       setSelectedFormula,
       setSelectedCellFormula,
       setSelectedCellStyle,

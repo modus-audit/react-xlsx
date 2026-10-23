@@ -1,6 +1,6 @@
 {
   "name": "@extend-ai/react-xlsx",
-  "version": "0.16.4-modus.35",
+  "version": "0.16.4-modus.36",
   "description": "React components and hooks for viewing XLSX workbooks",
   "license": "MIT",
   "keywords": [
@@ -49,7 +49,7 @@
     "react-dom": ">=18"
   },
   "dependencies": {
-    "@dukelib/sheets-wasm": "https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.2.tar.gz",
+    "@dukelib/sheets-wasm": "https://github.com/modus-audit/duke-sheets/archive/refs/tags/wasm-dist-0.1.23-modus.3.tar.gz",
     "@tanstack/react-virtual": "^3.13.12",
     "d3-geo": "^3.1.1",
     "d3-hierarchy": "^3.1.2",
@@ -61,6 +61,6 @@
     "us-atlas": "^3.0.1",
     "world-atlas": "^2.0.2"
   },
-  "modusSource": "a2b9325ec90d53c4e1d77e22754e209c3edec90e",
+  "modusSource": "809a8dadaea5e9eb1e8c1617bccc3b4662187f03",
   "modusUpstream": "873cd65bf3d04c4d1ff4f61263c7a2544b6571d0"
 }
