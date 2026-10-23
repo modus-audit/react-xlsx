@@ -58,20 +58,33 @@ function wraps(style: unknown): boolean {
   return record(style, "alignment")?.wrapText === true;
 }
 
-/** Lines `text` takes when wrapped at word breaks within `widthPx`. */
+/** Count word-wrapped lines, breaking oversized tokens just as the grid's canvas renderer does. */
 function wrappedLines(text: string, font: string, widthPx: number, measure: MeasureText): number {
+  const paragraphs = text.replace(/\r\n?/g, "\n").split("\n");
+  if (widthPx <= 0) return paragraphs.length;
   let lines = 0;
-  for (const paragraph of text.split("\n")) {
-    let line = "";
-    lines += 1;
-    for (const word of paragraph.split(" ")) {
-      const next = line ? `${line} ${word}` : word;
-      if (line && measure(next, font) > widthPx) {
-        lines += 1;
-        line = word;
-      } else {
-        line = next;
+  for (const paragraph of paragraphs) {
+    if (!paragraph) { lines += 1; continue; }
+    let remaining = paragraph;
+    while (remaining) {
+      lines += 1;
+      if (measure(remaining, font) <= widthPx) break;
+      // Count Unicode code points so a split cannot leave half a surrogate pair on either line.
+      const characters = Array.from(remaining);
+      let low = 1;
+      let high = characters.length;
+      let fit = 1;
+      while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        if (measure(characters.slice(0, middle).join(""), font) <= widthPx) {
+          fit = middle;
+          low = middle + 1;
+        } else high = middle - 1;
       }
+      const prefix = characters.slice(0, fit).join("");
+      const whitespace = Math.max(prefix.lastIndexOf(" "), prefix.lastIndexOf("\t"));
+      const split = whitespace > 0 ? whitespace : prefix.length;
+      remaining = remaining.slice(split).replace(/^\s+/g, "");
     }
   }
   return lines;

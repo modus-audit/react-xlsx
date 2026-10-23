@@ -1,8 +1,11 @@
 # Modus React XLSX viewer
 
-Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.2` WASM engine.
+Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.3` WASM engine.
 
 Preserved behavior:
+
+- `setRangeStyles` preflights all ranges, captures overlapping cells once, rolls back on mutation failure, and records one undo step. `setBorders(ranges, preset)` supports bottom/double-bottom/outside/all/clear using black lines, merged-cell perimeters, and synchronized shared edges (including adjacent cells, which also pass the host edit policy). Partial merged-cell selections return an error string. Synchronous formatting is bounded at 250,000 cells per batch.
+- Fill-handle drags extend arithmetic sequences of two or more finite numeric constants in either axis and direction; individual lanes with formulas, text, dates, blanks, or contradictory seeds retain copy behavior. Relative formula relocation and copied styles are unchanged. Ctrl/Cmd-drag or `fillSelection(range, {mode: "copy"})` explicitly repeats source cells. Series inference is skipped for merged ranges.
 
 - Error literals such as `#REF!` do not count as missing-sheet references during calculation or formula entry. Other formulas recalculate beside them while genuine missing-sheet references retain their guard.
 
@@ -45,7 +48,7 @@ The app configures `initWasm` with a bundler-resolved asset URL and explicitly c
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/excel-viewer-e2e`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.35`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.36`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 
@@ -92,6 +95,27 @@ coverage and values retained from an earlier calculation have conservative `unkn
 
 Copy carries the original cell address so relative A1 references relocate on paste; absolute and mixed references retain their locked axes. One lexical helper also serves fill in every direction, preserving quoted strings, sheet qualifiers, names and structured references. The calculator and WASM engine remain unchanged.
 
+## Reliable editing additions (.30)
+
+The engine pin is 0.1.23-modus.3. Grouped range styles and black border presets use one preflight/history transaction. Numeric fill extends finite arithmetic seeds, preserving formula/text/date copy behavior and a copy modifier. Undo clears absent explicit styles precisely; inherited-only partial formatting is refused before mutation. Explicit AutoFit wraps long tokens consistently.
+
+Read-only review filters use local excluded-row projection, preserve saved hidden rows/raw coordinates/workbook totals/bytes, reset on edit/source/sheet/revision changes, and cover DOM/canvas and workers. Copies spanning filtered gaps are refused with an explanation. No native Excel AutoFilter/SUBTOTAL semantics or saved filtering are implied.
+
+### Empty-cell history (.31)
+
+History/fill retain the distinction between a truly absent cell (null) and an explicit empty string. Exact style undo prunes only empty, formula-free records. Runtime coverage verifies raw types and restored absent blanks; it does not certify full COUNTA empty-string semantics.
+
+### Same-document reloads (.32)
+
+The opt-in `preserveViewOnFileChange` keeps the main-thread grid mounted while a replacement package parses. Sheet, zoom, selection and scroll remain in place. The retained grid is read-only while `isReplacingWorkbook` is true; consumers must also suspend saves/history initialization against that model. Failed replacements retain the blocked grid and expose `retryWorkbookReplacement`. Candidates are committed together, superseded candidates are discarded, and retired models are disposed after the replacement renders. Different documents require a different controller identity; worker-backed and initial loads keep their existing behavior.
+
+### Percentage input (.33)
+
+Cell entry, formula-bar entry and text paste coerce finite numeric percentages to numeric fractions. An apostrophe preserves explicit text. Existing percentage formats retain their precision; a new percentage entry receives a format matching its typed decimal precision. The change participates in the same native history transaction as the value, so undo restores the prior value and style together. The app's mutation ledger must treat content/paste targets as potential formatting changes.
 ## Citation cursors
 
 Canvas and DOM cells honor `getCellStyle().cursor`. Canvas hover uses the existing pointer-to-cell resolver and cached cell data, retaining scroll, zoom, frozen-pane, hidden-axis and merged-cell geometry. Merged-cell hover uses the anchor style in worksheet and worker-backed views. Viewport, data and style changes clear body-pane cursors until the next pointer movement, so a stationary pointer cannot retain a stale citation cursor. The consuming app decides which cells have clickable citations.
+
+## Main synchronization (.36)
+
+Combines the citation hover-cursor fixes from main (.35) with the editing, same-document replacement and numeric percentage fixes (.30–.33). Retains engine .3 and all existing editing transactions.

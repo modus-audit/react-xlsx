@@ -23,6 +23,11 @@ export type ClipboardMatrixCell = {
   source?: { row: number; col: number };
 };
 
+/** WASM null is Empty; an empty string is a literal and affects COUNTA. */
+export function normalizeCellValue(value: unknown): unknown {
+  return value ?? null;
+}
+
 /** A cell with no style of its own reads back as `null`, and the engine has no call that clears a
  *  style; it patches the fields it is given. Writing one back (a paste, an undo) sets every field to
  *  the workbook's default instead, which reads back as `null` again. `defaultFont` is that font,
