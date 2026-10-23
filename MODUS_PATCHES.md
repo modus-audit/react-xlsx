@@ -1,6 +1,6 @@
 # Modus React XLSX viewer
 
-Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.2` WASM engine.
+Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.4` WASM engine.
 
 Preserved behavior:
 
@@ -14,7 +14,7 @@ Preserved behavior:
 - The viewer remembers its last copy or cut page-wide (forgotten on any copy outside a grid), so a paste event or async-clipboard paste whose text matches it keeps formulas and formatting. `cutSelection()` copies then clears, and pasting a cut moves formulas unchanged; `paste({ valuesOnly })` is Excel's Paste Values; Ctrl/Cmd+Shift+V pastes values (reading the clipboard when the browser fires no paste event, reporting a refusal through `onClipboardError`); Ctrl/Cmd+X cuts.
 - `autoFit(axis, indices?)` fits columns or rows to their text in one undo step (by default every selected one), and double-clicking a header border fits that column or row, or the whole selection when the border belongs to it.
 - `recalculate` accepts updated external add-in values without reloading the workbook, including
-  worker-backed read-only workbooks. The engine (`wasm-dist-0.1.23-modus.2`) calculates serially, so the old 5,000-formula trap is gone; `autoCalculateFormulaLimit` (default 1,000) sets how many formulas a main-thread workbook may have and still recalculate on load and after edits.
+  worker-backed read-only workbooks. The engine (`wasm-dist-0.1.23-modus.4`) calculates serially, so the old 5,000-formula trap is gone; `autoCalculateFormulaLimit` (default 1,000) sets how many formulas a main-thread workbook may have and still recalculate on load and after edits.
 - `controller.calculation` reports execution coverage on initial, deferred, and explicit recalculation.
   It compares the source OOXML formula inventory with the imported inventory, retains the engine
   statistics, and inspects typed formula results because engine `errors` misses some cell errors.
@@ -45,7 +45,7 @@ The app configures `initWasm` with a bundler-resolved asset URL and explicitly c
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/excel-viewer-e2e`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.35`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.37`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 
@@ -95,3 +95,7 @@ Copy carries the original cell address so relative A1 references relocate on pas
 ## Citation cursors
 
 Canvas and DOM cells honor `getCellStyle().cursor`. Canvas hover uses the existing pointer-to-cell resolver and cached cell data, retaining scroll, zoom, frozen-pane, hidden-axis and merged-cell geometry. Merged-cell hover uses the anchor style in worksheet and worker-backed views. Viewport, data and style changes clear body-pane cursors until the next pointer movement, so a stationary pointer cannot retain a stale citation cursor. The consuming app decides which cells have clickable citations.
+
+## Certificate-trust rebuild (.37)
+
+Rebuilt the existing viewer and bundled browser engine with the October 2026 certificate-trust remediation applied to both source checkouts. This release pins the `wasm-dist-0.1.23-modus.4` rebuild and preserves the existing viewer behavior.
