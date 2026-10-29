@@ -1,3 +1,4 @@
+import { ValidationDropdown } from "./ValidationDropdown";
 import { validationListItems } from "./validation-list";
 import { formulaErrorTooltip } from "./formula-error";
 import { FormulaErrorPopover } from "./FormulaErrorPopover";
@@ -12073,33 +12074,14 @@ function XlsxGrid({
   );
   const renderCellAdornment = React.useCallback((cell: XlsxCellAddress) => {
     if (activeValidation && isSameCell(activeCell, cell) && !editingCell) {
-      const items = validationItems;
-      return (
-        <select
-          aria-label={`Choose value for ${cellAddressToA1(cell)}`}
-          data-testid="xlsx-validation-dropdown"
-          disabled={!items?.length}
-          title={items?.length ? "Choose a value" : "This list source requires Excel"}
-          value=""
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
-          onChange={(event) => {
-            const value = items?.[Number(event.currentTarget.value)];
-            // A list entry is a literal, even if it looks like a formula or a numeric identifier.
-            if (value !== undefined) setCellValue(cell, String(value), { literal: typeof value === "string" });
-            focusGrid();
-          }}
-          style={{
-            ...resolveTableHeaderTriggerStyle(palette, zoomFactor),
-            appearance: "none", cursor: "pointer", textAlign: "center", width: 20 * zoomFactor
-          }}
-        >
-          <option value="" disabled hidden>▾</option>
-          {items?.map((value, index) => <option key={index} value={index}>{value === "" ? "(blank)" : String(value)}</option>)}
-        </select>
-      );
+      return <ValidationDropdown
+        key={`${activeSheet?.workbookSheetIndex}:${cell.row}:${cell.col}:${zoomFactor}`}
+        label={`Choose value for ${cellAddressToA1(cell)}`}
+        items={validationItems}
+        value={getCellData(cell.row, cell.col).value}
+        palette={palette} zoom={zoomFactor} focusGrid={focusGrid}
+        onChoose={value => setCellValue(cell, String(value), { literal: typeof value === "string" })}
+      />;
     }
     const table = getTableAtCell(effectiveTables, cell.row, cell.col);
     const tableColumn = getTableHeaderColumn(table, cell.row, cell.col);
@@ -12163,7 +12145,7 @@ function XlsxGrid({
         {triggerIcon}
       </button>
     );
-  }, [activeCell, activeValidation, editingCell, effectiveTables, focusGrid, palette, renderTableHeaderMenu, setCellValue, sortState, sortTable, validationItems, zoomFactor]);
+  }, [activeCell, activeSheet?.workbookSheetIndex, activeValidation, editingCell, effectiveTables, focusGrid, getCellData, palette, renderTableHeaderMenu, setCellValue, sortState, sortTable, validationItems, zoomFactor]);
   const resolveCanvasColumnHeaderRect = React.useCallback((actualCol: number) => {
     const colIndex = colIndexByActual.get(actualCol);
     if (colIndex === undefined) {
@@ -16519,6 +16501,8 @@ function XlsxGrid({
       void cutSelection(event.clipboardData);
     },
     onPointerDownCapture: (event) => {
+      // Portaled menus are React descendants but live outside the grid.
+      if (event.target instanceof Node && !event.currentTarget.contains(event.target)) return;
       if (event.button !== 0) {
         return;
       }
@@ -16530,6 +16514,7 @@ function XlsxGrid({
       focusGridElement(event.currentTarget);
     },
     onClickCapture: (event) => {
+      if (event.target instanceof Node && !event.currentTarget.contains(event.target)) return;
       if (isInteractiveFocusTarget(event.target, event.currentTarget)) {
         return;
       }
