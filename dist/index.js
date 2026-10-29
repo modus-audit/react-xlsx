@@ -11427,7 +11427,7 @@ function useXlsxViewerController(options) {
     recordCellEditHistory(cell2, before, after);
   }, [allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
   const setCellValue = React.useCallback((cell2, value, options2) => {
-    if (!options2?.literal && value.trim().startsWith("=")) {
+    if (typeof value === "string" && !options2?.literal && value.trim().startsWith("=")) {
       setCellFormula(cell2, value);
       return;
     }
@@ -11442,7 +11442,7 @@ function useXlsxViewerController(options) {
     if (!before) {
       return;
     }
-    const nextValue = options2?.literal ? value : coerceUserEnteredValue(value);
+    const nextValue = typeof value === "string" && !options2?.literal ? coerceUserEnteredValue(value) : value;
     worksheet.setCell(cellAddressToA1(cell2), nextValue);
     const after = captureCellMutationState(cell2);
     if (!after) {
@@ -29585,7 +29585,7 @@ function XlsxGrid({
           palette,
           zoom: zoomFactor,
           focusGrid,
-          onChoose: (value) => setCellValue(cell2, String(value), { literal: typeof value === "string" })
+          onChoose: (value) => setCellValue(cell2, value, { literal: true })
         },
         `${activeSheet?.workbookSheetIndex}:${cell2.row}:${cell2.col}:${zoomFactor}`
       );

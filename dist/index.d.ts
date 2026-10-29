@@ -92,6 +92,7 @@ declare function formulaText(formula: string): string;
 /** Unbalanced parentheses or quotes, a trailing operator, or a sheet the workbook lacks. */
 declare function formulaProblem(formula: string, sheetNames: readonly string[]): XlsxFormulaProblem | undefined;
 
+type XlsxCellValue = string | number | boolean;
 interface XlsxThemePalette {
     colorsByIndex: Record<number, string>;
     majorLatinFont?: string;
@@ -1274,10 +1275,10 @@ interface XlsxViewerController {
      * Excel-like input. Prefix text with an apostrophe to force literal text.
      *
      * @param cell Zero-based row and column address in the active worksheet.
-     * @param value Text entered by the user.
+     * @param value Text entered by the user, or a typed scalar to preserve.
      * @param options Preserve literal text without formula or scalar coercion.
      */
-    setCellValue: (cell: XlsxCellAddress, value: string, options?: {
+    setCellValue: (cell: XlsxCellAddress, value: XlsxCellValue, options?: {
         literal?: boolean;
     }) => void;
     /**
@@ -1442,10 +1443,10 @@ interface XlsxViewerEditing {
      * Sets the value for a cell in the active worksheet.
      *
      * @param cell Zero-based row and column address in the active worksheet.
-     * @param value Text entered by the user.
+     * @param value Text entered by the user, or a typed scalar to preserve.
      * @param options Preserve literal text without formula or scalar coercion.
      */
-    setCellValue: (cell: XlsxCellAddress, value: string, options?: {
+    setCellValue: (cell: XlsxCellAddress, value: XlsxCellValue, options?: {
         literal?: boolean;
     }) => void;
     /**
@@ -1857,4 +1858,4 @@ declare function isMerged(sheet: Pick<FitSheet, "getMergeSpan" | "isMergedSecond
  *  top-left cell. */
 declare function mergesTouching(mergedRegions: unknown, range: XlsxCellRange): string[];
 
-export { DefaultXlsxToolbar, type ExternalFnValues, type UseXlsxViewerControllerOptions, type UseXlsxViewerThumbnailsOptions, type XlsxAxisSize, type XlsxCalculationIssue, type XlsxCalculationReport, type XlsxCellAddress, type XlsxCellAlignmentInput, type XlsxCellBorderEdgeInput, type XlsxCellBorderStyleInput, type XlsxCellCalculationDiagnostic, type XlsxCellFillStyleInput, type XlsxCellFontStyleInput, type XlsxCellGradientStopInput, type XlsxCellNumberFormatInput, type XlsxCellProtectionInput, type XlsxCellRange, type XlsxCellStyleColorInput, type XlsxCellStyleContext, type XlsxCellStyleInput, type XlsxChart, type XlsxChartAxis, type XlsxChartDataLabels, type XlsxChartElementSelection, type XlsxChartLoadingRenderProps, type XlsxChartReference, type XlsxChartSeries, type XlsxChartsheet, type XlsxDrawingLayout, type XlsxEdit, type XlsxEditKind, XlsxFileSizeLimitExceededError, type XlsxFileTooLargeRenderProps, type XlsxFormControl, type XlsxFormControlActionEvent, type XlsxFormControlCaption, type XlsxFormControlCaptionInput, type XlsxFormControlCaptionRun, type XlsxFormControlChangeEvent, type XlsxFormControlInput, type XlsxFormControlKind, type XlsxFormControlKindInput, type XlsxFormControlPatch, type XlsxFormControlRenderProps, type XlsxFormControlSelectionMode, type XlsxFormControlState, type XlsxFormulaProblem, type XlsxFormulaTarget, type XlsxImage, type XlsxImageAnchor, type XlsxImageRect, type XlsxImageRenderProps, type XlsxImageResizeHandlePosition, type XlsxImageSelectionRenderProps, type XlsxScrollerRenderProps, type XlsxShape, type XlsxShapeFill, type XlsxShapeParagraph, type XlsxShapeStroke, type XlsxShapeTextBox, type XlsxShapeTextRun, type XlsxSheetData, type XlsxSheetThumbnail, type XlsxSheetThumbnailResolution, type XlsxSheetVisibility, type XlsxTable, type XlsxTableColumn, type XlsxTableHeaderMenuRenderProps, type XlsxTableSortDirection, type XlsxTableSortState, type XlsxThemePalette, XlsxViewer, type XlsxViewerCharts, type XlsxViewerController, type XlsxViewerEditing, type XlsxViewerImages, type XlsxViewerProps, XlsxViewerProvider, type XlsxViewerProviderProps, type XlsxViewerSelection, type XlsxViewerTables, type XlsxViewerThumbnails, type XlsxViewerZoom, type XlsxWasmSource, type XlsxWorkbookTab, externalCallKey, formulaProblem, formulaText, initWasm, isMerged, mergesTouching, setWasmSource, useXlsxViewer, useXlsxViewerCharts, useXlsxViewerController, useXlsxViewerEditing, useXlsxViewerImages, useXlsxViewerSelection, useXlsxViewerTables, useXlsxViewerThumbnails, useXlsxViewerZoom };
+export { DefaultXlsxToolbar, type ExternalFnValues, type UseXlsxViewerControllerOptions, type UseXlsxViewerThumbnailsOptions, type XlsxAxisSize, type XlsxCalculationIssue, type XlsxCalculationReport, type XlsxCellAddress, type XlsxCellAlignmentInput, type XlsxCellBorderEdgeInput, type XlsxCellBorderStyleInput, type XlsxCellCalculationDiagnostic, type XlsxCellFillStyleInput, type XlsxCellFontStyleInput, type XlsxCellGradientStopInput, type XlsxCellNumberFormatInput, type XlsxCellProtectionInput, type XlsxCellRange, type XlsxCellStyleColorInput, type XlsxCellStyleContext, type XlsxCellStyleInput, type XlsxCellValue, type XlsxChart, type XlsxChartAxis, type XlsxChartDataLabels, type XlsxChartElementSelection, type XlsxChartLoadingRenderProps, type XlsxChartReference, type XlsxChartSeries, type XlsxChartsheet, type XlsxDrawingLayout, type XlsxEdit, type XlsxEditKind, XlsxFileSizeLimitExceededError, type XlsxFileTooLargeRenderProps, type XlsxFormControl, type XlsxFormControlActionEvent, type XlsxFormControlCaption, type XlsxFormControlCaptionInput, type XlsxFormControlCaptionRun, type XlsxFormControlChangeEvent, type XlsxFormControlInput, type XlsxFormControlKind, type XlsxFormControlKindInput, type XlsxFormControlPatch, type XlsxFormControlRenderProps, type XlsxFormControlSelectionMode, type XlsxFormControlState, type XlsxFormulaProblem, type XlsxFormulaTarget, type XlsxImage, type XlsxImageAnchor, type XlsxImageRect, type XlsxImageRenderProps, type XlsxImageResizeHandlePosition, type XlsxImageSelectionRenderProps, type XlsxScrollerRenderProps, type XlsxShape, type XlsxShapeFill, type XlsxShapeParagraph, type XlsxShapeStroke, type XlsxShapeTextBox, type XlsxShapeTextRun, type XlsxSheetData, type XlsxSheetThumbnail, type XlsxSheetThumbnailResolution, type XlsxSheetVisibility, type XlsxTable, type XlsxTableColumn, type XlsxTableHeaderMenuRenderProps, type XlsxTableSortDirection, type XlsxTableSortState, type XlsxThemePalette, XlsxViewer, type XlsxViewerCharts, type XlsxViewerController, type XlsxViewerEditing, type XlsxViewerImages, type XlsxViewerProps, XlsxViewerProvider, type XlsxViewerProviderProps, type XlsxViewerSelection, type XlsxViewerTables, type XlsxViewerThumbnails, type XlsxViewerZoom, type XlsxWasmSource, type XlsxWorkbookTab, externalCallKey, formulaProblem, formulaText, initWasm, isMerged, mergesTouching, setWasmSource, useXlsxViewer, useXlsxViewerCharts, useXlsxViewerController, useXlsxViewerEditing, useXlsxViewerImages, useXlsxViewerSelection, useXlsxViewerTables, useXlsxViewerThumbnails, useXlsxViewerZoom };
