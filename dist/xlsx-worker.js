@@ -4423,6 +4423,15 @@ function parseSheetState(archive, path, options) {
   }
   const includeCachedFormulaValues = options?.includeCachedFormulaValues ?? true;
   const autoFilterRanges = parseSqrefRanges(getLocalElements(document2, "autoFilter")[0]?.getAttribute("ref"));
+  const validationListSources = {};
+  for (const validation of getLocalElements(document2, "dataValidation")) {
+    if (validation.getAttribute("type") !== "list") continue;
+    const source = getFirstChild(validation, "formula1")?.textContent;
+    if (source === null || source === void 0) continue;
+    for (const range of (validation.getAttribute("sqref") ?? "").trim().split(/\s+/)) {
+      validationListSources[range.replace(/\$/g, "").toUpperCase()] = source;
+    }
+  }
   const cachedFormulaValues = {};
   const conditionalFormatRules = parseConditionalFormatRules(document2, options?.differentialStyles ?? []);
   const sparklines = parseSheetSparklines(document2, options?.themePalette);
@@ -4516,6 +4525,7 @@ function parseSheetState(archive, path, options) {
     }
   });
   return {
+    validationListSources,
     autoFilterRanges,
     cachedFormulaValues,
     columnWidthCharacterWidthPx,

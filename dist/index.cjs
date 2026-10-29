@@ -5091,6 +5091,15 @@ function parseSheetState(archive, path, options) {
   }
   const includeCachedFormulaValues = options?.includeCachedFormulaValues ?? true;
   const autoFilterRanges = parseSqrefRanges(getLocalElements(document2, "autoFilter")[0]?.getAttribute("ref"));
+  const validationListSources = {};
+  for (const validation of getLocalElements(document2, "dataValidation")) {
+    if (validation.getAttribute("type") !== "list") continue;
+    const source = getFirstChild(validation, "formula1")?.textContent;
+    if (source === null || source === void 0) continue;
+    for (const range of (validation.getAttribute("sqref") ?? "").trim().split(/\s+/)) {
+      validationListSources[range.replace(/\$/g, "").toUpperCase()] = source;
+    }
+  }
   const cachedFormulaValues = {};
   const conditionalFormatRules = parseConditionalFormatRules(document2, options?.differentialStyles ?? []);
   const sparklines = parseSheetSparklines(document2, options?.themePalette);
@@ -5184,6 +5193,7 @@ function parseSheetState(archive, path, options) {
     }
   });
   return {
+    validationListSources,
     autoFilterRanges,
     cachedFormulaValues,
     columnWidthCharacterWidthPx,
@@ -8119,7 +8129,7 @@ function buildSheetList(workbook, sheetStatesByWorkbookSheetIndex, themePalette,
         colWidthOverridesPx: sheetState?.colWidthOverridesPx ?? {},
         colStyleIds: sheetState?.colStyleIds ?? {},
         conditionalFormatRules: sheetState?.conditionalFormatRules ?? [],
-        dataValidations: parseWorksheetDataValidations(worksheet),
+        dataValidations: parseWorksheetDataValidations(worksheet, sheetState?.validationListSources),
         defaultColWidthPx,
         defaultRowHeightPx,
         freezePanes: parseWorksheetFreezePanes(worksheet),
@@ -8206,7 +8216,7 @@ function buildSheetList(workbook, sheetStatesByWorkbookSheetIndex, themePalette,
       colWidthOverridesPx: sheetState?.colWidthOverridesPx ?? {},
       colStyleIds: sheetState?.colStyleIds ?? {},
       conditionalFormatRules: sheetState?.conditionalFormatRules ?? [],
-      dataValidations: parseWorksheetDataValidations(worksheet),
+      dataValidations: parseWorksheetDataValidations(worksheet, sheetState?.validationListSources),
       defaultColWidthPx,
       defaultRowHeightPx,
       freezePanes: parseWorksheetFreezePanes(worksheet),
@@ -8527,7 +8537,7 @@ function parseWorksheetFreezePanes(worksheet) {
     row: row ?? 0
   };
 }
-function parseWorksheetDataValidations(worksheet) {
+function parseWorksheetDataValidations(worksheet, listSources) {
   const rawDataValidations = Array.isArray(worksheet.dataValidations) ? worksheet.dataValidations : [];
   return rawDataValidations.flatMap((entry) => {
     if (!entry || typeof entry !== "object") {
@@ -8550,7 +8560,7 @@ function parseWorksheetDataValidations(worksheet) {
       errorMessage: typeof validation.errorMessage === "string" ? validation.errorMessage : void 0,
       errorStyle: typeof validation.errorStyle === "string" ? validation.errorStyle : void 0,
       inputMessage: typeof validation.inputMessage === "string" ? validation.inputMessage : void 0,
-      listSource: typeof validation.listSource === "string" ? validation.listSource : void 0,
+      listSource: (Array.isArray(validation.ranges) ? validation.ranges : []).flatMap((range) => typeof range === "string" && listSources?.[range.replace(/\$/g, "").toUpperCase()] !== void 0 ? [listSources[range.replace(/\$/g, "").toUpperCase()]] : [])[0] ?? (typeof validation.listSource === "string" ? validation.listSource : void 0),
       ranges,
       showDropdown: typeof validation.showDropdown === "boolean" ? validation.showDropdown : void 0,
       showErrorAlert: typeof validation.showErrorAlert === "boolean" ? validation.showErrorAlert : void 0,
@@ -11472,8 +11482,8 @@ function useXlsxViewerController(options) {
     refreshWorkbookState(workbook);
     recordCellEditHistory(cell2, before, after);
   }, [allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
-  const setCellValue = React.useCallback((cell2, value) => {
-    if (value.trim().startsWith("=")) {
+  const setCellValue = React.useCallback((cell2, value, options2) => {
+    if (!options2?.literal && value.trim().startsWith("=")) {
       setCellFormula(cell2, value);
       return;
     }
@@ -11488,7 +11498,7 @@ function useXlsxViewerController(options) {
     if (!before) {
       return;
     }
-    const nextValue = coerceUserEnteredValue(value);
+    const nextValue = options2?.literal ? value : coerceUserEnteredValue(value);
     worksheet.setCell(cellAddressToA1(cell2), nextValue);
     const after = captureCellMutationState(cell2);
     if (!after) {
@@ -12333,6 +12343,53 @@ function useXlsxViewerController(options) {
       zoomScale
     ]
   );
+}
+
+// src/validation-list.ts
+function validationListItems(source, workbook, sheetIndex) {
+  let reference = source?.trim().replace(/^=/, "") ?? "";
+  if (!reference) return null;
+  if (reference.startsWith('"') && reference.endsWith('"')) {
+    return reference.slice(1, -1).replace(/""/g, '"').split(",");
+  }
+  if (!workbook) return null;
+  try {
+    for (let depth = 0; depth < 8; depth += 1) {
+      const named = workbook.getNamedRange(reference);
+      if (!named) break;
+      reference = named.trim().replace(/^=/, "");
+    }
+    const match = /^(?:(?:'((?:[^']|'')+)'|([^'!]+))!)?\$?([A-Z]+)\$?([1-9]\d*)(?::\$?([A-Z]+)\$?([1-9]\d*))?$/i.exec(reference);
+    if (!match) return null;
+    const [, quotedSheet, plainSheet, startCol, startRow, endCol = startCol, endRow = startRow] = match;
+    const sheetName = quotedSheet?.replace(/''/g, "'") ?? plainSheet;
+    const index = sheetName === void 0 ? sheetIndex : workbook.sheetIndex(sheetName);
+    if (index === void 0 || index < 0) return null;
+    const column = (label) => [...label.toUpperCase()].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) - 1;
+    const left = column(startCol), right = column(endCol);
+    const top = Number(startRow) - 1, bottom = Number(endRow) - 1;
+    if (left > right || top > bottom || right >= 16384 || bottom >= 1048576 || (right - left + 1) * (bottom - top + 1) > 1e4) return null;
+    const sheet = workbook.getSheet(index);
+    try {
+      const items = [];
+      for (let row = top; row <= bottom; row += 1) {
+        for (let col = left; col <= right; col += 1) {
+          const value = sheet.getCalculatedValueAt(row, col);
+          try {
+            const raw = value.toJs();
+            if (typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") items.push(raw);
+          } finally {
+            value.free();
+          }
+        }
+      }
+      return [...new Set(items)];
+    } finally {
+      sheet.free();
+    }
+  } catch {
+    return null;
+  }
 }
 
 // src/formula-error.ts
@@ -28743,7 +28800,7 @@ function XlsxGrid({
       return;
     }
     const cellData = getCellData(cell2.row, cell2.col);
-    const shouldShow = cellData.validation?.validationType === "list" && cellData.validation.showDropdown;
+    const shouldShow = readOnly && cellData.validation?.validationType === "list" && cellData.validation.showDropdown;
     const rect = shouldShow ? resolveOverlayRect({ start: cell2, end: cell2 }) : null;
     if (!rect) {
       overlay.style.opacity = "0";
@@ -28754,7 +28811,7 @@ function XlsxGrid({
     overlay.style.top = `${rect.top + rect.height / 2}px`;
     overlay.style.opacity = "1";
     overlay.style.visibility = "visible";
-  }, [getCellData, resolveOverlayRect, zoomFactor]);
+  }, [getCellData, readOnly, resolveOverlayRect, zoomFactor]);
   const commitSelectionRange = React4.useCallback((range) => {
     gridKeyboardActiveRef.current = true;
     const normalized = normalizeRange2(range);
@@ -29343,7 +29400,45 @@ function XlsxGrid({
     event.stopPropagation();
     startRowResize(event.pointerId, actualRow, rowHeight, event.clientY);
   }, [canResizeHeaders]);
+  const activeValidation = React4.useMemo(() => !readOnly && activeCell ? activeSheet?.dataValidations.find((entry) => entry.validationType === "list" && entry.showDropdown !== false && entry.ranges.some((range) => isCellInRange(activeCell, range))) : void 0, [activeCell, activeSheet, readOnly]);
+  const validationItems = React4.useMemo(
+    () => validationListItems(activeValidation?.listSource, workbook, activeSheet?.workbookSheetIndex ?? 0),
+    [activeValidation, activeSheet?.workbookSheetIndex, revision, workbook]
+  );
   const renderCellAdornment = React4.useCallback((cell2) => {
+    if (activeValidation && isSameCell(activeCell, cell2) && !editingCell) {
+      const items = validationItems;
+      return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+        "select",
+        {
+          "aria-label": `Choose value for ${cellAddressToA12(cell2)}`,
+          "data-testid": "xlsx-validation-dropdown",
+          disabled: !items?.length,
+          title: items?.length ? "Choose a value" : "This list source requires Excel",
+          value: "",
+          onPointerDown: (event) => event.stopPropagation(),
+          onClick: (event) => event.stopPropagation(),
+          onDoubleClick: (event) => event.stopPropagation(),
+          onKeyDown: (event) => event.stopPropagation(),
+          onChange: (event) => {
+            const value = items?.[Number(event.currentTarget.value)];
+            if (value !== void 0) setCellValue(cell2, String(value), { literal: typeof value === "string" });
+            focusGrid();
+          },
+          style: {
+            ...resolveTableHeaderTriggerStyle(palette, zoomFactor),
+            appearance: "none",
+            cursor: "pointer",
+            textAlign: "center",
+            width: 20 * zoomFactor
+          },
+          children: [
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: "", disabled: true, hidden: true, children: "\u25BE" }),
+            items?.map((value, index) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: index, children: value === "" ? "(blank)" : String(value) }, index))
+          ]
+        }
+      );
+    }
     const table = getTableAtCell(effectiveTables, cell2.row, cell2.col);
     const tableColumn = getTableHeaderColumn(table, cell2.row, cell2.col);
     if (!table || !tableColumn) {
@@ -29395,7 +29490,7 @@ function XlsxGrid({
         children: triggerIcon
       }
     );
-  }, [effectiveTables, palette, renderTableHeaderMenu, sortState, sortTable, zoomFactor]);
+  }, [activeCell, activeValidation, editingCell, effectiveTables, focusGrid, palette, renderTableHeaderMenu, setCellValue, sortState, sortTable, validationItems, zoomFactor]);
   const resolveCanvasColumnHeaderRect = React4.useCallback((actualCol) => {
     const colIndex = colIndexByActual.get(actualCol);
     if (colIndex === void 0) {
