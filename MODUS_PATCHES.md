@@ -113,3 +113,7 @@ Replaces the native select with a flat arrow inset inside the active cell and an
 ## Excel-style dropdown placement and shortcut (.40)
 
 The validation arrow sits immediately outside the cell's right border, preserving its height and keeping the value unobstructed. DOM cells allow the adornment to extend into that space while their text remains clipped. Alt+Down (Option+Down on Mac) opens the selected editable validation cell's list through the grid keyboard handler without moving the selection. Text editing, composition, read-only mode and unsupported sources retain their existing guards; ordinary cells do not move on this chord. The trigger advertises the shortcut and returns focus to the grid on selection or Escape.
+
+## Typed validation values (.41)
+
+The guarded `setCellValue` interface accepts `XlsxCellValue` (text, number or boolean). Text entry keeps Excel-style parsing unless literal; typed scalars pass through unchanged. Dropdown choices no longer round-trip through display strings, which changed a numeric choice such as `1e-7` into text. The existing application browser regression checks numeric type before and after original-package save/reopen. Resolution, menu behavior, edit guards, recalculation and history keep their current ownership; no new write path or resolver abstraction is added.

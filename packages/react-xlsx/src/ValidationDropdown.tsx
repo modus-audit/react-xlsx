@@ -2,13 +2,13 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import type { ViewerPalette } from "./viewer-palette";
 
-type Item = string | number | boolean;
+import type { XlsxCellValue } from "./types";
 
 export type ValidationDropdownHandle = { open: () => void };
 
 export const ValidationDropdown = React.forwardRef<ValidationDropdownHandle, {
-  label: string; items: Item[] | null; value: string; palette: ViewerPalette; zoom: number;
-  onChoose: (value: Item) => void; focusGrid: () => void;
+  label: string; items: XlsxCellValue[] | null; value: string; palette: ViewerPalette; zoom: number;
+  onChoose: (value: XlsxCellValue) => void; focusGrid: () => void;
 }>(function ValidationDropdown({ label, items, value, palette, zoom, onChoose, focusGrid }, ref) {
   const trigger = React.useRef<HTMLButtonElement>(null);
   const menu = React.useRef<HTMLDivElement>(null);

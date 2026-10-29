@@ -1,7 +1,8 @@
+import type { XlsxCellValue } from "./types";
 import type { Workbook } from "@dukelib/sheets-wasm";
 
 /** Resolve ordinary Excel validation lists without evaluating arbitrary formulas. */
-export function validationListItems(source: string | undefined, workbook: Workbook | null, sheetIndex: number): Array<string | number | boolean> | null {
+export function validationListItems(source: string | undefined, workbook: Workbook | null, sheetIndex: number): XlsxCellValue[] | null {
   let reference = source?.trim().replace(/^=/, "") ?? "";
   if (!reference) return null;
   if (reference.startsWith('"') && reference.endsWith('"')) {
@@ -28,7 +29,7 @@ export function validationListItems(source: string | undefined, workbook: Workbo
         (right - left + 1) * (bottom - top + 1) > 10000) return null;
     const sheet = workbook.getSheet(index);
     try {
-      const items: Array<string | number | boolean> = [];
+      const items: XlsxCellValue[] = [];
       for (let row = top; row <= bottom; row += 1) {
         for (let col = left; col <= right; col += 1) {
           const value = sheet.getCalculatedValueAt(row, col);

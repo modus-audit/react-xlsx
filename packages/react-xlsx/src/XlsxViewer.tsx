@@ -12088,7 +12088,7 @@ function XlsxGrid({
         items={validationItems}
         value={getCellData(cell.row, cell.col).value}
         palette={palette} zoom={zoomFactor} focusGrid={focusGrid}
-        onChoose={value => setCellValue(cell, String(value), { literal: typeof value === "string" })}
+        onChoose={value => setCellValue(cell, value, { literal: true })}
       />;
     }
     const table = getTableAtCell(effectiveTables, cell.row, cell.col);

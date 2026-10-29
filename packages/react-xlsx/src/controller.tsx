@@ -80,6 +80,7 @@ import type {
   XlsxChartElementSelection,
   XlsxChartsheet,
   XlsxCellAddress,
+  XlsxCellValue,
   XlsxAxisSize,
   XlsxCellRange,
   XlsxCellStyleColorInput,
@@ -4618,8 +4619,8 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
   }, [allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
 
   /** Excel entry: text starting with `=` is a formula unless explicitly supplied as a literal. */
-  const setCellValue = React.useCallback((cell: XlsxCellAddress, value: string, options?: { literal?: boolean }) => {
-    if (!options?.literal && value.trim().startsWith("=")) {
+  const setCellValue = React.useCallback((cell: XlsxCellAddress, value: XlsxCellValue, options?: { literal?: boolean }) => {
+    if (typeof value === "string" && !options?.literal && value.trim().startsWith("=")) {
       setCellFormula(cell, value);
       return;
     }
@@ -4636,7 +4637,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
-    const nextValue = options?.literal ? value : coerceUserEnteredValue(value);
+    const nextValue = typeof value === "string" && !options?.literal ? coerceUserEnteredValue(value) : value;
     worksheet.setCell(cellAddressToA1(cell), nextValue);
     const after = captureCellMutationState(cell);
     if (!after) {
