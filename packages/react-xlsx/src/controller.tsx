@@ -470,6 +470,7 @@ function resolveSheetDisplayUsedRange(
 function buildSheetList(
   workbook: Workbook,
   sheetStatesByWorkbookSheetIndex?: Array<{
+    validationListSources?: Record<string, string>;
     autoFilterRanges?: XlsxCellRange[];
     cachedFormulaValues?: Record<string, string>;
     columnWidthCharacterWidthPx?: number;
@@ -550,7 +551,7 @@ function buildSheetList(
         colWidthOverridesPx: sheetState?.colWidthOverridesPx ?? {},
         colStyleIds: sheetState?.colStyleIds ?? {},
         conditionalFormatRules: sheetState?.conditionalFormatRules ?? [],
-        dataValidations: parseWorksheetDataValidations(worksheet),
+        dataValidations: parseWorksheetDataValidations(worksheet, sheetState?.validationListSources),
         defaultColWidthPx,
         defaultRowHeightPx,
         freezePanes: parseWorksheetFreezePanes(worksheet),
@@ -649,7 +650,7 @@ function buildSheetList(
       colWidthOverridesPx: sheetState?.colWidthOverridesPx ?? {},
       colStyleIds: sheetState?.colStyleIds ?? {},
       conditionalFormatRules: sheetState?.conditionalFormatRules ?? [],
-      dataValidations: parseWorksheetDataValidations(worksheet),
+      dataValidations: parseWorksheetDataValidations(worksheet, sheetState?.validationListSources),
       defaultColWidthPx,
       defaultRowHeightPx,
       freezePanes: parseWorksheetFreezePanes(worksheet),
@@ -1051,7 +1052,7 @@ function parseWorksheetFreezePanes(worksheet: ReturnType<Workbook["getSheet"]>):
   };
 }
 
-function parseWorksheetDataValidations(worksheet: ReturnType<Workbook["getSheet"]>): XlsxDataValidation[] {
+function parseWorksheetDataValidations(worksheet: ReturnType<Workbook["getSheet"]>, listSources?: Record<string, string>): XlsxDataValidation[] {
   const rawDataValidations = Array.isArray(worksheet.dataValidations) ? worksheet.dataValidations : [];
 
   return rawDataValidations.flatMap((entry) => {
@@ -1080,7 +1081,10 @@ function parseWorksheetDataValidations(worksheet: ReturnType<Workbook["getSheet"
       errorMessage: typeof validation.errorMessage === "string" ? validation.errorMessage : undefined,
       errorStyle: typeof validation.errorStyle === "string" ? validation.errorStyle : undefined,
       inputMessage: typeof validation.inputMessage === "string" ? validation.inputMessage : undefined,
-      listSource: typeof validation.listSource === "string" ? validation.listSource : undefined,
+      listSource: (Array.isArray(validation.ranges) ? validation.ranges : [])
+        .flatMap((range) => typeof range === "string" && listSources?.[range.replace(/\$/g, "").toUpperCase()] !== undefined
+          ? [listSources[range.replace(/\$/g, "").toUpperCase()]] : [])[0]
+        ?? (typeof validation.listSource === "string" ? validation.listSource : undefined),
       ranges,
       showDropdown: typeof validation.showDropdown === "boolean" ? validation.showDropdown : undefined,
       showErrorAlert: typeof validation.showErrorAlert === "boolean" ? validation.showErrorAlert : undefined,
@@ -4613,9 +4617,9 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
     recordCellEditHistory(cell, before, after);
   }, [allowEdit, captureCellMutationState, getActiveWorksheet, maybeRecalculateWorkbook, readOnly, recordCellEditHistory, refreshWorkbookState, workbook]);
 
-  /** Excel entry: text starting with `=` is a formula. */
-  const setCellValue = React.useCallback((cell: XlsxCellAddress, value: string) => {
-    if (value.trim().startsWith("=")) {
+  /** Excel entry: text starting with `=` is a formula unless explicitly supplied as a literal. */
+  const setCellValue = React.useCallback((cell: XlsxCellAddress, value: string, options?: { literal?: boolean }) => {
+    if (!options?.literal && value.trim().startsWith("=")) {
       setCellFormula(cell, value);
       return;
     }
@@ -4632,7 +4636,7 @@ export function useXlsxViewerController(options: UseXlsxViewerControllerOptions)
       return;
     }
 
-    const nextValue = coerceUserEnteredValue(value);
+    const nextValue = options?.literal ? value : coerceUserEnteredValue(value);
     worksheet.setCell(cellAddressToA1(cell), nextValue);
     const after = captureCellMutationState(cell);
     if (!after) {

@@ -99,3 +99,9 @@ Canvas and DOM cells honor `getCellStyle().cursor`. Canvas hover uses the existi
 ## Certificate-trust rebuild (.37)
 
 Rebuilt the existing viewer and bundled browser engine with the October 2026 certificate-trust remediation applied to both source checkouts. This release pins the `wasm-dist-0.1.23-modus.4` rebuild and preserves the existing viewer behavior.
+
+## Validation dropdowns (.38)
+
+Editable list-validation cells expose a native in-cell select through the existing cell-adornment geometry (canvas and DOM). Inline lists retain their original quoted OOXML source because the engine strips those quotes, otherwise making a single literal indistinguishable from a defined name. Direct finite ranges and workbook names resolve against current calculated values, including hidden source sheets. Reads are bounded to 10,000 cells and refresh after edits. Dynamic expressions and unresolved sources have a disabled control with an Excel explanation; `showDropDown` and read-only state are respected.
+
+Selections use guarded `setCellValue`, including recalculation, revision notifications and undo/redo. Its optional `{ literal: true }` preserves text choices such as `00100` and `=literal` without coercion; numeric and boolean source cells keep their types. No workbook validation definitions are changed. Native selects own their keyboard and pointer events and return focus to the grid after selection. The consuming app's regression saves with its original-package patcher and reopens to verify both chosen values and validation survival.

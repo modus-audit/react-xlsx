@@ -1,3 +1,4 @@
+import { validationListItems } from "./validation-list";
 import { formulaErrorTooltip } from "./formula-error";
 import { FormulaErrorPopover } from "./FormulaErrorPopover";
 import type { DataDirection } from "./data-navigation";
@@ -11331,7 +11332,7 @@ function XlsxGrid({
     }
 
     const cellData = getCellData(cell.row, cell.col);
-    const shouldShow = cellData.validation?.validationType === "list" && cellData.validation.showDropdown;
+    const shouldShow = readOnly && cellData.validation?.validationType === "list" && cellData.validation.showDropdown;
     const rect = shouldShow ? resolveOverlayRect({ start: cell, end: cell }) : null;
     if (!rect) {
       overlay.style.opacity = "0";
@@ -11343,7 +11344,7 @@ function XlsxGrid({
     overlay.style.top = `${rect.top + (rect.height / 2)}px`;
     overlay.style.opacity = "1";
     overlay.style.visibility = "visible";
-  }, [getCellData, resolveOverlayRect, zoomFactor]);
+  }, [getCellData, readOnly, resolveOverlayRect, zoomFactor]);
 
   const commitSelectionRange = React.useCallback((range: XlsxCellRange) => {
     gridKeyboardActiveRef.current = true;
@@ -12063,7 +12064,43 @@ function XlsxGrid({
     startRowResize(event.pointerId, actualRow, rowHeight, event.clientY);
   }, [canResizeHeaders]);
 
+  const activeValidation = React.useMemo(() => !readOnly && activeCell
+    ? activeSheet?.dataValidations.find((entry) => entry.validationType === "list" && entry.showDropdown !== false && entry.ranges.some((range) => isCellInRange(activeCell, range)))
+    : undefined, [activeCell, activeSheet, readOnly]);
+  const validationItems = React.useMemo(
+    () => validationListItems(activeValidation?.listSource, workbook, activeSheet?.workbookSheetIndex ?? 0),
+    [activeValidation, activeSheet?.workbookSheetIndex, revision, workbook]
+  );
   const renderCellAdornment = React.useCallback((cell: XlsxCellAddress) => {
+    if (activeValidation && isSameCell(activeCell, cell) && !editingCell) {
+      const items = validationItems;
+      return (
+        <select
+          aria-label={`Choose value for ${cellAddressToA1(cell)}`}
+          data-testid="xlsx-validation-dropdown"
+          disabled={!items?.length}
+          title={items?.length ? "Choose a value" : "This list source requires Excel"}
+          value=""
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          onChange={(event) => {
+            const value = items?.[Number(event.currentTarget.value)];
+            // A list entry is a literal, even if it looks like a formula or a numeric identifier.
+            if (value !== undefined) setCellValue(cell, String(value), { literal: typeof value === "string" });
+            focusGrid();
+          }}
+          style={{
+            ...resolveTableHeaderTriggerStyle(palette, zoomFactor),
+            appearance: "none", cursor: "pointer", textAlign: "center", width: 20 * zoomFactor
+          }}
+        >
+          <option value="" disabled hidden>▾</option>
+          {items?.map((value, index) => <option key={index} value={index}>{value === "" ? "(blank)" : String(value)}</option>)}
+        </select>
+      );
+    }
     const table = getTableAtCell(effectiveTables, cell.row, cell.col);
     const tableColumn = getTableHeaderColumn(table, cell.row, cell.col);
     if (!table || !tableColumn) {
@@ -12126,7 +12163,7 @@ function XlsxGrid({
         {triggerIcon}
       </button>
     );
-  }, [effectiveTables, palette, renderTableHeaderMenu, sortState, sortTable, zoomFactor]);
+  }, [activeCell, activeValidation, editingCell, effectiveTables, focusGrid, palette, renderTableHeaderMenu, setCellValue, sortState, sortTable, validationItems, zoomFactor]);
   const resolveCanvasColumnHeaderRect = React.useCallback((actualCol: number) => {
     const colIndex = colIndexByActual.get(actualCol);
     if (colIndex === undefined) {

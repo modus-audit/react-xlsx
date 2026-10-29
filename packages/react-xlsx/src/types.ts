@@ -1215,8 +1215,9 @@ export interface XlsxViewerController {
    *
    * @param cell Zero-based row and column address in the active worksheet.
    * @param value Text entered by the user.
+   * @param options Preserve literal text without formula or scalar coercion.
    */
-  setCellValue: (cell: XlsxCellAddress, value: string) => void;
+  setCellValue: (cell: XlsxCellAddress, value: string, options?: { literal?: boolean }) => void;
   /**
    * Applies persisted Excel style properties to every cell in a range.
    *
@@ -1367,8 +1368,9 @@ export interface XlsxViewerEditing {
    *
    * @param cell Zero-based row and column address in the active worksheet.
    * @param value Text entered by the user.
+   * @param options Preserve literal text without formula or scalar coercion.
    */
-  setCellValue: (cell: XlsxCellAddress, value: string) => void;
+  setCellValue: (cell: XlsxCellAddress, value: string, options?: { literal?: boolean }) => void;
   /**
    * Applies persisted Excel style properties to every cell in a range.
    *
