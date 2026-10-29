@@ -4,15 +4,12 @@ import type { ViewerPalette } from "./viewer-palette";
 
 type Item = string | number | boolean;
 
-export function ValidationDropdown({ label, items, value, palette, zoom, onChoose, focusGrid }: {
-  label: string;
-  items: Item[] | null;
-  value: string;
-  palette: ViewerPalette;
-  zoom: number;
-  onChoose: (value: Item) => void;
-  focusGrid: () => void;
-}) {
+export type ValidationDropdownHandle = { open: () => void };
+
+export const ValidationDropdown = React.forwardRef<ValidationDropdownHandle, {
+  label: string; items: Item[] | null; value: string; palette: ViewerPalette; zoom: number;
+  onChoose: (value: Item) => void; focusGrid: () => void;
+}>(function ValidationDropdown({ label, items, value, palette, zoom, onChoose, focusGrid }, ref) {
   const trigger = React.useRef<HTMLButtonElement>(null);
   const menu = React.useRef<HTMLDivElement>(null);
   const id = React.useId();
@@ -43,6 +40,7 @@ export function ValidationDropdown({ label, items, value, palette, zoom, onChoos
       width, maxHeight: height
     });
   };
+  React.useImperativeHandle(ref, () => ({ open }));
   React.useLayoutEffect(() => {
     if (!position) return;
     menu.current?.focus({ preventScroll: true });
@@ -69,7 +67,8 @@ export function ValidationDropdown({ label, items, value, palette, zoom, onChoos
     <button ref={trigger} type="button" aria-label={label} aria-haspopup="listbox"
       aria-expanded={Boolean(position)} aria-controls={position ? id : undefined}
       data-testid="xlsx-validation-dropdown" disabled={!items?.length}
-      title={items?.length ? "Choose a value" : "This list source requires Excel"}
+      aria-keyshortcuts="Alt+ArrowDown"
+      title={items?.length ? "Choose a value (Alt/Option+↓)" : "This list source requires Excel"}
       onPointerDown={event => event.stopPropagation()}
       onDoubleClick={event => event.stopPropagation()}
       onClick={event => { event.stopPropagation(); if (position) close(); else open(); }}
@@ -77,9 +76,9 @@ export function ValidationDropdown({ label, items, value, palette, zoom, onChoos
         if (["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); open(); }
         else if (!["Delete", "Backspace"].includes(event.key)) event.stopPropagation();
       }}
-      style={{ position: "absolute", right: 1, top: 1, bottom: 1, width: 20 * zoom,
-        maxWidth: "calc(100% - 2px)", boxSizing: "border-box", padding: 0, margin: 0,
-        border: 0, borderLeft: `1px solid ${palette.border}`, borderRadius: 0,
+      style={{ position: "absolute", right: -20 * zoom, top: 1, bottom: 1, width: 20 * zoom,
+        boxSizing: "border-box", padding: 0, margin: 0,
+        border: `1px solid ${palette.strongBorder}`, borderRadius: 0,
         background: palette.surface, color: palette.mutedText, fontSize: 11 * zoom,
         display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 6 }}
     ><span aria-hidden="true">▾</span></button>
@@ -119,4 +118,4 @@ export function ValidationDropdown({ label, items, value, palette, zoom, onChoos
       </div>)}
     </div>, document.body)}
   </>;
-}
+});

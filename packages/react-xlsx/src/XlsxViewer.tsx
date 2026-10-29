@@ -1,4 +1,4 @@
-import { ValidationDropdown } from "./ValidationDropdown";
+import { ValidationDropdown, type ValidationDropdownHandle } from "./ValidationDropdown";
 import { validationListItems } from "./validation-list";
 import { formulaErrorTooltip } from "./formula-error";
 import { FormulaErrorPopover } from "./FormulaErrorPopover";
@@ -6923,7 +6923,8 @@ function GridRow({
         const isSpilling = Boolean(cellData.spillWidth && cellData.spillWidth > 0);
         const adornment = renderCellAdornment ? renderCellAdornment(cell) : null;
         const stickyLeft = stickyLeftByCol.get(actualCol);
-        const validationRight = adornment ? 24 : 4;
+        const hasValidationDropdown = Boolean(adornment && cellData.validation?.validationType === "list");
+        const validationRight = adornment && !hasValidationDropdown ? 24 : 4;
         const conditionalIconRight = validationRight;
         const cellStyle: React.CSSProperties = {
           ...cellData.style,
@@ -6973,6 +6974,11 @@ function GridRow({
           cellStyle.padding = 0;
         }
 
+        if (hasValidationDropdown) {
+          cellStyle.position = cellStyle.position ?? "relative";
+          cellStyle.overflow = "visible";
+          cellStyle.zIndex = Math.max(Number(cellStyle.zIndex ?? 0), 7);
+        }
         const cellContentStyle: React.CSSProperties = {
           alignItems: "stretch",
           display: "flex",
@@ -7003,7 +7009,7 @@ function GridRow({
         if (usesWrappedText) {
           cellContentStyle.overflow = "clip";
         }
-        const trailingInset = (adornment ? 20 : 0) + (cellData.conditionalIcon ? 18 : 0);
+        const trailingInset = (adornment && !hasValidationDropdown ? 20 : 0) + (cellData.conditionalIcon ? 18 : 0);
         if (cellData.conditionalDataBar) {
           cellContentStyle.position = "relative";
           cellContentStyle.zIndex = 1;
@@ -12065,6 +12071,7 @@ function XlsxGrid({
     startRowResize(event.pointerId, actualRow, rowHeight, event.clientY);
   }, [canResizeHeaders]);
 
+  const validationDropdownRef = React.useRef<ValidationDropdownHandle>(null);
   const activeValidation = React.useMemo(() => !readOnly && activeCell
     ? activeSheet?.dataValidations.find((entry) => entry.validationType === "list" && entry.showDropdown !== false && entry.ranges.some((range) => isCellInRange(activeCell, range)))
     : undefined, [activeCell, activeSheet, readOnly]);
@@ -12075,6 +12082,7 @@ function XlsxGrid({
   const renderCellAdornment = React.useCallback((cell: XlsxCellAddress) => {
     if (activeValidation && isSameCell(activeCell, cell) && !editingCell) {
       return <ValidationDropdown
+        ref={validationDropdownRef}
         key={`${activeSheet?.workbookSheetIndex}:${cell.row}:${cell.col}:${zoomFactor}`}
         label={`Choose value for ${cellAddressToA1(cell)}`}
         items={validationItems}
@@ -16260,6 +16268,15 @@ function XlsxGrid({
       return;
     }
 
+    if (event.altKey && event.key === "ArrowDown" && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      if (activeValidation && validationItems?.length && validationDropdownRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        validationDropdownRef.current.open();
+      }
+      return;
+    }
+
     if (!readOnly && (event.metaKey || event.ctrlKey) && !event.altKey) {
       const normalizedKey = event.key.toLowerCase();
       if (normalizedKey === "z" && event.shiftKey) {
@@ -16462,7 +16479,7 @@ function XlsxGrid({
   const scrollerViewportProps: XlsxScrollerRenderProps["viewportProps"] = {
     ref: scrollRef,
     "aria-colcount": Math.max(activeSheet?.colCount ?? 0, displayColLimit),
-    "aria-keyshortcuts": "ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Control+Home Control+End Control+ArrowUp Control+ArrowDown Control+ArrowLeft Control+ArrowRight Meta+ArrowUp Meta+ArrowDown Meta+ArrowLeft Meta+ArrowRight",
+    "aria-keyshortcuts": "Alt+ArrowDown ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Control+Home Control+End Control+ArrowUp Control+ArrowDown Control+ArrowLeft Control+ArrowRight Meta+ArrowUp Meta+ArrowDown Meta+ArrowLeft Meta+ArrowRight",
     "aria-label": activeSheet ? `${activeSheet.name} worksheet grid` : "Workbook grid",
     "aria-readonly": readOnly,
     "aria-rowcount": Math.max(activeSheet?.rowCount ?? 0, displayRowLimit),

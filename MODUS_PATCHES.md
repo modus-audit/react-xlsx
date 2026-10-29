@@ -109,3 +109,7 @@ Selections use guarded `setCellValue`, including recalculation, revision notific
 ## Compact validation menus (.39)
 
 Replaces the native select with a flat arrow inset inside the active cell and an opaque, single-line listbox anchored to the cell. The menu fits longer labels up to 340 scaled pixels, truncates with a title at the viewport edge, and flips above when needed. Pointer selection, arrows, Home/End, letter navigation, Enter, Escape, Tab, outside clicks, scrolling and resizing preserve grid focus and dismissal. Delete continues to clear the selected cell; no synthetic clear value is added to workbook lists. Shared viewer palette colors cover light and dark themes. The existing guarded edit/save path is unchanged.
+
+## Excel-style dropdown placement and shortcut (.40)
+
+The validation arrow sits immediately outside the cell's right border, preserving its height and keeping the value unobstructed. DOM cells allow the adornment to extend into that space while their text remains clipped. Alt+Down (Option+Down on Mac) opens the selected editable validation cell's list through the grid keyboard handler without moving the selection. Text editing, composition, read-only mode and unsupported sources retain their existing guards; ordinary cells do not move on this chord. The trigger advertises the shortcut and returns focus to the grid on selection or Escape.
