@@ -28,6 +28,7 @@ export type {
   XlsxChartSeries,
   XlsxAxisSize,
   XlsxCellAddress,
+  XlsxCellValue,
   XlsxCellAlignmentInput,
   XlsxCellBorderEdgeInput,
   XlsxCellBorderStyleInput,

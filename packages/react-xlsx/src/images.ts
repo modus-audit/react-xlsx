@@ -229,6 +229,7 @@ type WorkbookSheetInfo = {
 };
 
 type WorkbookSheetState = {
+  validationListSources: Record<string, string>;
   autoFilterRanges: XlsxCellRange[];
   cachedFormulaValues: Record<string, string>;
   columnWidthCharacterWidthPx?: number;
@@ -1628,6 +1629,16 @@ function parseSheetState(
 
   const includeCachedFormulaValues = options?.includeCachedFormulaValues ?? true;
   const autoFilterRanges = parseSqrefRanges(getLocalElements(document, "autoFilter")[0]?.getAttribute("ref"));
+  // The engine removes inline-list quotes, making a single choice indistinguishable from a name.
+  const validationListSources: Record<string, string> = {};
+  for (const validation of getLocalElements(document, "dataValidation")) {
+    if (validation.getAttribute("type") !== "list") continue;
+    const source = getFirstChild(validation, "formula1")?.textContent;
+    if (source === null || source === undefined) continue;
+    for (const range of (validation.getAttribute("sqref") ?? "").trim().split(/\s+/)) {
+      validationListSources[range.replace(/\$/g, "").toUpperCase()] = source;
+    }
+  }
   const cachedFormulaValues: Record<string, string> = {};
   const conditionalFormatRules = parseConditionalFormatRules(document, options?.differentialStyles ?? []);
   const sparklines = parseSheetSparklines(document, options?.themePalette);
@@ -1737,6 +1748,7 @@ function parseSheetState(
   });
 
   return {
+    validationListSources,
     autoFilterRanges,
     cachedFormulaValues,
     columnWidthCharacterWidthPx,

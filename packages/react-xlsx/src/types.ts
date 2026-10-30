@@ -4,6 +4,8 @@ import type { XlsxEdit } from "./edit-guard";
 import type * as React from "react";
 import type { Workbook, Worksheet } from "@dukelib/sheets-wasm";
 
+export type XlsxCellValue = string | number | boolean;
+
 export interface XlsxThemePalette {
   colorsByIndex: Record<number, string>;
   majorLatinFont?: string;
@@ -1214,9 +1216,10 @@ export interface XlsxViewerController {
    * Excel-like input. Prefix text with an apostrophe to force literal text.
    *
    * @param cell Zero-based row and column address in the active worksheet.
-   * @param value Text entered by the user.
+   * @param value Text entered by the user, or a typed scalar to preserve.
+   * @param options Preserve literal text without formula or scalar coercion.
    */
-  setCellValue: (cell: XlsxCellAddress, value: string) => void;
+  setCellValue: (cell: XlsxCellAddress, value: XlsxCellValue, options?: { literal?: boolean }) => void;
   /**
    * Applies persisted Excel style properties to every cell in a range.
    *
@@ -1366,9 +1369,10 @@ export interface XlsxViewerEditing {
    * Sets the value for a cell in the active worksheet.
    *
    * @param cell Zero-based row and column address in the active worksheet.
-   * @param value Text entered by the user.
+   * @param value Text entered by the user, or a typed scalar to preserve.
+   * @param options Preserve literal text without formula or scalar coercion.
    */
-  setCellValue: (cell: XlsxCellAddress, value: string) => void;
+  setCellValue: (cell: XlsxCellAddress, value: XlsxCellValue, options?: { literal?: boolean }) => void;
   /**
    * Applies persisted Excel style properties to every cell in a range.
    *

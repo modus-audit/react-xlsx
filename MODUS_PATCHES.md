@@ -1,6 +1,6 @@
 # Modus React XLSX viewer
 
-Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.2` WASM engine.
+Based on upstream `0.16.4` (`873cd65bf3d04c4d1ff4f61263c7a2544b6571d0`) and the Modus `0.1.23-modus.4` WASM engine.
 
 Preserved behavior:
 
@@ -14,7 +14,7 @@ Preserved behavior:
 - The viewer remembers its last copy or cut page-wide (forgotten on any copy outside a grid), so a paste event or async-clipboard paste whose text matches it keeps formulas and formatting. `cutSelection()` copies then clears, and pasting a cut moves formulas unchanged; `paste({ valuesOnly })` is Excel's Paste Values; Ctrl/Cmd+Shift+V pastes values (reading the clipboard when the browser fires no paste event, reporting a refusal through `onClipboardError`); Ctrl/Cmd+X cuts.
 - `autoFit(axis, indices?)` fits columns or rows to their text in one undo step (by default every selected one), and double-clicking a header border fits that column or row, or the whole selection when the border belongs to it.
 - `recalculate` accepts updated external add-in values without reloading the workbook, including
-  worker-backed read-only workbooks. The engine (`wasm-dist-0.1.23-modus.2`) calculates serially, so the old 5,000-formula trap is gone; `autoCalculateFormulaLimit` (default 1,000) sets how many formulas a main-thread workbook may have and still recalculate on load and after edits.
+  worker-backed read-only workbooks. The engine (`wasm-dist-0.1.23-modus.4`) calculates serially, so the old 5,000-formula trap is gone; `autoCalculateFormulaLimit` (default 1,000) sets how many formulas a main-thread workbook may have and still recalculate on load and after edits.
 - `controller.calculation` reports execution coverage on initial, deferred, and explicit recalculation.
   It compares the source OOXML formula inventory with the imported inventory, retains the engine
   statistics, and inspects typed formula results because engine `errors` misses some cell errors.
@@ -45,7 +45,7 @@ The app configures `initWasm` with a bundler-resolved asset URL and explicitly c
 
 Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`. The real-package browser regression suite lives in `peasebell/excel-viewer-e2e`; it covers DOM and canvas rendering plus main-thread, worker, and deferred loads. Run that suite before tagging a distribution.
 
-After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.35`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
+After committing the source, run `pnpm build` and `node scripts/package-modus.mjs`. Copy `dist/modus-package/` into a distribution branch and use an immutable commit or a new `tb-dist-0.16.4-modus.N` tag (currently `modus.37`). The generated manifest records the exact source and upstream commits. The package and lockfile must reference the same engine artifact.
 
 The release source retains the existing Modus GitHub workflows; importing upstream workflow changes requires separate repository permissions and review.
 
@@ -95,3 +95,25 @@ Copy carries the original cell address so relative A1 references relocate on pas
 ## Citation cursors
 
 Canvas and DOM cells honor `getCellStyle().cursor`. Canvas hover uses the existing pointer-to-cell resolver and cached cell data, retaining scroll, zoom, frozen-pane, hidden-axis and merged-cell geometry. Merged-cell hover uses the anchor style in worksheet and worker-backed views. Viewport, data and style changes clear body-pane cursors until the next pointer movement, so a stationary pointer cannot retain a stale citation cursor. The consuming app decides which cells have clickable citations.
+
+## Certificate-trust rebuild (.37)
+
+Rebuilt the existing viewer and bundled browser engine with the October 2026 certificate-trust remediation applied to both source checkouts. This release pins the `wasm-dist-0.1.23-modus.4` rebuild and preserves the existing viewer behavior.
+
+## Validation dropdowns (.38)
+
+Editable list-validation cells expose a native in-cell select through the existing cell-adornment geometry (canvas and DOM). Inline lists retain their original quoted OOXML source because the engine strips those quotes, otherwise making a single literal indistinguishable from a defined name. Direct finite ranges and workbook names resolve against current calculated values, including hidden source sheets. Reads are bounded to 10,000 cells and refresh after edits. Dynamic expressions and unresolved sources have a disabled control with an Excel explanation; `showDropDown` and read-only state are respected.
+
+Selections use guarded `setCellValue`, including recalculation, revision notifications and undo/redo. Its optional `{ literal: true }` preserves text choices such as `00100` and `=literal` without coercion; numeric and boolean source cells keep their types. No workbook validation definitions are changed. Native selects own their keyboard and pointer events and return focus to the grid after selection. The consuming app's regression saves with its original-package patcher and reopens to verify both chosen values and validation survival.
+
+## Compact validation menus (.39)
+
+Replaces the native select with a flat arrow inset inside the active cell and an opaque, single-line listbox anchored to the cell. The menu fits longer labels up to 340 scaled pixels, truncates with a title at the viewport edge, and flips above when needed. Pointer selection, arrows, Home/End, letter navigation, Enter, Escape, Tab, outside clicks, scrolling and resizing preserve grid focus and dismissal. Delete continues to clear the selected cell; no synthetic clear value is added to workbook lists. Shared viewer palette colors cover light and dark themes. The existing guarded edit/save path is unchanged.
+
+## Excel-style dropdown placement and shortcut (.40)
+
+The validation arrow sits immediately outside the cell's right border, preserving its height and keeping the value unobstructed. DOM cells allow the adornment to extend into that space while their text remains clipped. Alt+Down (Option+Down on Mac) opens the selected editable validation cell's list through the grid keyboard handler without moving the selection. Text editing, composition, read-only mode and unsupported sources retain their existing guards; ordinary cells do not move on this chord. The trigger advertises the shortcut and returns focus to the grid on selection or Escape.
+
+## Typed validation values (.41)
+
+The guarded `setCellValue` interface accepts `XlsxCellValue` (text, number or boolean). Text entry keeps Excel-style parsing unless literal; typed scalars pass through unchanged. Dropdown choices no longer round-trip through display strings, which changed a numeric choice such as `1e-7` into text. The existing application browser regression checks numeric type before and after original-package save/reopen. Resolution, menu behavior, edit guards, recalculation and history keep their current ownership; no new write path or resolver abstraction is added.
